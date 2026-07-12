@@ -574,20 +574,55 @@ vscode-button.sm {
   color: var(--vscode-descriptionForeground);
 }
 
-.init-banner {
+/* Initialize-project notification: VS Code notification tokens (background,
+   border, info icon) — inline at the top of the Installed list; Browse floats
+   it top-right below the header chrome via .init-float. */
+.init-notification {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid
+    var(--vscode-notifications-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+}
+
+.init-notification .init-icon {
+  flex: none;
+  font-size: 14px;
+  color: var(--vscode-notificationsInfoIcon-foreground, var(--vscode-textLink-foreground));
+}
+
+.init-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 6px 12px;
-  padding: 8px 10px;
-  font-size: 12px;
-  border-radius: 4px;
-  background: var(--vscode-textBlockQuote-background, rgba(128, 128, 128, 0.1));
-  border-left: 3px solid var(--vscode-textLink-foreground);
 }
 
-.init-banner vscode-button {
+.init-body vscode-button {
   align-self: flex-start;
+}
+
+/* Zero-height sticky anchor at the top of the browse results: the notification
+   overlays the list at the top right, below the tabs/search/filters header,
+   and holds that spot while the results scroll under it. */
+.init-float {
+  position: sticky;
+  top: 6px;
+  z-index: 5;
+  height: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.init-float .init-notification {
+  margin: 0 8px;
+  max-width: 340px;
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
 }
 
 .empty-state {

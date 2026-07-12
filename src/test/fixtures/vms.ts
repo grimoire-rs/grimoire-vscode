@@ -330,6 +330,16 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     ),
   );
   add(
+    'results-browse-init-notification',
+    r.renderSidebarResults(
+      sidebarState({
+        items: buildCards([searchItem()], []),
+        scopes: { projectOpen: true, projectConfigured: false, projectName: null },
+      }),
+      DEFAULT_FILTER,
+    ),
+  );
+  add(
     'results-installed-init-banner',
     r.renderSidebarResults(
       sidebarState({

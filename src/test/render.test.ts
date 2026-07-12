@@ -534,17 +534,24 @@ suite('sidebar rendering', () => {
     assert.strictEqual(await litString(renderSidebarTabs(sidebarState({ phase: 'no-grim' }))), '');
   });
 
-  test('init banner when project unconfigured', async () => {
-    const html = await litHtml(
-      renderSidebar(
-        sidebarState({
-          items: buildCards([searchItem()], []),
-          scopes: { projectOpen: true, projectConfigured: false, projectName: 'my-app' },
-        }),
-        DEFAULT_FILTER,
-      ),
-    );
+  test('init notification when project unconfigured — floating top-right in browse', async () => {
+    const unconfigured = sidebarState({
+      items: buildCards([searchItem()], []),
+      scopes: { projectOpen: true, projectConfigured: false, projectName: 'my-app' },
+    });
+    const html = await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER));
     assert.ok(html.includes('data-action="init-project"'));
+    // Notification component (info icon, no blockquote-style accent bar),
+    // floated over the results via the sticky anchor in browse.
+    assert.ok(html.includes('class="init-float"'));
+    assert.ok(html.includes('init-notification'));
+    assert.ok(!html.includes('init-banner'));
+    // Installed (project scope shown) keeps it inline — no float anchor.
+    const installed = await litHtml(
+      renderSidebar({ ...unconfigured, mode: 'installed' }, { ...DEFAULT_FILTER, scope: 'project' }),
+    );
+    assert.ok(installed.includes('init-notification'));
+    assert.ok(!installed.includes('init-float'));
   });
 
   test('updates view renders outdated cards as update rows, no section chrome or Update-All button', async () => {

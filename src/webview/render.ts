@@ -357,11 +357,24 @@ function renderInitProject(state: SidebarState): TemplateResult | typeof nothing
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
     return nothing;
   }
+  // Notification look (VS Code notification tokens + info icon), not the old
+  // blockquote-style box whose left accent bar read as a stray vertical bar.
   return html`
-<div class="init-banner">
-  <span>No grimoire.toml in this workspace — project scope is unavailable.</span>
-  <vscode-button class="sm" secondary data-action="init-project">Initialize project</vscode-button>
+<div class="init-notification">
+  <span class="codicon codicon-info init-icon"></span>
+  <div class="init-body">
+    <span>No grimoire.toml in this workspace — project scope is unavailable.</span>
+    <vscode-button class="sm" secondary data-action="init-project">Initialize project</vscode-button>
+  </div>
 </div>`;
+}
+
+/** Browse floats the init notification at the top right, just below the header
+ *  chrome (tabs/search/filters) — editor-notification idiom. The zero-height
+ *  sticky anchor overlays it on the scrolling results without shifting them. */
+function renderInitProjectFloat(state: SidebarState): TemplateResult | typeof nothing {
+  const notice = renderInitProject(state);
+  return notice === nothing ? nothing : html`<div class="init-float">${notice}</div>`;
 }
 
 /** One installed view's flat card list (native-views split — the workbench owns
@@ -450,7 +463,7 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     filtered.length === 0
       ? renderEmpty(state)
       : html`${repeat(filtered, (c) => c.repo, (c) => renderCard(c))}`;
-  return html`${renderInitProject(state)}${summary}<div class="cards">${body}</div>`;
+  return html`${renderInitProjectFloat(state)}${summary}<div class="cards">${body}</div>`;
 }
 
 const SIDEBAR_TABS: ReadonlyArray<{ id: SidebarState['mode']; label: string }> = [
