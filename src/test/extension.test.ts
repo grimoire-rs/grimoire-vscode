@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { parseDeclaredRefs, ScopeService } from '../scopes';
+import { parseDeclaredRefs, ScopeService, withGlobalFlag } from '../scopes';
 import { artifactName } from '../webview/model';
 import type { DetailsVM, HostToDetails, RevalidateState } from '../webview/protocol';
 import type { GrimoireApi } from '../extension';
@@ -46,6 +46,11 @@ function writeStub(): Stub {
   // preview slot while its buildVM is still in flight (stale-VM race).
   const script = `#!/bin/sh
 echo "$@" >> "${argvLog}"
+# Real grim takes --global as a top-level flag BEFORE the subcommand
+# (withGlobalFlag prepends it); consume it so $1/$2 stay subcommand/first-arg.
+if [ "$1" = "--global" ]; then
+  shift
+fi
 cmd="$1"
 if [ "$cmd" = "fetch" ]; then
   case "$*" in
@@ -94,10 +99,17 @@ function canned(stub: Stub, command: string, doc: unknown): void {
 
 function argvLines(stub: Stub): string[] {
   try {
-    return fs
-      .readFileSync(stub.argvLog, 'utf8')
-      .split('\n')
-      .filter((l) => l.length > 0);
+    return (
+      fs
+        .readFileSync(stub.argvLog, 'utf8')
+        .split('\n')
+        .filter((l) => l.length > 0)
+        // withGlobalFlag prepends --global before the subcommand; assertions
+        // are written subcommand-first, so shift the flag to the tail — every
+        // `startsWith(<subcommand>)` and `includes('--global')` check reads
+        // the same either way.
+        .map((l) => (l.startsWith('--global ') ? `${l.slice('--global '.length)} --global` : l))
+    );
   } catch {
     return [];
   }
@@ -1695,6 +1707,26 @@ clients = "claude"
   test('empty and garbage input', () => {
     assert.deepStrictEqual(parseDeclaredRefs(''), {});
     assert.deepStrictEqual(parseDeclaredRefs('not toml at all'), {});
+  });
+});
+
+suite('withGlobalFlag', () => {
+  test('prepends the top-level --global before the subcommand', () => {
+    assert.deepStrictEqual(withGlobalFlag(['status']), ['--global', 'status']);
+    assert.deepStrictEqual(withGlobalFlag(['context']), ['--global', 'context']);
+  });
+
+  test('stays before the subcommand for a search with a query', () => {
+    // Regression: a trailing --global lands after searchArgs's `--` positional
+    // separator, where clap rejects it ("unexpected argument '--global'").
+    // As a leading top-level flag it can never collide with `--`.
+    assert.deepStrictEqual(withGlobalFlag(['search', '--show-deprecated', '--', 'grim usage']), [
+      '--global',
+      'search',
+      '--show-deprecated',
+      '--',
+      'grim usage',
+    ]);
   });
 });
 

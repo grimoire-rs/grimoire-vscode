@@ -21,8 +21,14 @@ import {
 } from '../grim';
 
 suite('grim arg builders', () => {
-  test('searchArgs splits query terms behind a -- separator', () => {
-    assert.deepStrictEqual(searchArgs('grim usage'), ['search', '--', 'grim', 'usage']);
+  test('searchArgs passes a multi-word query as ONE positional behind --', () => {
+    // grim's [QUERY] is a single value it whitespace-splits itself; pre-split
+    // argv words make clap error ("unexpected argument 'usage'").
+    assert.deepStrictEqual(searchArgs('grim usage'), ['search', '--', 'grim usage']);
+  });
+
+  test('searchArgs trims but keeps interior whitespace verbatim', () => {
+    assert.deepStrictEqual(searchArgs('  grim   usage '), ['search', '--', 'grim   usage']);
   });
 
   test('searchArgs empty query is whole catalog (no -- needed)', () => {

@@ -57,6 +57,16 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
   return declared;
 }
 
+/** Prepends the top-level `--global` flag before the subcommand. grim documents
+ *  `--global` as a global option ("Operate on the global scope rather than the
+ *  discovered project"); placing it before the subcommand is the canonical
+ *  position and, unlike a trailing flag, can never land after a builder's `--`
+ *  positional separator (where clap rejects it as an unexpected argument).
+ *  Pure; exported for tests. */
+export function withGlobalFlag(args: string[]): string[] {
+  return ['--global', ...args];
+}
+
 export class ScopeService {
   // Last snapshot computed by snapshot(), so the details panel can render real
   // scope/install state in its instant skeleton without awaiting a fresh grim
@@ -127,8 +137,14 @@ export class ScopeService {
       options.cwd = folder;
     }
     const executable = this.resolveExecutable();
-    this.output.appendLine(`> ${executable} ${args.join(' ')} (${scope})`);
-    return runJson<T>(executable, scope === 'global' ? [...args, '--global'] : args, options).then(
+    // `--global` is grim's top-level flag: prepend it before the subcommand.
+    // Appending it blindly at the end lands it *after* the `--` positional
+    // separator that a builder adds (searchArgs emits `-- <query>` for free-text
+    // queries), where clap parses it as a query term and errors ("unexpected
+    // argument"). See withGlobalFlag.
+    const scoped = scope === 'global' ? withGlobalFlag(args) : args;
+    this.output.appendLine(`> ${executable} ${scoped.join(' ')} (${scope})`);
+    return runJson<T>(executable, scoped, options).then(
       (result) => {
         // Name the spawned binary on the two stale/missing-binary signals, so the
         // log self-diagnoses instead of costing a debugging round.

@@ -289,12 +289,16 @@ export function searchArgs(
     args.push('--show-deprecated');
   }
   args.push(...scopeFlags(options));
-  // The query is free text (e.g. a tag chip or typed term) and may start with
-  // "-"/"--" (a term like "--foo"); a `--` separator after every flag forces
-  // clap to treat it as positional instead of an unknown-flag parse error.
-  const terms = query.split(/\s+/).filter((term) => term.length > 0);
-  if (terms.length > 0) {
-    args.push('--', ...terms);
+  // grim's [QUERY] is ONE positional — grim whitespace-splits and ANDs the
+  // terms itself. Passing pre-split words as separate argv entries makes clap
+  // reject the second one ("unexpected argument"), so the whole query travels
+  // as a single string. It is free text (e.g. a tag chip or typed term) and
+  // may start with "-"/"--" (a term like "--foo"); a `--` separator after
+  // every flag forces clap to treat it as positional instead of an
+  // unknown-flag parse error.
+  const trimmed = query.trim();
+  if (trimmed.length > 0) {
+    args.push('--', trimmed);
   }
   return args;
 }
