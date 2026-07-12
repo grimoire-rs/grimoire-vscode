@@ -1,0 +1,8 @@
+[[registries]]
+index = "https://index.grimoire.rs"
+default = true
+
+[skills]
+demo = "example.io/acme/skills/demo:1.0.0"
+
+[rules]

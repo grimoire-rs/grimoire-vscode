@@ -1,0 +1,215 @@
+import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import {
+  addArgs,
+  contextArgs,
+  describeArgs,
+  fetchArgs,
+  initArgs,
+  installArgs,
+  parseReport,
+  removeArgs,
+  runJson,
+  searchArgs,
+  statusArgs,
+  uninstallArgs,
+  updateArgs,
+  type ItemsEnvelope,
+  type SearchItem,
+} from '../grim';
+
+suite('grim arg builders', () => {
+  test('searchArgs splits query terms behind a -- separator', () => {
+    assert.deepStrictEqual(searchArgs('grim usage'), ['search', '--', 'grim', 'usage']);
+  });
+
+  test('searchArgs empty query is whole catalog (no -- needed)', () => {
+    assert.deepStrictEqual(searchArgs(''), ['search']);
+    assert.deepStrictEqual(searchArgs('   '), ['search']);
+  });
+
+  test('searchArgs flags all precede the -- separator', () => {
+    assert.deepStrictEqual(
+      searchArgs('x', { refresh: true, showDeprecated: true, global: true }),
+      ['search', '--refresh', '--show-deprecated', '--global', '--', 'x'],
+    );
+  });
+
+  test('searchArgs query that looks like a flag is forced positional', () => {
+    assert.deepStrictEqual(searchArgs('--foo'), ['search', '--', '--foo']);
+  });
+
+  test('fetchArgs with path and vendor', () => {
+    assert.deepStrictEqual(fetchArgs('a/b/c'), ['fetch', 'a/b/c']);
+    assert.deepStrictEqual(fetchArgs('a/b/c', { path: 'c/logo.png', vendor: 'claude' }), [
+      'fetch',
+      'a/b/c',
+      '--path',
+      'c/logo.png',
+      '--vendor',
+      'claude',
+    ]);
+  });
+
+  test('fetchArgs description/digestOnly flags precede scope flags', () => {
+    assert.deepStrictEqual(fetchArgs('a/b/c', { description: true }), [
+      'fetch',
+      'a/b/c',
+      '--description',
+    ]);
+    assert.deepStrictEqual(fetchArgs('a/b/c', { digestOnly: true }), [
+      'fetch',
+      'a/b/c',
+      '--digest-only',
+    ]);
+    // --description before --digest-only before the scope flag.
+    assert.deepStrictEqual(
+      fetchArgs('a/b/c', { description: true, digestOnly: true, global: true }),
+      ['fetch', 'a/b/c', '--description', '--digest-only', '--global'],
+    );
+  });
+
+  test('describe/status/context args', () => {
+    assert.deepStrictEqual(describeArgs('a/b'), ['describe', 'a/b']);
+    assert.deepStrictEqual(describeArgs('a/b', { global: true }), ['describe', 'a/b', '--global']);
+    assert.deepStrictEqual(statusArgs({ global: true }), ['status', '--global']);
+    assert.deepStrictEqual(contextArgs(), ['context']);
+  });
+
+  test('add/remove/uninstall/update/install/init args', () => {
+    assert.deepStrictEqual(addArgs('a/b:1', { kind: 'skill', name: 'b', noInstall: true }), [
+      'add',
+      'a/b:1',
+      '--kind',
+      'skill',
+      '--name',
+      'b',
+      '--no-install',
+    ]);
+    assert.deepStrictEqual(removeArgs('skill', 'b'), ['remove', 'skill', 'b']);
+    assert.deepStrictEqual(uninstallArgs('rule', 'r', { global: true }), [
+      'uninstall',
+      'rule',
+      'r',
+      '--global',
+    ]);
+    assert.deepStrictEqual(updateArgs(), ['update']);
+    assert.deepStrictEqual(updateArgs(['a', 'b']), ['update', 'a', 'b']);
+    assert.deepStrictEqual(installArgs({ client: 'claude' }), ['install', '--client', 'claude']);
+    assert.deepStrictEqual(initArgs({ registry: 'ghcr.io/x' }), [
+      'init',
+      '--registry',
+      'ghcr.io/x',
+    ]);
+  });
+});
+
+suite('grim report parsing', () => {
+  test('plain single-object report', () => {
+    const result = parseReport<{ path: string }>('{"path":"/x"}', 0, '');
+    assert.ok(result.ok);
+    assert.strictEqual(result.value.path, '/x');
+  });
+
+  test('items envelope', () => {
+    const result = parseReport<ItemsEnvelope<SearchItem>>('{"items":[]}', 0, '');
+    assert.ok(result.ok);
+    assert.deepStrictEqual(result.value.items, []);
+  });
+
+  test('error document wins over exit code', () => {
+    const doc = '{"error":{"code":"auth","exit":80,"message":"401 from registry"}}';
+    const result = parseReport(doc, 80, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.code, 'auth');
+    assert.strictEqual(result.exitCode, 80);
+    assert.strictEqual(result.message, '401 from registry');
+  });
+
+  test('error reason is surfaced when present', () => {
+    const doc = '{"error":{"code":"data","exit":65,"message":"partial-resolve refused","reason":"stale-lock"}}';
+    const result = parseReport(doc, 65, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.reason, 'stale-lock');
+  });
+
+  test('absent reason stays undefined', () => {
+    const doc = '{"error":{"code":"auth","exit":80,"message":"401 from registry"}}';
+    const result = parseReport(doc, 80, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.reason, undefined);
+  });
+
+  test('unknown reason values pass through untouched', () => {
+    const doc = '{"error":{"code":"data","exit":65,"message":"x","reason":"some-future-reason"}}';
+    const result = parseReport(doc, 65, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.reason, 'some-future-reason');
+  });
+
+  test('clap usage error (exit 64, no JSON) maps to usage', () => {
+    const result = parseReport('', 64, "error: unrecognized subcommand 'describe'");
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.code, 'usage');
+    assert.match(result.message, /unrecognized subcommand/);
+  });
+
+  test('malformed JSON with zero exit maps to failure', () => {
+    const result = parseReport('not json', 0, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.code, 'failure');
+  });
+
+  test('nullable search fields survive parsing', () => {
+    const doc = JSON.stringify({
+      items: [
+        {
+          kind: null,
+          repo: 'ghcr.io/x/skills/y',
+          summary: null,
+          description: 'd',
+          version: null,
+          latest_tag: null,
+          repository: null,
+          revision: null,
+          created: null,
+          deprecated: null,
+          status: 'not-installed',
+        },
+      ],
+    });
+    const result = parseReport<ItemsEnvelope<SearchItem>>(doc, 0, '');
+    assert.ok(result.ok);
+    const item = result.value.items[0];
+    assert.ok(item);
+    assert.strictEqual(item.kind, null);
+    assert.strictEqual(item.version, null);
+    assert.strictEqual(item.status, 'not-installed');
+  });
+
+  test('runJson reports missing executable as not-found', async () => {
+    const result = await runJson('/nonexistent/grim-binary-for-test', ['context']);
+    assert.ok(!result.ok);
+    assert.strictEqual(result.kind, 'not-found');
+  });
+
+  test('runJson inserts --format json before a trailing -- separator (skipped on Windows: POSIX stub)', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    // A stub that echoes argv back on stdout — parseReport can't parse that as
+    // JSON, so it falls back to treating the echoed text as the error
+    // message, which is enough to assert the exact argv order.
+    const scriptPath = path.join(os.tmpdir(), `grim-argv-echo-${Date.now()}.sh`);
+    fs.writeFileSync(scriptPath, '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
+    try {
+      const result = await runJson(scriptPath, ['search', '--global', '--', '--foo']);
+      assert.ok(!result.ok && result.kind === 'error');
+      assert.strictEqual(result.message, 'search --global --format json -- --foo');
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
+});

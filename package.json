@@ -1,0 +1,234 @@
+{
+  "name": "grimoire",
+  "displayName": "Grimoire",
+  "description": "Marketplace for AI artifacts — search, install, and manage grim skills, rules, agents, MCP servers, and bundles.",
+  "version": "0.1.0",
+  "publisher": "grimoire-rs",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.96.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "grimoire",
+    "grim",
+    "oci",
+    "ai",
+    "skills",
+    "package-manager"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grimoire-rs/grimoire-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/grimoire-rs/grimoire-vscode/issues"
+  },
+  "homepage": "https://github.com/grimoire-rs/grimoire-vscode#readme",
+  "icon": "assets/logo.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onWebviewPanel:grimoire.details",
+    "onUri"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Grimoire runs the configured grim executable; installing artifacts requires a trusted workspace.",
+      "restrictedConfigurations": [
+        "grimoire.path.executable",
+        "grimoire.extraEnv"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Grimoire runs the grim CLI on the local file system."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "grimoire",
+          "title": "Grimoire",
+          "icon": "assets/vsc-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "grimoire": [
+        {
+          "type": "webview",
+          "id": "grimoire.marketplace",
+          "name": "Grimoire"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "grimoire.focusSearch",
+        "title": "Search Artifacts",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.refresh",
+        "title": "Refresh Catalog",
+        "category": "Grimoire",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "grimoire.updateAll",
+        "title": "Update All Artifacts",
+        "category": "Grimoire",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "grimoire.initProject",
+        "title": "Initialize Project (grimoire.toml)",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.installGrim",
+        "title": "Install grim CLI",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.showOutput",
+        "title": "Show Output",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.openDetails",
+        "title": "Open Artifact Details",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.reportBug",
+        "title": "Report Bug",
+        "category": "Grimoire",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "grimoire.requestFeature",
+        "title": "Request Feature",
+        "category": "Grimoire",
+        "icon": "$(feedback)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "grimoire.reportBug",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grimoire.requestFeature",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@2"
+        },
+        {
+          "command": "grimoire.refresh",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@3"
+        },
+        {
+          "command": "grimoire.updateAll",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "grimoire.openDetails",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Grimoire",
+      "properties": {
+        "grimoire.path.executable": {
+          "type": "string",
+          "default": "grim",
+          "scope": "machine-overridable",
+          "markdownDescription": "Path to (or name of) the `grim` executable. Resolved against `PATH` when not absolute. When left at the default and `grim` is not on `PATH`, a copy installed by this extension (if any) is used."
+        },
+        "grimoire.defaultScope": {
+          "type": "string",
+          "enum": [
+            "project",
+            "global"
+          ],
+          "default": "project",
+          "description": "Preferred install scope when both are available."
+        },
+        "grimoire.showDeprecated": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show deprecated artifacts in search results."
+        },
+        "grimoire.watchForChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refresh views when grimoire.toml / grimoire.lock change (project and global scope)."
+        },
+        "grimoire.prefetchDetails": {
+          "type": "boolean",
+          "default": true,
+          "description": "Prefetch the top browse results into the details cache so opening an artifact paints instantly and card logos appear as they load."
+        },
+        "grimoire.extraEnv": {
+          "type": "object",
+          "default": {},
+          "scope": "machine-overridable",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Extra environment variables passed to the `grim` child process (e.g. `GRIM_HOME`, registry credentials)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:prod",
+    "build": "node esbuild.js",
+    "build:prod": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run check-types && npm run build",
+    "compile-tests": "node esbuild.tests.js",
+    "pretest": "npm run compile-tests && npm run build && npm run lint",
+    "test": "vscode-test --coverage --coverage-reporter=text --coverage-reporter=lcov",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@lit-labs/ssr": "3.3.1",
+    "@types/markdown-it": "^14.1.2",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.9.3",
+    "@types/vscode": "^1.96.0",
+    "@vscode-elements/elements": "2.5.1",
+    "@vscode/codicons": "0.0.45",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "lit-html": "3.3.3",
+    "markdown-it": "^14.1.0",
+    "ovsx": "^1.0.1",
+    "prettier": "3.8.4",
+    "smol-toml": "^1.3.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.18.1"
+  }
+}

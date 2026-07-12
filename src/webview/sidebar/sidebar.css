@@ -1,0 +1,754 @@
+/* Sidebar (Browse + Installed views). Layout and sizes per design 1a/1b/1e:
+ * single fluid column, 12px horizontal padding, 40px kind-tinted icon tile,
+ * whole row is the hit target. All colors are VS Code theme tokens (spec 1g). */
+body {
+  padding: 0;
+  margin: 0;
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Tabs, search and filters are natural height at the top; results fill the
+   rest and scroll internally, so the footer region below stays pinned to the
+   view bottom regardless of content height. */
+#sb-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#sb-footer {
+  flex: 0 0 auto;
+}
+
+/* Internal tab bar (Browse | Updates | Installed) — same visual language as
+   the details page tabs; the Updates tab carries the outdated count. */
+.sidebar-tabs {
+  display: flex;
+  gap: 16px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.2));
+}
+
+.sidebar-tabs .tab {
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 7px 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sidebar-tabs .tab:hover {
+  color: var(--vscode-foreground);
+}
+
+.sidebar-tabs .tab.active {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+  /* Neutral foreground underline (design html:82), not the focus-border accent. */
+  border-bottom-color: var(--vscode-foreground);
+}
+
+.tab-count {
+  background: var(--vscode-activityBarBadge-background, #007acc);
+  color: var(--vscode-activityBarBadge-foreground, #fff);
+  border-radius: 9px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+.mono {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* Kind tints (design 1a/1g): editor-syntax-palette colors per kind. */
+.kind-skill {
+  --kind-tint: var(--vscode-charts-blue, #3794ff);
+}
+.kind-rule {
+  --kind-tint: var(--vscode-charts-yellow, #cca700);
+}
+.kind-agent {
+  --kind-tint: var(--vscode-charts-purple, #c586c0);
+}
+.kind-mcp {
+  --kind-tint: var(--vscode-charts-green, #89d185);
+}
+.kind-bundle {
+  /* charts-orange reads too dark as a tint; pull it 50% toward the theme
+     foreground — lighter on dark themes, contrast-keeping on light ones. */
+  --kind-tint: color-mix(
+    in srgb,
+    var(--vscode-charts-orange, #ce9178) 50%,
+    var(--vscode-foreground) 50%
+  );
+}
+.kind-unknown {
+  --kind-tint: var(--vscode-descriptionForeground);
+}
+
+.kind-tile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--kind-tint);
+  background: color-mix(in srgb, var(--kind-tint) 12%, transparent);
+}
+
+.kind-tile .codicon {
+  font-size: 20px;
+}
+
+/* Prefetched logo fills the tile in place of the codicon; the tint background
+   drops away so the image reads cleanly. */
+.kind-tile.has-logo {
+  background: none;
+  overflow: hidden;
+}
+.card-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.kind-badge {
+  flex: none;
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--kind-tint);
+  background: color-mix(in srgb, var(--kind-tint) 14%, transparent);
+}
+
+.search-row {
+  padding: 8px 12px 4px;
+}
+
+vscode-textfield#search {
+  width: 100%;
+}
+
+/* ponytail: !important overrides the textfield's ::slotted(content-after)
+   display:block; a plain class would lose the cross-shadow cascade. */
+.clear-icon.hidden {
+  display: none !important;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+
+.kind-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.kind-chip.active {
+  color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+  background: var(--vscode-inputOption-activeBackground, rgba(128, 128, 128, 0.25));
+  border-color: var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+}
+
+/* Kind multi-select chip row: compact, wrapping, icon + label. */
+.kind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Group header for a chip row (rail-title scaled to the sidebar). flex-basis:100%
+   forces the chips onto the next line, so it reads as a stacked mini-header. */
+.chip-group-label {
+  flex-basis: 100%;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  pointer-events: none;
+}
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kind-chip .codicon {
+  font-size: 12px;
+}
+.kind-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.result-summary {
+  padding: 2px 12px 4px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.cards {
+  flex: 1;
+}
+
+.card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  position: relative;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.12));
+}
+
+.card:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.card-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card.deprecated .card-name {
+  text-decoration: line-through;
+  color: var(--vscode-descriptionForeground);
+}
+
+.version {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.update-hint {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.card-desc {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--vscode-descriptionForeground);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.deprecated-msg {
+  color: var(--vscode-editorWarning-foreground);
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.deprecated-msg .codicon {
+  font-size: 12px;
+  position: relative;
+  top: 1px;
+}
+
+.card-delta {
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.card-delta .codicon {
+  font-size: 10px;
+}
+
+.card-delta .delta-to {
+  color: var(--vscode-foreground);
+}
+
+/* Muted "floating tag" note on outdated update rows (design html:572). */
+.floating-note {
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-descriptionForeground);
+}
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.card-meta .registry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Private-registry lock glyph (design html:277), precedes the host. */
+.registry-lock {
+  flex: none;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.card-where {
+  font-size: 10px;
+}
+
+.card-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+vscode-button.sm {
+  font-size: 11px;
+}
+
+/* Update / deprecated secondary Install are native buttons sharing the Install
+   split button's exact recipe (border/tokens/font/padding), so they match its
+   height by construction and its total width via min-width. 76px = the Install
+   split's natural total: "Install" (~33px) + 2×9px padding (51px) + the chevron
+   segment (12px icon + 2×4px padding + 1px separator = 25px). */
+.card-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  border: none;
+  border-radius: 2px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.card-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.card-btn.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+.card-btn.secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.icon-button {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--vscode-icon-foreground);
+}
+
+.icon-button .codicon {
+  font-size: 13px;
+}
+
+.installed-check {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+/* design-2b installed box: bordered chip, scope icon + label + mono version. */
+.installed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  color: var(--vscode-foreground);
+}
+
+.installed-chip .codicon {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Card Install split button (chevron opens the shared card menu). */
+.split-button {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 2px;
+}
+
+.split-button .split-main,
+.split-button .split-arrow {
+  border: none;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 9px;
+}
+
+.split-button .split-main {
+  border-radius: 2px 0 0 2px;
+}
+
+.split-button .split-arrow {
+  padding: 3px 4px;
+  border-radius: 0 2px 2px 0;
+  border-left: 1px solid var(--vscode-button-separator, rgba(255, 255, 255, 0.25));
+  display: inline-flex;
+  align-items: center;
+}
+
+.split-button .split-arrow .codicon {
+  font-size: 12px;
+}
+
+.split-button .split-main:hover,
+.split-button .split-arrow:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.split-button.secondary .split-main,
+.split-button.secondary .split-arrow {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border-left-color: var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+}
+
+.split-button.secondary .split-main:hover,
+.split-button.secondary .split-arrow:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.client-chip {
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+}
+
+.card-menu {
+  position: absolute;
+  right: 12px;
+  top: 34px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--vscode-menu-background, var(--vscode-dropdown-background));
+  color: var(--vscode-menu-foreground, var(--vscode-dropdown-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+  border-radius: 4px;
+  box-shadow: 0 6px 18px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
+}
+
+.menu-item {
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: 3px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+.menu-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+  color: inherit;
+}
+
+.menu-item .menu-hint {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.35));
+}
+
+/* Right-click menu is placed at the cursor (main.ts sets left/top). */
+.card-context-menu {
+  position: fixed;
+  right: auto;
+  top: auto;
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.link-button .codicon {
+  font-size: 11px;
+}
+
+.installed-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.init-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-textBlockQuote-background, rgba(128, 128, 128, 0.1));
+  border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+.init-banner vscode-button {
+  align-self: flex-start;
+}
+
+.empty-state {
+  padding: 56px 28px 64px;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.empty-icon {
+  font-size: 30px !important;
+  color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+}
+
+.empty-state .title {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+}
+
+.empty-state p {
+  margin: 0;
+}
+
+.empty-links {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.empty-links .link-button {
+  font-size: 12px;
+}
+
+/* Loading skeleton (design 1b). */
+vscode-progress-bar {
+  margin-top: 8px;
+}
+
+.skeleton-row {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  align-items: flex-start;
+}
+
+.skeleton-tile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.skeleton-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 3px;
+}
+
+.skeleton-line {
+  height: 10px;
+  border-radius: 2px;
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.skeleton-line.thin {
+  height: 8px;
+  opacity: 0.7;
+}
+
+.skeleton-line.w44 {
+  width: 44%;
+}
+.skeleton-line.w50 {
+  width: 50%;
+}
+.skeleton-line.w55 {
+  width: 55%;
+}
+.skeleton-line.w58 {
+  width: 58%;
+}
+.skeleton-line.w60 {
+  width: 60%;
+}
+.skeleton-line.w62 {
+  width: 62%;
+}
+.skeleton-line.w70 {
+  width: 70%;
+}
+.skeleton-line.w74 {
+  width: 74%;
+}
+.skeleton-line.w80 {
+  width: 80%;
+}
+.skeleton-line.w85 {
+  width: 85%;
+}
+.skeleton-line.w88 {
+  width: 88%;
+}
+.skeleton-line.w92 {
+  width: 92%;
+}
+
+/* Row-by-row fade (class-based — inline style= is CSP-blocked). */
+.skeleton-row-2 {
+  opacity: 0.8;
+}
+.skeleton-row-3 {
+  opacity: 0.55;
+}
+.skeleton-row-4 {
+  opacity: 0.3;
+}
+
+.error-state {
+  padding: 16px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--vscode-errorForeground);
+  font-size: 12px;
+}
+
+.hint {
+  font-size: 11px;
+}
+
+/* Catalog cache status line, pinned via #sb-footer (design html:350). */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
+}
+
+.footer .codicon {
+  font-size: 12px;
+}
+
+/* Loading footer: "Refreshing from <host>…" with a synced accent on the sync
+   glyph. */
+.loading-footer .codicon {
+  color: var(--vscode-textLink-foreground);
+}
+
+.footer-right {
+  margin-left: auto;
+}

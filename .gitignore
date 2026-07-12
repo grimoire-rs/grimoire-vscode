@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+coverage/
+.vscode-test/
+*.vsix
+.DS_Store
+handoff.zip
+.serena/
+TODO.md
