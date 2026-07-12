@@ -26,6 +26,34 @@ body {
   flex-direction: column;
 }
 
+/* Workbench-style scrollbar on the results list: trackless, square thumb from
+   the scrollbarSlider tokens, visible only while the pointer is over the list
+   (hover is CSS's closest stand-in for the workbench's show-on-scroll) — not
+   the webview default's always-visible bar. */
+#sb-results::-webkit-scrollbar {
+  width: 10px;
+}
+
+#sb-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#sb-results::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+#sb-results:hover::-webkit-scrollbar-thumb {
+  background: var(--vscode-scrollbarSlider-background);
+}
+
+#sb-results::-webkit-scrollbar-thumb:hover {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+#sb-results::-webkit-scrollbar-thumb:active {
+  background: var(--vscode-scrollbarSlider-activeBackground);
+}
+
 #sb-footer {
   flex: 0 0 auto;
 }
@@ -575,8 +603,8 @@ vscode-button.sm {
 }
 
 /* Initialize-project notification: VS Code notification tokens (background,
-   border, info icon) — inline at the top of the Installed list; Browse floats
-   it top-right below the header chrome via .init-float. */
+   border, info icon). Lives in the #sb-notice slot at the very top of the
+   view, above the tab bar — normal flow, never overlaying content. */
 .init-notification {
   display: flex;
   align-items: flex-start;
@@ -605,24 +633,6 @@ vscode-button.sm {
 
 .init-body vscode-button {
   align-self: flex-start;
-}
-
-/* Zero-height sticky anchor at the top of the browse results: the notification
-   overlays the list at the top right, below the tabs/search/filters header,
-   and holds that spot while the results scroll under it. */
-.init-float {
-  position: sticky;
-  top: 6px;
-  z-index: 5;
-  height: 0;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.init-float .init-notification {
-  margin: 0 8px;
-  max-width: 340px;
-  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
 }
 
 .empty-state {

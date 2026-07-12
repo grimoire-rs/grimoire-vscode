@@ -353,12 +353,15 @@ export function renderRefreshingFooter(
     : nothing;
 }
 
-function renderInitProject(state: SidebarState): TemplateResult | typeof nothing {
+/** Workspace-level notice slot at the very top of the view, ABOVE the tab bar
+ *  (its own #sb-notice region in main.ts) — normal flow, never overlaying the
+ *  results. Notification look (VS Code notification tokens + info icon), not
+ *  the old blockquote-style box. Self-gating: no-grim and first-load states
+ *  post no snapshot, so projectOpen is false and nothing renders. */
+export function renderSidebarNotice(state: SidebarState): TemplateResult | typeof nothing {
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
     return nothing;
   }
-  // Notification look (VS Code notification tokens + info icon), not the old
-  // blockquote-style box whose left accent bar read as a stray vertical bar.
   return html`
 <div class="init-notification">
   <span class="codicon codicon-info init-icon"></span>
@@ -367,14 +370,6 @@ function renderInitProject(state: SidebarState): TemplateResult | typeof nothing
     <vscode-button class="sm" secondary data-action="init-project">Initialize project</vscode-button>
   </div>
 </div>`;
-}
-
-/** Browse floats the init notification at the top right, just below the header
- *  chrome (tabs/search/filters) — editor-notification idiom. The zero-height
- *  sticky anchor overlays it on the scrolling results without shifting them. */
-function renderInitProjectFloat(state: SidebarState): TemplateResult | typeof nothing {
-  const notice = renderInitProject(state);
-  return notice === nothing ? nothing : html`<div class="init-float">${notice}</div>`;
 }
 
 /** One installed view's flat card list (native-views split — the workbench owns
@@ -392,15 +387,15 @@ function renderInstalledResults(state: SidebarState, filter: CardFilter): Templa
   // kind + name + scope pipeline, the SAME array the sidebar badge count reads.
   const scope = resolveInstalledScope(filter.scope, state.scopes);
   const cards = installedViewCards(state, filter);
-  const initBanner = scope === 'project' ? renderInitProject(state) : nothing;
   const emptyText =
     scope === 'project' ? 'Nothing installed in this project.' : 'Nothing installed globally.';
   // Keyed by repo + scope: the same artifact installed in both scopes must key
   // distinctly if the two ever land in one list (spec sidebar-card key rule).
-  const body = cards.length
+  // The initialize-project notice lives in the top #sb-notice slot (above the
+  // tabs, all modes) — no inline copy here.
+  return cards.length
     ? html`${repeat(cards, (c) => `${scope}:${c.repo}`, (c) => renderCard(c, { variant: 'scope', scope }))}`
     : installedEmpty(emptyText);
-  return html`${initBanner}${body}`;
 }
 
 function installedEmpty(text: string): TemplateResult {
@@ -463,7 +458,7 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     filtered.length === 0
       ? renderEmpty(state)
       : html`${repeat(filtered, (c) => c.repo, (c) => renderCard(c))}`;
-  return html`${renderInitProjectFloat(state)}${summary}<div class="cards">${body}</div>`;
+  return html`${summary}<div class="cards">${body}</div>`;
 }
 
 const SIDEBAR_TABS: ReadonlyArray<{ id: SidebarState['mode']; label: string }> = [
@@ -498,10 +493,11 @@ export function renderSidebarFooter(state: SidebarState): TemplateResult | typeo
 }
 
 export function renderSidebar(state: SidebarState, filter: CardFilter): TemplateResult {
-  return html`${renderSidebarTabs(state)}${renderSidebarSearch(state)}${renderSidebarFilters(
+  return html`${renderSidebarNotice(state)}${renderSidebarTabs(state)}${renderSidebarSearch(
     state,
-    filter,
-  )}${renderSidebarResults(state, filter)}${renderSidebarFooter(state)}`;
+  )}${renderSidebarFilters(state, filter)}${renderSidebarResults(state, filter)}${renderSidebarFooter(
+    state,
+  )}`;
 }
 
 // --- Details page ---

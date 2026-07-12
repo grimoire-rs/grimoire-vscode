@@ -295,7 +295,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     r.renderSidebarFilters(sidebarState({ phase: 'no-grim' }), DEFAULT_FILTER),
   );
 
-  // --- results: every phase, browse empty/full, installed/updates empty, init banner ---
+  // --- results: every phase, browse empty/full, installed/updates empty ---
   add(
     'results-loading-with-default-registry',
     r.renderSidebarResults(
@@ -329,27 +329,16 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       DEFAULT_FILTER,
     ),
   );
+  // --- top notice slot (above the tab bar): init notification / hidden ---
   add(
-    'results-browse-init-notification',
-    r.renderSidebarResults(
+    'notice-init-project',
+    r.renderSidebarNotice(
       sidebarState({
-        items: buildCards([searchItem()], []),
         scopes: { projectOpen: true, projectConfigured: false, projectName: null },
       }),
-      DEFAULT_FILTER,
     ),
   );
-  add(
-    'results-installed-init-banner',
-    r.renderSidebarResults(
-      sidebarState({
-        mode: 'installed',
-        items: buildCards([searchItem()], []),
-        scopes: { projectOpen: true, projectConfigured: false, projectName: null },
-      }),
-      { ...DEFAULT_FILTER, scope: 'project' },
-    ),
-  );
+  add('notice-hidden-configured', r.renderSidebarNotice(sidebarState()));
   add(
     'results-installed-empty-project',
     r.renderSidebarResults(sidebarState({ mode: 'installed', items: [] }), DEFAULT_FILTER),

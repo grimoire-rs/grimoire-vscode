@@ -25,6 +25,7 @@ import {
   renderRefreshingFooter,
   renderSidebarFilters,
   renderSidebarFooter,
+  renderSidebarNotice,
   renderSidebarResults,
   renderSidebarSearch,
   renderSidebarTabs,
@@ -48,7 +49,7 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root') as HTMLElement;
-// Item 3: five independently-updatable regions, each its own lit render root.
+// Item 3: six independently-updatable regions, each its own lit render root.
 // A search-result state update re-renders only the results (and the filters,
 // when their content differs) and never destroys the textfield the user is
 // typing into — lit's own reconciliation keeps #search's DOM identity across
@@ -61,6 +62,7 @@ function region(id: string): HTMLElement {
   root.appendChild(el);
   return el;
 }
+const noticeEl = region('sb-notice');
 const tabsEl = region('sb-tabs');
 const searchEl = region('sb-search');
 const filtersEl = region('sb-filters');
@@ -157,6 +159,7 @@ function render(): void {
   closeContextMenu();
 
   const view = viewForTab(state, activeTab, installedQuery);
+  litRender(renderSidebarNotice(view), noticeEl);
   litRender(renderSidebarTabs(view), tabsEl);
   syncSearchValue(view);
   litRender(renderSidebarFilters(view, activeFilter()), filtersEl);

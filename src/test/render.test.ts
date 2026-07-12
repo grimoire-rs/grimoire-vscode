@@ -14,6 +14,7 @@ import {
   renderSidebar,
   renderSidebarFilters,
   renderSidebarFooter,
+  renderSidebarNotice,
   renderSidebarResults,
   renderSidebarSearch,
   renderSidebarTabs,
@@ -534,24 +535,29 @@ suite('sidebar rendering', () => {
     assert.strictEqual(await litString(renderSidebarTabs(sidebarState({ phase: 'no-grim' }))), '');
   });
 
-  test('init notification when project unconfigured — floating top-right in browse', async () => {
+  test('init notification when project unconfigured — top notice slot, above the tabs', async () => {
     const unconfigured = sidebarState({
       items: buildCards([searchItem()], []),
       scopes: { projectOpen: true, projectConfigured: false, projectName: 'my-app' },
     });
     const html = await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER));
     assert.ok(html.includes('data-action="init-project"'));
-    // Notification component (info icon, no blockquote-style accent bar),
-    // floated over the results via the sticky anchor in browse.
-    assert.ok(html.includes('class="init-float"'));
+    // Notification component (info icon, notification tokens), rendered BEFORE
+    // the tab bar in the composed view — normal flow, never overlaying results.
     assert.ok(html.includes('init-notification'));
-    assert.ok(!html.includes('init-banner'));
-    // Installed (project scope shown) keeps it inline — no float anchor.
-    const installed = await litHtml(
-      renderSidebar({ ...unconfigured, mode: 'installed' }, { ...DEFAULT_FILTER, scope: 'project' }),
+    assert.ok(html.indexOf('init-notification') < html.indexOf('sidebar-tabs'));
+    // The results regions carry no copy of it — browse or installed alike.
+    const browseResults = await litHtml(renderSidebarResults(unconfigured, DEFAULT_FILTER));
+    assert.ok(!browseResults.includes('init-'));
+    const installedResults = await litHtml(
+      renderSidebarResults(
+        { ...unconfigured, mode: 'installed' },
+        { ...DEFAULT_FILTER, scope: 'project' },
+      ),
     );
-    assert.ok(installed.includes('init-notification'));
-    assert.ok(!installed.includes('init-float'));
+    assert.ok(!installedResults.includes('init-'));
+    // Configured workspace → the notice slot is empty.
+    assert.strictEqual(await litString(renderSidebarNotice(sidebarState())), '');
   });
 
   test('updates view renders outdated cards as update rows, no section chrome or Update-All button', async () => {
