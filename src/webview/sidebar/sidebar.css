@@ -15,43 +15,19 @@ body {
   height: 100vh;
 }
 
-/* Tabs, search and filters are natural height at the top; results fill the
-   rest and scroll internally, so the footer region below stays pinned to the
-   view bottom regardless of content height. */
-#sb-results {
+/* Notice, tabs, search and filters are natural height at the top; the results
+   fill the rest and scroll inside vscode-scrollable (#sb-scroll) — the
+   workbench overlay scrollbar — so the footer region below stays pinned to
+   the view bottom regardless of content height. */
+#sb-scroll {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+}
+
+#sb-results {
   display: flex;
   flex-direction: column;
-}
-
-/* Workbench-style scrollbar on the results list: trackless, square thumb from
-   the scrollbarSlider tokens, visible only while the pointer is over the list
-   (hover is CSS's closest stand-in for the workbench's show-on-scroll) — not
-   the webview default's always-visible bar. */
-#sb-results::-webkit-scrollbar {
-  width: 10px;
-}
-
-#sb-results::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-#sb-results::-webkit-scrollbar-thumb {
-  background: transparent;
-}
-
-#sb-results:hover::-webkit-scrollbar-thumb {
-  background: var(--vscode-scrollbarSlider-background);
-}
-
-#sb-results::-webkit-scrollbar-thumb:hover {
-  background: var(--vscode-scrollbarSlider-hoverBackground);
-}
-
-#sb-results::-webkit-scrollbar-thumb:active {
-  background: var(--vscode-scrollbarSlider-activeBackground);
+  min-height: 100%;
 }
 
 #sb-footer {

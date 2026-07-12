@@ -5,6 +5,7 @@ import '@vscode-elements/elements/dist/vscode-textfield/index.js';
 import '@vscode-elements/elements/dist/vscode-badge/index.js';
 import '@vscode-elements/elements/dist/vscode-progress-bar/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
+import '@vscode-elements/elements/dist/vscode-scrollable/index.js';
 import { render as litRender, type TemplateResult } from 'lit-html';
 import type { CardVM, HostToSidebar, SidebarState, SidebarToHost } from '../protocol';
 import {
@@ -66,7 +67,19 @@ const noticeEl = region('sb-notice');
 const tabsEl = region('sb-tabs');
 const searchEl = region('sb-search');
 const filtersEl = region('sb-filters');
-const resultsEl = region('sb-results');
+// Results scroll inside vscode-scrollable — the workbench's own overlay
+// scrollbar (hover-visible thumb on the scrollbarSlider tokens, transparent
+// track, top scroll-shadow), the same look as the native marketplace list.
+// A raw overflow container can't get there: the webview default stylesheet
+// sets html { scrollbar-color: <slider> <EDITOR-background> }, which paints
+// the track with the wrong surface color in the sidebar AND — scrollbar-color
+// being set and inherited — makes Chromium ignore ::-webkit-scrollbar rules.
+const scrollEl = document.createElement('vscode-scrollable');
+scrollEl.id = 'sb-scroll';
+root.appendChild(scrollEl);
+const resultsEl = document.createElement('div');
+resultsEl.id = 'sb-results';
+scrollEl.appendChild(resultsEl);
 const footerEl = region('sb-footer');
 
 const saved = vscode.getState();
@@ -378,6 +391,14 @@ window.addEventListener(
   },
   true,
 );
+
+// The results scroll inside vscode-scrollable's shadow DOM; 'scroll' is not a
+// composed event, so the window capture listener above never sees it — the
+// component's own custom event covers closing menus on results scroll.
+scrollEl.addEventListener('vsc-scrollable-scroll', () => {
+  closeContextMenu();
+  closeCardMenu();
+});
 
 root.addEventListener('input', (event) => {
   const target = event.target as HTMLElement;

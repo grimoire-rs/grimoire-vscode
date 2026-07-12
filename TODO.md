@@ -1,10 +1,15 @@
 # TODO
 
 - [x] Vertical bar in search results (2026-07-12) — the ugly bar was the results
-  list's vertical scrollbar: `#sb-results` scrolls internally and got the webview
-  default always-visible scrollbar instead of the workbench look. It now uses the
-  `--vscode-scrollbarSlider-*` tokens — trackless, square thumb, visible only while
-  the pointer is over the list (CSS's closest stand-in for show-on-scroll).
+  list's vertical scrollbar, and "wrong component" was exactly right: the results
+  now scroll inside `vscode-scrollable` (@vscode-elements), the workbench-style
+  overlay scrollbar the native marketplace list has — hover/scroll-visible thumb on
+  the `--vscode-scrollbarSlider-*` tokens, transparent track, top scroll-shadow.
+  Plain CSS could not fix it: the webview default stylesheet sets
+  `html { scrollbar-color: <slider> <editor-background> }`, which paints the track
+  with the wrong surface color in the sidebar AND (scrollbar-color being set and
+  inherited) makes Chromium ignore `::-webkit-scrollbar` rules outright — a first
+  CSS-only attempt visibly changed nothing because of this.
 - [x] Init notification placement (2026-07-12) — the initialize-project box moved
   out of the results into its own `#sb-notice` region at the very top of the view,
   just above the BROWSE/UPDATES/INSTALLED tab row, in normal flow (a first cut
