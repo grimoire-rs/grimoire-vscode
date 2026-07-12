@@ -22,12 +22,20 @@ export class CatalogService {
     return { items: this.items, syncedAt: this.syncedAt };
   }
 
-  async search(query: string, options: { refresh?: boolean } = {}): Promise<CatalogState> {
+  async search(
+    query: string,
+    options: { refresh?: boolean; projectConfigured?: boolean } = {},
+  ): Promise<CatalogState> {
     const args = searchArgs(query, {
       ...(readConfig().showDeprecated ? { showDeprecated: true } : {}),
       ...(options.refresh ? { refresh: true } : {}),
     });
-    const scope = this.scopes.projectFolder() ? 'project' : 'global';
+    // Browse is discovery, not project state: an open folder searches project
+    // scope ONLY when it has a grimoire.toml. Without one, project-scope search
+    // has no registries and returns []; fall back to global so the global
+    // registries' catalog is still browsable (and installable globally).
+    const scope =
+      this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
     const result: GrimResult<ItemsEnvelope<SearchItem>> = await this.scopes.run(args, scope);
     if (!result.ok) {
       if (result.kind === 'not-found') {

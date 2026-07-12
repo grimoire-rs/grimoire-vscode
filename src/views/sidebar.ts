@@ -248,7 +248,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     // One catalog search feeds both card sets: browse cards straight from the
     // results, installed cards from the snapshot enriched by the same items.
-    const catalogState = await this.catalog.search(this.query, options);
+    const catalogState = await this.catalog.search(this.query, {
+      ...options,
+      projectConfigured: snap.project?.context.config_exists ?? false,
+    });
     if (catalogState.grimMissing) {
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
