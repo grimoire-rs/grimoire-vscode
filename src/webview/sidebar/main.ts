@@ -101,10 +101,13 @@ let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 let loadingFooterTimeout: ReturnType<typeof setTimeout> | undefined;
 // True from a kept-painted loading state until the next ready/error state.
 let refreshInFlight = false;
-// Gear/right-click menus are appended into the DOM (the gear menu into its own
-// card, the context menu onto root); we hold the actual element so an artifact
-// installed in both scopes — two cards, same data-repo — resolves unambiguously.
+// Gear/right-click menus are appended onto root, fixed-positioned — never
+// inside the card: the results live in vscode-scrollable's viewport, which
+// clips any absolutely-positioned child at the widget border. The anchor is
+// the actual clicked element so an artifact installed in both scopes — two
+// cards, same data-repo — resolves unambiguously (toggle closes the right one).
 let cardMenuEl: HTMLElement | null = null;
+let cardMenuAnchor: HTMLElement | null = null;
 let contextMenuEl: HTMLElement | null = null;
 
 function closeContextMenu(): void {
@@ -115,6 +118,18 @@ function closeContextMenu(): void {
 function closeCardMenu(): void {
   cardMenuEl?.remove();
   cardMenuEl = null;
+  cardMenuAnchor = null;
+}
+
+/** Keeps a fixed-positioned menu fully inside the webview viewport. */
+function clampMenuToViewport(menu: HTMLElement): void {
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) {
+    menu.style.left = `${Math.max(4, window.innerWidth - rect.width - 4)}px`;
+  }
+  if (rect.bottom > window.innerHeight) {
+    menu.style.top = `${Math.max(4, window.innerHeight - rect.height - 4)}px`;
+  }
 }
 
 function persist(): void {
@@ -162,10 +177,9 @@ function render(): void {
   if (!state) {
     return;
   }
-  // A state-driven re-render drops any open menus. This is NOT optional: they
-  // are appended outside the regions lit owns (the card menu inside a .card in
-  // #sb-results, the context menu inside #root itself), and lit gives no
-  // free wipe-on-rerender the way the old wholesale innerHTML replace did —
+  // A state-driven re-render drops any open menus. This is NOT optional: both
+  // menus are appended onto #root, outside the regions lit owns, and lit gives
+  // no free wipe-on-rerender the way the old wholesale innerHTML replace did —
   // an un-closed menu could survive next to lit's own children, or be ripped
   // out unpredictably by lit's list reconciliation.
   closeCardMenu();
@@ -227,15 +241,22 @@ root.addEventListener('click', (event) => {
   const repo = target.dataset['repo'] ?? card?.dataset['repo'] ?? '';
   switch (action) {
     case 'menu': {
-      // Attach to the actual clicked card element: an artifact installed in both
+      // Anchor on the actual clicked element: an artifact installed in both
       // scopes has two cards with the same data-repo, so a repo query would open
       // the menu on the wrong one.
-      const wasOpenHere = cardMenuEl?.parentElement === card;
+      const wasOpenHere = cardMenuAnchor === target;
       closeCardMenu();
       const cardVM = cardByRepo(repo);
       if (card && cardVM && state && !wasOpenHere) {
         cardMenuEl = renderToElement(renderCardMenu(cardVM, state.scopes.projectOpen));
-        card.appendChild(cardMenuEl);
+        root.appendChild(cardMenuEl);
+        cardMenuAnchor = target;
+        // Below the trigger, right edges aligned (VS Code dropdown idiom),
+        // then clamped so the widget border can't cut it off.
+        const anchor = target.getBoundingClientRect();
+        cardMenuEl.style.top = `${anchor.bottom + 4}px`;
+        cardMenuEl.style.left = `${Math.max(4, anchor.right - cardMenuEl.getBoundingClientRect().width)}px`;
+        clampMenuToViewport(cardMenuEl);
       }
       return;
     }
@@ -366,13 +387,7 @@ root.addEventListener('contextmenu', (event) => {
   contextMenuEl = menu;
   menu.style.left = `${event.clientX}px`;
   menu.style.top = `${event.clientY}px`;
-  const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) {
-    menu.style.left = `${Math.max(4, window.innerWidth - rect.width - 4)}px`;
-  }
-  if (rect.bottom > window.innerHeight) {
-    menu.style.top = `${Math.max(4, window.innerHeight - rect.height - 4)}px`;
-  }
+  clampMenuToViewport(menu);
 });
 
 document.addEventListener('keydown', (event) => {

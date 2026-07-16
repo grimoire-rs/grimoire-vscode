@@ -489,10 +489,11 @@ vscode-button.sm {
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
 }
 
+/* Both menus (gear/chevron and right-click) append onto #root and position
+   fixed via inline left/top from main.ts — inside the vscode-scrollable
+   results viewport they would be clipped at the widget border. */
 .card-menu {
-  position: absolute;
-  right: 12px;
-  top: 34px;
+  position: fixed;
   z-index: 10;
   display: flex;
   flex-direction: column;
@@ -542,13 +543,6 @@ vscode-button.sm {
   height: 1px;
   margin: 4px 6px;
   background: var(--vscode-menu-separatorBackground, rgba(128, 128, 128, 0.35));
-}
-
-/* Right-click menu is placed at the cursor (main.ts sets left/top). */
-.card-context-menu {
-  position: fixed;
-  right: auto;
-  top: auto;
 }
 
 .link-button {
@@ -605,10 +599,12 @@ vscode-button.sm {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .init-body vscode-button {
-  align-self: flex-start;
+  align-self: flex-end;
 }
 
 .empty-state {
