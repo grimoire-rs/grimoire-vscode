@@ -47,7 +47,11 @@ export class CatalogService {
       }
       return { items: this.items, syncedAt: this.syncedAt, error: result.message };
     }
-    this.items = result.value.items;
+    // Boundary guard: an envelope that parses ok but whose `items` is missing
+    // or not an array (contract violation, but observed from misbehaving stubs
+    // and possible on a version-skewed grim) must not poison the cache — the
+    // card builders iterate it.
+    this.items = Array.isArray(result.value.items) ? result.value.items : [];
     this.syncedAt = Date.now();
     return this.state();
   }

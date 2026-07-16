@@ -286,6 +286,33 @@ suite('extension integration', () => {
       lines.some((l) => l.startsWith('context')),
       'context was invoked',
     );
+    // The cheap path: a plain refresh must NOT bust grim's catalog cache.
+    const search = lines.find((l) => l.startsWith('search'));
+    assert.ok(search, 'search was invoked');
+    assert.ok(!search.includes('--refresh'), `plain refresh stays cached: ${search}`);
+  });
+
+  test('grimoire.refresh forces a catalog refresh (--refresh)', async function () {
+    this.timeout(15000);
+    await activateExtension();
+    fs.rmSync(stub.argvLog, { force: true });
+    await vscode.commands.executeCommand('grimoire.refresh');
+    const search = argvLines(stub).find((l) => l.startsWith('search'));
+    assert.ok(search, 'search was invoked');
+    assert.ok(search.includes('--refresh'), `explicit refresh carries --refresh: ${search}`);
+  });
+
+  test('a search envelope missing items does not crash the refresh', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // A grim response that parses ok but omits `items` (contract violation /
+    // version skew) must not throw when the card builders iterate it.
+    canned(stub, 'search', { unexpected: true });
+    try {
+      await api.providers.sidebar.refresh();
+    } finally {
+      canned(stub, 'search', { items: [] });
+    }
   });
 
   test('sidebar install message round-trips to grim add with scope', async function () {

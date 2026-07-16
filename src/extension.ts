@@ -42,11 +42,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   scopes.logExecutable();
   const catalog = new CatalogService(scopes);
 
-  const refreshAll = async (): Promise<void> => {
-    // One snapshot feeds the sidebar (installs live in it) and the open details
-    // panels; the sidebar's single refresh computes both tab card sets.
-    const snap = await scopes.snapshot();
-    await Promise.all([sidebar.refresh({}, snap), details.refreshOpenPanels()]);
+  const refreshAll = async (options: { refresh?: boolean } = {}): Promise<void> => {
+    // sidebar.refresh posts its loading state BEFORE taking the snapshot (the
+    // slow part), so the webview's refreshing-footer timer starts at t=0; the
+    // details panels take their own snapshots inside buildVM regardless.
+    await Promise.all([sidebar.refresh(options), details.refreshOpenPanels()]);
   };
 
   const offerInstallGrim = async (): Promise<void> => {
@@ -219,7 +219,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       await vscode.commands.executeCommand('grimoire.marketplace.focus');
       sidebar.focusSearch();
     }),
-    vscode.commands.registerCommand('grimoire.refresh', () => refreshAll()),
+    // The explicit user refresh is the one path that busts grim's on-disk
+    // catalog cache; watcher/config/post-action refreshes stay cheap.
+    vscode.commands.registerCommand('grimoire.refresh', () => refreshAll({ refresh: true })),
     vscode.commands.registerCommand('grimoire.updateAll', () =>
       suspendWhile(async () => {
         await runWithStatusProgress('Updating all artifacts', async () => {

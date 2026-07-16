@@ -76,6 +76,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private lastReady:
     | { cards: CardVM[]; installed: CardVM[]; snap: Snapshot; syncedAt: number | null }
     | undefined;
+  // In-flight refresh count; repostLogos stays quiet while > 0.
+  private refreshing = 0;
+  // Monotonic refresh generation. A refresh checks it after every await and
+  // bails if a newer one has started, so a slow older refresh can never
+  // overwrite a newer refresh's state (stale cards / badge / prefetch).
+  private refreshGen = 0;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -240,9 +246,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /** Recomputes state and posts it to the webview (state posts are no-ops
    *  until the view resolves; the ready message re-triggers a refresh). */
-  async refresh(options: { refresh?: boolean } = {}, snapshot?: Snapshot): Promise<void> {
+  async refresh(options: { refresh?: boolean } = {}): Promise<void> {
     this.postState({ phase: 'loading', items: [], installed: [] });
-    const snap = snapshot ?? (await this.scopes.snapshot());
+    // Suppress prefetch-driven logo reposts while a refresh is in flight — a
+    // stale ready post would cancel the webview's pending refreshing-footer
+    // swap. Counter, not boolean: watcher and manual refreshes overlap.
+    const gen = ++this.refreshGen;
+    this.refreshing++;
+    try {
+      await this.doRefresh(options, gen);
+    } finally {
+      this.refreshing--;
+    }
+  }
+
+  private async doRefresh(options: { refresh?: boolean }, gen: number): Promise<void> {
+    const snap = await this.scopes.snapshot();
+    if (gen !== this.refreshGen) {
+      return; // a newer refresh started while snapshotting — it owns the state
+    }
     if (snap.grimMissing) {
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
@@ -253,6 +275,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ...options,
       projectConfigured: projectSearchable(snap),
     });
+    if (gen !== this.refreshGen) {
+      return; // superseded during the search
+    }
     if (catalogState.grimMissing) {
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
@@ -275,6 +300,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     );
     await this.enrichLogos(cards);
     await this.enrichLogos(installed);
+    if (gen !== this.refreshGen) {
+      return; // superseded during logo enrichment — don't clobber newer state
+    }
     this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
     this.setBadge(installed.filter((c) => c.state === 'outdated').length);
     if (catalogState.error !== undefined) {
@@ -325,11 +353,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  flash — pops in logos as prefetches land (debounced by the prefetcher). */
   async repostLogos(): Promise<void> {
     const ready = this.lastReady;
-    if (!ready) {
+    if (!ready || this.refreshing > 0) {
       return;
     }
     await this.enrichLogos(ready.cards);
     await this.enrichLogos(ready.installed);
+    // Re-check after the await gap: a refresh may have started (or replaced
+    // lastReady) while the logo reads were in flight — posting now would emit
+    // a stale ready state that cancels the webview's refreshing footer.
+    if (this.refreshing > 0 || this.lastReady !== ready) {
+      return;
+    }
     this.postState({
       phase: 'ready',
       items: ready.cards,

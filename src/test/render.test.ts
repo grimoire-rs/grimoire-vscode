@@ -451,11 +451,13 @@ suite('sidebar rendering', () => {
     );
     assert.ok(html.includes('Refreshing from ghcr.io'));
     assert.ok(html.includes('codicon-sync'));
-    // Unknown default registry omits the footer rather than rendering "null".
+    // Unknown default registry still shows a footer — plain "Refreshing…",
+    // never "null" and never an empty swap (#38).
     const noHost = await litHtml(
       renderSidebar(sidebarState({ phase: 'loading' }), DEFAULT_FILTER),
     );
     assert.ok(!noHost.includes('Refreshing from'));
+    assert.ok(noHost.includes('Refreshing…'));
   });
 
   test('loading footer host is escaped (no HTML injection)', async () => {
@@ -794,12 +796,15 @@ suite('sidebar split rendering (item 3)', () => {
     assert.strictEqual(composedUnconfigured, await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER)));
   });
 
-  test('refreshing footer escapes the registry host and is empty without one', async () => {
+  test('refreshing footer escapes the registry host; plain fallback without one', async () => {
     const html = await litHtml(renderRefreshingFooter('<img src=x onerror=alert(1)>'));
     assert.ok(!html.includes('<img src=x'));
     assert.ok(html.includes('&lt;img src=x'));
     assert.ok(html.includes('loading-footer'));
-    assert.strictEqual(await litString(renderRefreshingFooter(null)), '');
+    // No host known yet -> generic "Refreshing…", never an empty footer (#38).
+    const noHost = await litString(renderRefreshingFooter(null));
+    assert.ok(noHost.includes('Refreshing…'));
+    assert.ok(!noHost.includes('Refreshing from'));
   });
 
   test('search row carries a clear-search action icon, hidden until there is text (item 4)', async () => {

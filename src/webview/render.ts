@@ -344,13 +344,13 @@ function renderLoading(defaultRegistry: string | null): TemplateResult {
 }
 
 /** The "Refreshing from <host>…" line. Standalone so a background refresh over
- *  an already-painted list swaps only the footer while the cards stay put. */
-export function renderRefreshingFooter(
-  defaultRegistry: string | null,
-): TemplateResult | typeof nothing {
-  return defaultRegistry
-    ? html`<div class="footer loading-footer"><span class="codicon codicon-sync"></span><span>Refreshing from ${defaultRegistry}…</span></div>`
-    : nothing;
+ *  an already-painted list swaps only the footer while the cards stay put.
+ *  Falls back to a plain "Refreshing…" when the registry host is not known
+ *  yet (first refresh of a session) — never an empty footer. */
+export function renderRefreshingFooter(defaultRegistry: string | null): TemplateResult {
+  return html`<div class="footer loading-footer"><span class="codicon codicon-sync"></span><span>${
+    defaultRegistry ? `Refreshing from ${defaultRegistry}…` : 'Refreshing…'
+  }</span></div>`;
 }
 
 /** Workspace-level notice slot at the very top of the view, ABOVE the tab bar
