@@ -4,12 +4,18 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  SKIP_VERSION,
+  UPDATE_GRIM,
+  VIEW_RELEASE,
   extract,
   findBinary,
+  isNewerVersion,
+  latestVersion,
   parseSha256,
   selectAsset,
   sha256Hex,
   targetTriple,
+  updateDecision,
   type DistManifest,
 } from '../installer';
 
@@ -77,6 +83,96 @@ suite('installer asset selection', () => {
   test('installer scripts and checksums are never selected', () => {
     const asset = selectAsset(manifest('tar.xz'), 'linux', 'arm64');
     assert.ok(asset && !asset.name.endsWith('.sh') && !asset.name.endsWith('.sha256'));
+  });
+});
+
+suite('installer update check', () => {
+  test('latestVersion prefers releases[].app_version', () => {
+    const doc: DistManifest = {
+      announcement_tag: 'v9.9.9',
+      releases: [{ app_name: 'grimoire', app_version: '0.9.1' }],
+      artifacts: {},
+    };
+    assert.strictEqual(latestVersion(doc), '0.9.1');
+  });
+
+  test('latestVersion falls back to the announcement tag (both cargo-dist styles)', () => {
+    assert.strictEqual(latestVersion({ announcement_tag: 'v0.9.1', artifacts: {} }), '0.9.1');
+    assert.strictEqual(latestVersion({ announcement_tag: 'grim-v0.9.1', artifacts: {} }), '0.9.1');
+  });
+
+  test('latestVersion picks the grim entry in a multi-app manifest', () => {
+    const doc: DistManifest = {
+      releases: [
+        { app_name: 'other-tool', app_version: '9.9.9' },
+        { app_name: 'grimoire', app_version: '0.9.1' },
+      ],
+      artifacts: {},
+    };
+    assert.strictEqual(latestVersion(doc), '0.9.1');
+  });
+
+  test('latestVersion bounds a pathological announcement tag (no ReDoS hang)', () => {
+    // A long digits-only tag would backtrack O(n²) against the unanchored
+    // regex; the slice bound keeps it linear. Assert it returns fast + safe.
+    const doc: DistManifest = { announcement_tag: '9'.repeat(100000), artifacts: {} };
+    const started = Date.now();
+    assert.strictEqual(latestVersion(doc), undefined);
+    assert.ok(Date.now() - started < 100, 'latestVersion must not hang on a long tag');
+  });
+
+  test('latestVersion is undefined without version fields (today’s selection manifest)', () => {
+    assert.strictEqual(latestVersion(manifest('tar.gz')), undefined);
+    assert.strictEqual(latestVersion({ announcement_tag: 'nightly', artifacts: {} }), undefined);
+  });
+
+  test('isNewerVersion compares three numeric components', () => {
+    assert.strictEqual(isNewerVersion('0.10.0', '0.9.0'), true);
+    assert.strictEqual(isNewerVersion('1.0.0', '0.9.9'), true);
+    assert.strictEqual(isNewerVersion('0.9.1', '0.9.0'), true);
+    assert.strictEqual(isNewerVersion('0.9.0', '0.9.0'), false);
+    assert.strictEqual(isNewerVersion('0.9.0', '0.10.0'), false);
+  });
+
+  test('isNewerVersion tolerates garbage and pre-release suffixes', () => {
+    assert.strictEqual(isNewerVersion('garbage', 'also-garbage'), false);
+    assert.strictEqual(isNewerVersion('', '0.9.0'), false);
+    // Suffixes don't crash; the numeric core decides.
+    assert.strictEqual(isNewerVersion('0.10.0-rc.1', '0.9.0'), true);
+    assert.strictEqual(isNewerVersion('0.9.0-rc.1', '0.9.0'), false);
+  });
+
+  test('updateDecision offers an in-place update for a managed binary', () => {
+    const p = updateDecision({ latest: '0.10.0', current: '0.9.0', skipped: undefined, managed: true });
+    assert.ok(p);
+    assert.deepStrictEqual(p.buttons, [UPDATE_GRIM, SKIP_VERSION]);
+    assert.ok(p.message.includes('0.10.0') && p.message.includes('0.9.0'));
+  });
+
+  test('updateDecision links the release page for a user-managed binary', () => {
+    const p = updateDecision({ latest: '0.10.0', current: '0.9.0', skipped: undefined, managed: false });
+    assert.ok(p);
+    // Never "Update grim" — the extension must not overwrite a binary it doesn't own.
+    assert.deepStrictEqual(p.buttons, [VIEW_RELEASE, SKIP_VERSION]);
+  });
+
+  test('updateDecision returns null when not newer, skipped, or missing', () => {
+    assert.strictEqual(
+      updateDecision({ latest: '0.9.0', current: '0.9.0', skipped: undefined, managed: true }),
+      null,
+    );
+    assert.strictEqual(
+      updateDecision({ latest: '0.9.0', current: '0.10.0', skipped: undefined, managed: true }),
+      null,
+    );
+    assert.strictEqual(
+      updateDecision({ latest: '0.10.0', current: '0.9.0', skipped: '0.10.0', managed: true }),
+      null,
+    );
+    assert.strictEqual(
+      updateDecision({ latest: undefined, current: '0.9.0', skipped: undefined, managed: true }),
+      null,
+    );
   });
 });
 

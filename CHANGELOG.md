@@ -2,6 +2,26 @@
 
 All notable changes to the Grimoire VS Code extension.
 
+## [Unreleased]
+
+### Added
+
+- **Daily grim update check** — checks GitHub once a day for a newer `grim`
+  release. When Grimoire manages the binary (auto-installed into extension
+  storage) the toast offers a one-click update; a PATH- or manually-installed
+  grim gets a link to the release page instead. Configurable via
+  `grimoire.checkForUpdates` (default on); "Skip This Version" suppresses that
+  version. (#34)
+
+### Fixed
+
+- **Refresh Catalog now bypasses grim's catalog cache** — the command forces
+  `grim search --refresh`, so newly published artifacts appear immediately
+  instead of waiting out grim's 1-hour on-disk cache. Watcher- and config-driven
+  refreshes stay on the cheap cached path. The "Refreshing…" footer now shows
+  reliably and can't be cancelled by a background logo repost, and an older
+  in-flight refresh can no longer overwrite a newer one's results. (#38)
+
 ## [0.1.0]
 
 First release.

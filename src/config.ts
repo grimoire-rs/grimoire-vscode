@@ -7,6 +7,7 @@ export interface GrimoireConfig {
   showDeprecated: boolean;
   watchForChanges: boolean;
   prefetchDetails: boolean;
+  checkForUpdates: boolean;
   extraEnv: Record<string, string>;
 }
 
@@ -22,6 +23,7 @@ export function readConfig(): GrimoireConfig {
     showDeprecated: cfg.get<boolean>('showDeprecated', true),
     watchForChanges: cfg.get<boolean>('watchForChanges', true),
     prefetchDetails: cfg.get<boolean>('prefetchDetails', true),
+    checkForUpdates: cfg.get<boolean>('checkForUpdates', true),
     extraEnv: cfg.get<Record<string, string>>('extraEnv', {}),
   };
 }

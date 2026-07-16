@@ -40,6 +40,9 @@ AI artifacts your tools rely on.
   reveals that artifact's details.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to
   download the latest release from GitHub (checksum-verified).
+- **Stay up to date** — once a day Grimoire checks GitHub for a newer `grim`
+  release. If it manages the binary it offers a one-click update; otherwise it
+  links the release page. Turn it off with `grimoire.checkForUpdates`.
 - **Live refresh** — watches `grimoire.toml` / `grimoire.lock` and refreshes the
   views when things change on disk, so the UI stays in sync with the `grim` CLI
   and its terminal UI (TUI).
@@ -74,6 +77,7 @@ the `vscode://` deep link, not run from the Command Palette.
 | `grimoire.showDeprecated` | `true` | Show deprecated artifacts in search results |
 | `grimoire.watchForChanges` | `true` | Refresh views when `grimoire.toml` / `grimoire.lock` change |
 | `grimoire.prefetchDetails` | `true` | Prefetch top Browse results so details open instantly and card logos appear |
+| `grimoire.checkForUpdates` | `true` | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page) |
 | `grimoire.extraEnv` | `{}` | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials) |
 
 ## Requirements

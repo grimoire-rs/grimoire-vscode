@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CatalogService } from './catalog';
-import { readConfig } from './config';
+import { DEFAULT_EXECUTABLE, readConfig } from './config';
 import {
   addArgs,
   contextArgs,
@@ -11,7 +11,15 @@ import {
   type GrimResult,
   type Scope,
 } from './grim';
-import { installGrim } from './installer';
+import {
+  RELEASE_PAGE,
+  SKIP_VERSION,
+  UPDATE_GRIM,
+  VIEW_RELEASE,
+  fetchLatestVersion,
+  installGrim,
+  updateDecision,
+} from './installer';
 import { initNotify, notifyError, runWithStatusProgress } from './notify';
 import { Prefetcher } from './prefetch';
 import { ScopeService } from './scopes';
@@ -199,6 +207,64 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     watchers.rebuild(ctx.ok ? ctx.value.grim_home : undefined);
   };
   void rebuildWatchers();
+
+  // Daily grim update check. Best-effort background task: every failure is
+  // log-only, never a toast. The extension only offers to overwrite a binary
+  // it installed itself (globalStorage/bin); PATH/setting grims get notify-only.
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const checkForUpdates = async (): Promise<void> => {
+    try {
+      if (!readConfig().checkForUpdates) {
+        return;
+      }
+      // ponytail: read-then-write throttle on globalState — two windows
+      // activating together can each prompt once; bounded, self-heals in a day.
+      if (Date.now() - context.globalState.get<number>('updateCheck.lastCheck', 0) < DAY_MS) {
+        return;
+      }
+      // Stamp before fetching so a flaky network can't hammer GitHub.
+      await context.globalState.update('updateCheck.lastCheck', Date.now());
+      const latest = await fetchLatestVersion();
+      if (!latest || latest === context.globalState.get<string>('updateCheck.skippedVersion')) {
+        return;
+      }
+      const ctx = await scopes.run<ContextInfo>(contextArgs(), 'global');
+      if (!ctx.ok) {
+        return;
+      }
+      // Managed = the extension's own copy AND the setting left at default. The
+      // default gate matters: a user who points path.executable AT the bundled
+      // path is user-managed — we must not offer to overwrite their choice.
+      const managed =
+        readConfig().executable === DEFAULT_EXECUTABLE &&
+        scopes.resolveExecutable() === scopes.bundledExecutablePath();
+      const prompt = updateDecision({
+        latest,
+        current: ctx.value.version,
+        skipped: context.globalState.get<string>('updateCheck.skippedVersion'),
+        managed,
+      });
+      if (!prompt) {
+        return;
+      }
+      const choice = await vscode.window.showInformationMessage(prompt.message, ...prompt.buttons);
+      if (choice === UPDATE_GRIM) {
+        await runInstallGrim();
+      } else if (choice === VIEW_RELEASE) {
+        void vscode.env.openExternal(vscode.Uri.parse(RELEASE_PAGE));
+      } else if (choice === SKIP_VERSION) {
+        await context.globalState.update('updateCheck.skippedVersion', latest);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`update check failed: ${message}`);
+    }
+  };
+  void checkForUpdates();
+  // Long-lived windows (WSL/remote stay open for days) re-check daily; the
+  // globalState throttle makes repeat invocations idempotent.
+  const updateTimer = setInterval(() => void checkForUpdates(), DAY_MS);
+  context.subscriptions.push({ dispose: () => clearInterval(updateTimer) });
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {

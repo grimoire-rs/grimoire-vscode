@@ -11,8 +11,52 @@ import * as path from 'path';
 
 export const RELEASE_BASE = 'https://github.com/grimoire-rs/grimoire/releases/latest/download';
 
-// cargo-dist manifest subset we rely on.
+/** The releases page, offered to users with a non-managed (PATH / manually
+ *  installed) grim so the "update available" toast still has an action. */
+export const RELEASE_PAGE = 'https://github.com/grimoire-rs/grimoire/releases/latest';
+
+/** cargo-dist `releases[].app_name` for grim (the manifest ships the whole
+ *  `grimoire` workspace under one app today). */
+const GRIM_APP_NAME = 'grimoire';
+
+/** Update-toast action labels — shared so the pure decision and the handler
+ *  that acts on the choice can't drift. */
+export const UPDATE_GRIM = 'Update grim';
+export const VIEW_RELEASE = 'View Release';
+export const SKIP_VERSION = 'Skip This Version';
+
+export interface UpdatePrompt {
+  message: string;
+  /** Buttons for showInformationMessage, in order. */
+  buttons: string[];
+}
+
+/** Pure update-check decision: whether to prompt and with which actions. Kept
+ *  out of activate() so the managed-vs-user and skip/newer branches are unit-
+ *  testable without stubbing vscode.window. Returns null → no toast. */
+export function updateDecision(args: {
+  latest: string | undefined;
+  current: string;
+  skipped: string | undefined;
+  managed: boolean;
+}): UpdatePrompt | null {
+  const { latest, current, skipped, managed } = args;
+  if (!latest || latest === skipped || !isNewerVersion(latest, current)) {
+    return null;
+  }
+  return {
+    message: `grim ${latest} is available (installed: ${current}).`,
+    // Managed binary → we can replace it in place; otherwise link the release
+    // page rather than dead-end on a skip-only toast.
+    buttons: managed ? [UPDATE_GRIM, SKIP_VERSION] : [VIEW_RELEASE, SKIP_VERSION],
+  };
+}
+
+// cargo-dist manifest subset we rely on. Version fields optional — external
+// data, never assume they exist.
 export interface DistManifest {
+  announcement_tag?: string;
+  releases?: { app_name?: string; app_version?: string }[];
   artifacts: Record<
     string,
     {
@@ -20,6 +64,42 @@ export interface DistManifest {
       target_triples?: string[];
     }
   >;
+}
+
+/** Latest released version out of a dist-manifest. Prefers the grim
+ *  `releases[].app_version` (matched by app name so a multi-package manifest
+ *  can't hand back a sibling's version); falls back to any release entry, then
+ *  to parsing the announcement tag (`v0.9.1` single-package or `grim-v0.9.1`
+ *  workspace style). */
+export function latestVersion(manifest: DistManifest): string | undefined {
+  const fromRelease =
+    manifest.releases?.find((r) => r.app_name === GRIM_APP_NAME && r.app_version)?.app_version ??
+    manifest.releases?.find((r) => r.app_version)?.app_version;
+  if (fromRelease) {
+    return fromRelease;
+  }
+  // slice(-64) bounds the unanchored regex: announcement_tag is remote data,
+  // and without the bound a pathological long digits-only string backtracks
+  // O(n²). Real tags are a handful of chars and live at the end.
+  const tag = (manifest.announcement_tag ?? '').slice(-64);
+  return /(\d+\.\d+\.\d+\S*)$/.exec(tag)?.[1];
+}
+
+/** True when `latest` is a strictly newer x.y.z than `current`. Non-numeric
+ *  parts compare as 0; equal or garbage input -> false.
+ *  ponytail: 3-component numeric compare, not full semver — grim releases plain x.y.z. */
+export function isNewerVersion(latest: string, current: string): boolean {
+  const parse = (v: string): number[] =>
+    v.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const [l, c] = [parse(latest), parse(current)];
+  for (let i = 0; i < 3; i++) {
+    const a = l[i] ?? 0;
+    const b = c[i] ?? 0;
+    if (a !== b) {
+      return a > b;
+    }
+  }
+  return false;
 }
 
 /** platform/arch -> rust target triple. */
@@ -78,6 +158,12 @@ async function download(url: string): Promise<Buffer> {
     throw new Error(`download failed: ${url} -> HTTP ${response.status}`);
   }
   return Buffer.from(await response.arrayBuffer());
+}
+
+/** Latest grim version from the same dist-manifest fetch installGrim uses. */
+export async function fetchLatestVersion(): Promise<string | undefined> {
+  const raw = await download(`${RELEASE_BASE}/dist-manifest.json`);
+  return latestVersion(JSON.parse(raw.toString('utf8')) as DistManifest);
 }
 
 /** Extracts any tar/zip archive with the system tar (bsdtar handles both). Exported for tests. */

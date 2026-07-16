@@ -181,6 +181,11 @@
           "default": true,
           "description": "Prefetch the top browse results into the details cache so opening an artifact paints instantly and card logos appear as they load."
         },
+        "grimoire.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Once a day, check GitHub for a newer grim CLI release. Offers a one-click update when the extension manages the grim binary, or a link to the release page for a PATH- or manually-installed grim."
+        },
         "grimoire.extraEnv": {
           "type": "object",
           "default": {},
