@@ -16,7 +16,7 @@ import {
   type Scope,
 } from '../grim';
 import type { CatalogService } from '../catalog';
-import type { ScopeService, Snapshot } from '../scopes';
+import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
 import {
   artifactName,
   authenticatedHosts,
@@ -128,9 +128,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Installing into an unconfigured project needs grimoire.toml first:
         // `grim add` there errors (not-found, exit 79) before any network, so
         // run `grim init` then `grim add` as one step — mirrors the details
-        // host (item 2).
+        // host (item 2). projectNeedsInit (not !projectConfigured): a FAILED
+        // probe must not trigger init — see the method's doc.
         const needsInit =
-          message.scope === 'project' && !(await this.scopes.projectConfigured());
+          message.scope === 'project' && (await this.scopes.projectNeedsInit());
         const steps = needsInit
           ? [initArgs(), addArgs(message.ref)]
           : [addArgs(message.ref)];
@@ -250,7 +251,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // results, installed cards from the snapshot enriched by the same items.
     const catalogState = await this.catalog.search(this.query, {
       ...options,
-      projectConfigured: snap.project?.context.config_exists ?? false,
+      projectConfigured: projectSearchable(snap),
     });
     if (catalogState.grimMissing) {
       this.postState({ phase: 'no-grim', items: [], installed: [] });
@@ -360,7 +361,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       installedItems: partial.installed,
       scopes: {
         projectOpen: snap?.projectFolder !== undefined,
-        projectConfigured: snap?.project?.context.config_exists ?? false,
+        // snap can be undefined here (posted before a snapshot exists, e.g. the
+        // 'loading' phase); keep the pre-existing false default in that case.
+        projectConfigured: snap ? projectSearchable(snap) : false,
         projectName,
       },
       registries: snap?.global?.context.registries.map((r) => r.url) ?? [],

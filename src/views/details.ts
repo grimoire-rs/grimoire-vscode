@@ -20,7 +20,7 @@ import {
 } from '../grim';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 import type { CatalogService } from '../catalog';
-import type { ScopeService, Snapshot } from '../scopes';
+import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
 import {
   artifactName,
   buildDetailsVM,
@@ -317,7 +317,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     const folder = this.scopes.projectFolder();
     const scopes: ScopesVM = {
       projectOpen: folder !== undefined,
-      projectConfigured: cached?.project?.context.config_exists ?? false,
+      projectConfigured: cached ? projectSearchable(cached) : false,
       projectName: folder ? (folder.split(/[\\/]/).pop() ?? null) : null,
     };
     // A snapshot is almost always cached by the time a panel opens (the sidebar
@@ -407,7 +407,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         // Installing into an unconfigured project needs grimoire.toml first:
         // `grim add` there errors (not-found, exit 79) before any network, so
         // run `grim init` then `grim add` as one host-side step (item 1).
-        const needsInit = message.scope === 'project' && !(await this.scopes.projectConfigured());
+        // projectNeedsInit (not !projectConfigured): a FAILED probe must not
+        // trigger init — see the method's doc.
+        const needsInit = message.scope === 'project' && (await this.scopes.projectNeedsInit());
         const steps = needsInit ? [initArgs(), addArgs(repo)] : [addArgs(repo)];
         await this.action(repo, panel, steps, message.scope, 'Installing…');
         return;
@@ -674,7 +676,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       installs,
       scopes: {
         projectOpen: snapshot.projectFolder !== undefined,
-        projectConfigured: snapshot.project?.context.config_exists ?? false,
+        projectConfigured: projectSearchable(snapshot),
         projectName,
       },
       logoUri: docs.logoUri,
@@ -799,7 +801,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return JSON.stringify({
       installs: installsFor(repo, scopeStatuses(snapshot)),
       projectOpen: snapshot.projectFolder !== undefined,
-      projectConfigured: snapshot.project?.context.config_exists ?? false,
+      projectConfigured: projectSearchable(snapshot),
       projectName: snapshot.projectFolder?.split(/[\\/]/).pop() ?? null,
     });
   }

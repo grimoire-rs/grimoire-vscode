@@ -31,6 +31,13 @@ export interface Snapshot {
   projectFolder?: string;
   grimMissing: boolean;
   error?: string;
+  /** Set when a workspace folder is open and the project-scope `grim context`
+   *  probe itself failed (transient error, not "no grimoire.toml"). `project`
+   *  is `undefined` in both that case and the merely-unconfigured case, so
+   *  without this flag a failed probe reads as "unconfigured" downstream —
+   *  silently flipping browse/search to the global registry set instead of
+   *  surfacing the probe failure. See projectSearchable(). */
+  projectProbeFailed?: boolean;
 }
 
 /** Parses declared name -> ref pairs out of a grimoire.toml. Pure; exported for tests. */
@@ -65,6 +72,18 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
  *  Pure; exported for tests. */
 export function withGlobalFlag(args: string[]): string[] {
   return ['--global', ...args];
+}
+
+/** Collapses project scope's tri-state — configured, unconfigured, or probe
+ *  failed — into whether project scope is what a browse/search should target.
+ *  `config_exists` alone can't tell "no grimoire.toml" apart from "the probe
+ *  errored", since both leave `snapshot.project` undefined; treating a failed
+ *  probe as searchable keeps browse on project scope so the failure surfaces
+ *  as a search error, rather than silently falling back to global's registry
+ *  set. This matches project scope's behavior before the global fallback
+ *  landed, when it was searched unconditionally. Pure; exported for tests. */
+export function projectSearchable(snapshot: Snapshot): boolean {
+  return (snapshot.project?.context.config_exists ?? false) || (snapshot.projectProbeFailed ?? false);
 }
 
 export class ScopeService {
@@ -120,6 +139,22 @@ export class ScopeService {
     }
     const ctx = await this.run<ContextInfo>(contextArgs(), 'project');
     return ctx.ok && ctx.value.config_exists;
+  }
+
+  /**
+   * True ONLY when the probe positively reports "no grimoire.toml" — a failed
+   * probe returns false. Deliberately asymmetric with projectConfigured():
+   * install flows run `grim init` on this signal, and init writes at the cwd
+   * while config discovery walks UP, so initializing on a transient probe
+   * failure could shadow a parent directory's config. When the probe fails,
+   * skipping init lets `grim add` surface the real error instead.
+   */
+  async projectNeedsInit(): Promise<boolean> {
+    if (!this.projectFolder()) {
+      return false;
+    }
+    const ctx = await this.run<ContextInfo>(contextArgs(), 'project');
+    return ctx.ok && !ctx.value.config_exists;
   }
 
   /** Logs which grim binary is actually being spawned — call at activation and on
@@ -209,6 +244,11 @@ export class ScopeService {
     }
     if (project?.snapshot) {
       snapshot.project = project.snapshot;
+    } else if (project && !project.probe.ok) {
+      // The project probe itself failed (transient error) rather than simply
+      // finding no grimoire.toml — flag it so downstream consumers don't read
+      // this as "unconfigured" (see projectProbeFailed doc comment).
+      snapshot.projectProbeFailed = true;
     }
     this.lastSnapshot = snapshot;
     return snapshot;

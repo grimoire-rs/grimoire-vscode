@@ -3,10 +3,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { parseDeclaredRefs, ScopeService, withGlobalFlag } from '../scopes';
+import { parseDeclaredRefs, projectSearchable, ScopeService, withGlobalFlag } from '../scopes';
+import type { Snapshot } from '../scopes';
 import { artifactName } from '../webview/model';
 import type { DetailsVM, HostToDetails, RevalidateState } from '../webview/protocol';
 import type { GrimoireApi } from '../extension';
+import type { ContextInfo, GrimResult, Scope } from '../grim';
 
 const isWindows = process.platform === 'win32';
 
@@ -1727,6 +1729,113 @@ suite('withGlobalFlag', () => {
       '--',
       'grim usage',
     ]);
+  });
+});
+
+suite('projectSearchable', () => {
+  // projectSearchable only reads config_exists off this, but it lives on the
+  // full grim context shape, so build a minimal-but-complete fixture.
+  function contextWith(configExists: boolean): ContextInfo {
+    return {
+      version: '0.9.0',
+      scope: 'project',
+      workspace: '/ws',
+      config_path: '/ws/grimoire.toml',
+      config_exists: configExists,
+      lock_path: '/ws/grimoire.lock',
+      lock_exists: false,
+      grim_home: '/home/user/.grimoire',
+      offline: false,
+      clients: [],
+      registries: [],
+      default_registry: null,
+    };
+  }
+
+  test('project config exists -> searchable', () => {
+    const snapshot: Snapshot = {
+      grimMissing: false,
+      project: { context: contextWith(true), status: [], declared: {} },
+    };
+    assert.strictEqual(projectSearchable(snapshot), true);
+  });
+
+  test('folder open, probe failed -> searchable (surfaces the failure instead of a silent global fallback)', () => {
+    const snapshot: Snapshot = {
+      grimMissing: false,
+      projectFolder: '/ws',
+      projectProbeFailed: true,
+    };
+    assert.strictEqual(projectSearchable(snapshot), true);
+  });
+
+  test('folder open, probe ok, no grimoire.toml -> not searchable', () => {
+    const snapshot: Snapshot = {
+      grimMissing: false,
+      project: { context: contextWith(false), status: [], declared: {} },
+    };
+    assert.strictEqual(projectSearchable(snapshot), false);
+  });
+
+  test('no project data and no probe failure -> not searchable', () => {
+    const snapshot: Snapshot = { grimMissing: false };
+    assert.strictEqual(projectSearchable(snapshot), false);
+  });
+});
+
+// snapshot()'s flag-setting branch and the init gate need per-scope outcomes
+// the shell stub can't fake (it cans one context.json for BOTH scopes), so
+// these override run() on the instance — the seam every spawn goes through.
+suite('project probe failure (run override)', () => {
+  function probeContext(configExists: boolean): ContextInfo {
+    return {
+      version: '0.9.0',
+      scope: 'project',
+      workspace: '/ws',
+      config_path: '/nonexistent/grimoire.toml',
+      config_exists: configExists,
+      lock_path: '/nonexistent/grimoire.lock',
+      lock_exists: false,
+      grim_home: path.join(os.tmpdir(), 'grim-probe-home'),
+      offline: false,
+      clients: [],
+      registries: [],
+      default_registry: null,
+    };
+  }
+
+  function scopedRun(project: GrimResult<ContextInfo>) {
+    return async <T>(_args: string[], scope: Scope): Promise<GrimResult<T>> =>
+      (scope === 'project' ? project : { ok: true, value: probeContext(false) }) as GrimResult<T>;
+  }
+
+  const probeError: GrimResult<ContextInfo> = {
+    ok: false,
+    kind: 'error',
+    code: 'internal',
+    exitCode: 70,
+    message: 'transient probe failure',
+  };
+
+  test('snapshot() sets projectProbeFailed on a project probe error, keeping it searchable', async () => {
+    const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
+    scopes.run = scopedRun(probeError);
+    const snap = await scopes.snapshot();
+    assert.strictEqual(snap.projectProbeFailed, true);
+    assert.strictEqual(snap.project, undefined, 'a failed probe yields no project snapshot');
+    assert.strictEqual(projectSearchable(snap), true);
+  });
+
+  test('projectNeedsInit: only a positive "no config" probe triggers init', async () => {
+    const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
+    // Probe failed → no init: init writes at the cwd while discovery walks up,
+    // so initializing on a transient failure could shadow a parent config.
+    scopes.run = scopedRun(probeError);
+    assert.strictEqual(await scopes.projectNeedsInit(), false);
+    scopes.run = scopedRun({ ok: true, value: probeContext(false) });
+    assert.strictEqual(await scopes.projectNeedsInit(), true);
+    scopes.run = scopedRun({ ok: true, value: probeContext(true) });
+    assert.strictEqual(await scopes.projectNeedsInit(), false);
   });
 });
 

@@ -42,7 +42,9 @@ export async function pickVersion(
   await runWithStatusProgress(`Installing ${artifactName(repo)}:${tag}`, async () => {
     // A preselected project scope may still lack grimoire.toml; `grim add`
     // there errors before any network, so create the config first (item 1).
-    if (scope === 'project' && !(await scopes.projectConfigured())) {
+    // projectNeedsInit (not !projectConfigured): a FAILED probe must not
+    // trigger init — see the method's doc.
+    if (scope === 'project' && (await scopes.projectNeedsInit())) {
       const init = await scopes.run<ActionReport>(initArgs(), 'project');
       if (!init.ok) {
         const message = init.kind === 'not-found' ? 'grim executable not found' : init.message;

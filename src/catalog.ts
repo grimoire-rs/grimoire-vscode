@@ -34,6 +34,10 @@ export class CatalogService {
     // scope ONLY when it has a grimoire.toml. Without one, project-scope search
     // has no registries and returns []; fall back to global so the global
     // registries' catalog is still browsable (and installable globally).
+    // Callers pass projectConfigured via scopes.projectSearchable(), which also
+    // treats a FAILED project probe as "configured" — otherwise a transient
+    // probe error would silently fall back to global too, instead of searching
+    // project scope and surfacing the failure as a search error.
     const scope =
       this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
     const result: GrimResult<ItemsEnvelope<SearchItem>> = await this.scopes.run(args, scope);
