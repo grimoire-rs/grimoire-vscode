@@ -398,22 +398,40 @@ document.addEventListener('keydown', (event) => {
   closeCardMenu();
 });
 
-window.addEventListener(
-  'scroll',
-  () => {
-    closeContextMenu();
-    closeCardMenu();
-  },
-  true,
+// Every way the results list scrolls — mouse wheel, thumb drag, a
+// scrollbar-track click, touch pan, or a native scrollIntoView (Tab focus,
+// find-in-page) — ends up writing the component's own '.scrollable-container'
+// (its render() binds .scrollTop there, and a programmatic scrollTop write
+// still fires a native 'scroll' event), so one listener on that element is
+// the primary path: it's the only thing that sees every case. The component's
+// 'vsc-scrollable-scroll' custom event is dispatched only from its wheel and
+// thumb-drag handlers (see vscode-scrollable.js's _handleComponentWheel and
+// _handleScrollThumbMouseMove) — it misses scrollbar-track clicks and native
+// container scrolls entirely, so it's kept only as a fallback for a future
+// component version that renames or drops '.scrollable-container'. The
+// shadow root doesn't exist until the component's first lit render, so wait
+// for the element to upgrade and for its first updateComplete before
+// reaching into it.
+customElements.whenDefined('vscode-scrollable').then(() =>
+  scrollEl.updateComplete.then(() => {
+    const scroller = scrollEl.shadowRoot?.querySelector('.scrollable-container');
+    if (scroller) {
+      scroller.addEventListener(
+        'scroll',
+        () => {
+          closeContextMenu();
+          closeCardMenu();
+        },
+        { passive: true },
+      );
+    } else {
+      scrollEl.addEventListener('vsc-scrollable-scroll', () => {
+        closeContextMenu();
+        closeCardMenu();
+      });
+    }
+  }),
 );
-
-// The results scroll inside vscode-scrollable's shadow DOM; 'scroll' is not a
-// composed event, so the window capture listener above never sees it — the
-// component's own custom event covers closing menus on results scroll.
-scrollEl.addEventListener('vsc-scrollable-scroll', () => {
-  closeContextMenu();
-  closeCardMenu();
-});
 
 root.addEventListener('input', (event) => {
   const target = event.target as HTMLElement;
