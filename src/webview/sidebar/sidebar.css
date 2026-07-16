@@ -15,10 +15,11 @@ body {
   height: 100vh;
 }
 
-/* Notice, tabs, search and filters are natural height at the top; the results
-   fill the rest and scroll inside vscode-scrollable (#sb-scroll) — the
-   workbench overlay scrollbar — so the footer region below stays pinned to
-   the view bottom regardless of content height. */
+/* Notice, tabs, search and filters are natural height at the top; the scroll
+   region (#sb-scroll) fills the rest and scrolls inside vscode-scrollable —
+   the workbench overlay scrollbar — so the footer region below stays pinned
+   to the view bottom regardless of content height. The results inside it are
+   natural content height. */
 #sb-scroll {
   flex: 1;
   min-height: 0;
@@ -27,7 +28,6 @@ body {
 #sb-results {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
 }
 
 #sb-footer {
