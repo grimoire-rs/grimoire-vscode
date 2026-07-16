@@ -8,6 +8,7 @@ import {
   type ContextInfo,
   type DigestResult,
 } from '../grim';
+import { withGlobalFlag } from '../scopes';
 
 // Live contract tests against a real grim. Defaults to `grim` on PATH (the
 // released CLI ships the full v2 surface: describe, fetch --description,
@@ -29,7 +30,7 @@ suite('grim live (real binary)', function () {
   });
 
   test('context --global parses into a clean ok result', async () => {
-    const result = await runJson<ContextInfo>(GRIM, contextArgs({ global: true }), {
+    const result = await runJson<ContextInfo>(GRIM, withGlobalFlag(contextArgs()), {
       timeoutMs: 15000,
     });
     // Never throws; a real grim yields a discriminated result. Global scope always

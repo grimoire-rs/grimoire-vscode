@@ -267,19 +267,14 @@ export function runJson<T>(
 }
 
 // --- Pure argv builders (exported for tests). `--format json` is appended by
-// --- runJson; builders emit subcommand + flags only.
-
-export interface ScopeArgs {
-  global?: boolean;
-}
-
-function scopeFlags(options: ScopeArgs): string[] {
-  return options.global ? ['--global'] : [];
-}
+// --- runJson; builders emit subcommand + flags only. Scope (`--global`) is
+// --- NOT a builder concern — ScopeService.run prepends it via withGlobalFlag
+// --- for global-scope calls, so a builder emitting it too would risk clap
+// --- rejecting a doubled top-level flag.
 
 export function searchArgs(
   query: string,
-  options: ScopeArgs & { refresh?: boolean; showDeprecated?: boolean } = {},
+  options: { refresh?: boolean; showDeprecated?: boolean } = {},
 ): string[] {
   const args = ['search'];
   if (options.refresh) {
@@ -288,7 +283,6 @@ export function searchArgs(
   if (options.showDeprecated) {
     args.push('--show-deprecated');
   }
-  args.push(...scopeFlags(options));
   // grim's [QUERY] is ONE positional — grim whitespace-splits and ANDs the
   // terms itself. Passing pre-split words as separate argv entries makes clap
   // reject the second one ("unexpected argument"), so the whole query travels
@@ -305,7 +299,7 @@ export function searchArgs(
 
 export function fetchArgs(
   reference: string,
-  options: ScopeArgs & {
+  options: {
     path?: string;
     vendor?: string;
     description?: boolean;
@@ -325,24 +319,24 @@ export function fetchArgs(
   if (options.digestOnly) {
     args.push('--digest-only');
   }
-  return [...args, ...scopeFlags(options)];
+  return args;
 }
 
-export function describeArgs(reference: string, options: ScopeArgs = {}): string[] {
-  return ['describe', reference, ...scopeFlags(options)];
+export function describeArgs(reference: string): string[] {
+  return ['describe', reference];
 }
 
-export function statusArgs(options: ScopeArgs = {}): string[] {
-  return ['status', ...scopeFlags(options)];
+export function statusArgs(): string[] {
+  return ['status'];
 }
 
-export function contextArgs(options: ScopeArgs = {}): string[] {
-  return ['context', ...scopeFlags(options)];
+export function contextArgs(): string[] {
+  return ['context'];
 }
 
 export function addArgs(
   reference: string,
-  options: ScopeArgs & { kind?: string; name?: string; noInstall?: boolean } = {},
+  options: { kind?: string; name?: string; noInstall?: boolean } = {},
 ): string[] {
   const args = ['add', reference];
   if (options.kind) {
@@ -354,15 +348,15 @@ export function addArgs(
   if (options.noInstall) {
     args.push('--no-install');
   }
-  return [...args, ...scopeFlags(options)];
+  return args;
 }
 
-export function removeArgs(kind: string, name: string, options: ScopeArgs = {}): string[] {
-  return ['remove', kind, name, ...scopeFlags(options)];
+export function removeArgs(kind: string, name: string): string[] {
+  return ['remove', kind, name];
 }
 
-export function uninstallArgs(kind: string, name: string, options: ScopeArgs = {}): string[] {
-  return ['uninstall', kind, name, ...scopeFlags(options)];
+export function uninstallArgs(kind: string, name: string): string[] {
+  return ['uninstall', kind, name];
 }
 
 /**
@@ -370,14 +364,8 @@ export function uninstallArgs(kind: string, name: string, options: ScopeArgs = {
  * kind `bundle` at clap parse time, so bundles are undeclared via `grim remove`
  * instead; every other kind uses `uninstall`.
  */
-export function uninstallOrRemoveArgs(
-  kind: string,
-  name: string,
-  options: ScopeArgs = {},
-): string[] {
-  return kind === 'bundle'
-    ? removeArgs(kind, name, options)
-    : uninstallArgs(kind, name, options);
+export function uninstallOrRemoveArgs(kind: string, name: string): string[] {
+  return kind === 'bundle' ? removeArgs(kind, name) : uninstallArgs(kind, name);
 }
 
 /**
@@ -396,22 +384,22 @@ export function uninstallNotice(report: ActionReport): string | null {
   return null;
 }
 
-export function updateArgs(names: string[] = [], options: ScopeArgs = {}): string[] {
-  return ['update', ...names, ...scopeFlags(options)];
+export function updateArgs(names: string[] = []): string[] {
+  return ['update', ...names];
 }
 
-export function installArgs(options: ScopeArgs & { client?: string } = {}): string[] {
+export function installArgs(options: { client?: string } = {}): string[] {
   const args = ['install'];
   if (options.client) {
     args.push('--client', options.client);
   }
-  return [...args, ...scopeFlags(options)];
+  return args;
 }
 
-export function initArgs(options: ScopeArgs & { registry?: string } = {}): string[] {
+export function initArgs(options: { registry?: string } = {}): string[] {
   const args = ['init'];
   if (options.registry) {
     args.push('--registry', options.registry);
   }
-  return [...args, ...scopeFlags(options)];
+  return args;
 }

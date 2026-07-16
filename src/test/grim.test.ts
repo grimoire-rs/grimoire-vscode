@@ -37,10 +37,13 @@ suite('grim arg builders', () => {
   });
 
   test('searchArgs flags all precede the -- separator', () => {
-    assert.deepStrictEqual(
-      searchArgs('x', { refresh: true, showDeprecated: true, global: true }),
-      ['search', '--refresh', '--show-deprecated', '--global', '--', 'x'],
-    );
+    assert.deepStrictEqual(searchArgs('x', { refresh: true, showDeprecated: true }), [
+      'search',
+      '--refresh',
+      '--show-deprecated',
+      '--',
+      'x',
+    ]);
   });
 
   test('searchArgs query that looks like a flag is forced positional', () => {
@@ -59,7 +62,7 @@ suite('grim arg builders', () => {
     ]);
   });
 
-  test('fetchArgs description/digestOnly flags precede scope flags', () => {
+  test('fetchArgs description/digestOnly flags', () => {
     assert.deepStrictEqual(fetchArgs('a/b/c', { description: true }), [
       'fetch',
       'a/b/c',
@@ -70,17 +73,18 @@ suite('grim arg builders', () => {
       'a/b/c',
       '--digest-only',
     ]);
-    // --description before --digest-only before the scope flag.
-    assert.deepStrictEqual(
-      fetchArgs('a/b/c', { description: true, digestOnly: true, global: true }),
-      ['fetch', 'a/b/c', '--description', '--digest-only', '--global'],
-    );
+    // --description before --digest-only.
+    assert.deepStrictEqual(fetchArgs('a/b/c', { description: true, digestOnly: true }), [
+      'fetch',
+      'a/b/c',
+      '--description',
+      '--digest-only',
+    ]);
   });
 
   test('describe/status/context args', () => {
     assert.deepStrictEqual(describeArgs('a/b'), ['describe', 'a/b']);
-    assert.deepStrictEqual(describeArgs('a/b', { global: true }), ['describe', 'a/b', '--global']);
-    assert.deepStrictEqual(statusArgs({ global: true }), ['status', '--global']);
+    assert.deepStrictEqual(statusArgs(), ['status']);
     assert.deepStrictEqual(contextArgs(), ['context']);
   });
 
@@ -95,12 +99,7 @@ suite('grim arg builders', () => {
       '--no-install',
     ]);
     assert.deepStrictEqual(removeArgs('skill', 'b'), ['remove', 'skill', 'b']);
-    assert.deepStrictEqual(uninstallArgs('rule', 'r', { global: true }), [
-      'uninstall',
-      'rule',
-      'r',
-      '--global',
-    ]);
+    assert.deepStrictEqual(uninstallArgs('rule', 'r'), ['uninstall', 'rule', 'r']);
     assert.deepStrictEqual(updateArgs(), ['update']);
     assert.deepStrictEqual(updateArgs(['a', 'b']), ['update', 'a', 'b']);
     assert.deepStrictEqual(installArgs({ client: 'claude' }), ['install', '--client', 'claude']);
