@@ -402,11 +402,12 @@ function installedEmpty(text: string): TemplateResult {
   return html`<div class="installed-empty">${text}</div>`;
 }
 
-/** Item 3: the sidebar renders as three independently-updatable regions —
- *  search row, filter row, results — so a search-result state update rebuilds
- *  only the results (and, when its options change, the filters) and never the
- *  textfield the user is typing into. main.ts drives them separately; this
- *  composed form stays for the render tests and any full-render fallback. */
+/** Item 3: the sidebar renders as six independently-updatable regions —
+ *  notice, tabs, search row, filter row, results, footer — so a search-result
+ *  state update rebuilds only the results (and, when its options change, the
+ *  filters) and never the textfield the user is typing into. main.ts drives
+ *  them separately; this composed form stays for the render tests and any
+ *  full-render fallback. */
 export function renderSidebarSearch(state: SidebarState): TemplateResult | typeof nothing {
   // The Updates view has no search box (short, single-purpose list).
   if (state.phase === 'no-grim' || state.mode === 'updates') {

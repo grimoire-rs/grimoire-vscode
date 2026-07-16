@@ -744,14 +744,15 @@ suite('sidebar split rendering (item 3)', () => {
     assert.ok((await litHtml(renderSidebarFooter(st))).includes('class="footer"'));
   });
 
-  test('the five regions compose to exactly renderSidebar', async () => {
+  test('the six regions compose to exactly renderSidebar', async () => {
     // Composition no longer typechecks as string '+' concatenation (each
     // region now returns a lit TemplateResult, not a string) — normalize each
-    // region independently, then compare the concatenation of those five
+    // region independently, then compare the concatenation of those six
     // strings to the normalized, fully-composed renderSidebar (spec Addendum
     // item 8 / riskNotes: the canonical "compose and compare" case).
     const st = sidebarState({ items: buildCards([searchItem()], []) });
     const composed =
+      (await litHtml(renderSidebarNotice(st))) +
       (await litHtml(renderSidebarTabs(st))) +
       (await litHtml(renderSidebarSearch(st))) +
       (await litHtml(renderSidebarFilters(st, DEFAULT_FILTER))) +
@@ -765,12 +766,32 @@ suite('sidebar split rendering (item 3)', () => {
     // Same in Installed mode (the filters region differs there).
     const inst = sidebarState({ mode: 'installed', items: buildCards([searchItem()], []) });
     const composedInstalled =
+      (await litHtml(renderSidebarNotice(inst))) +
       (await litHtml(renderSidebarTabs(inst))) +
       (await litHtml(renderSidebarSearch(inst))) +
       (await litHtml(renderSidebarFilters(inst, DEFAULT_FILTER))) +
       (await litHtml(renderSidebarResults(inst, DEFAULT_FILTER))) +
       (await litHtml(renderSidebarFooter(inst)));
     assert.strictEqual(composedInstalled, await litHtml(renderSidebar(inst, DEFAULT_FILTER)));
+    // Third case: an unconfigured project, so the notice region actually
+    // renders content — exercising the notice in the composition instead of
+    // relying on the default fixture's empty (configured) notice above.
+    const unconfigured = sidebarState({
+      scopes: { projectOpen: true, projectConfigured: false, projectName: 'my-app' },
+      items: buildCards([searchItem()], []),
+    });
+    assert.ok(
+      (await litHtml(renderSidebarNotice(unconfigured))).includes('init-notification'),
+      'notice must render content for this composition to mean anything',
+    );
+    const composedUnconfigured =
+      (await litHtml(renderSidebarNotice(unconfigured))) +
+      (await litHtml(renderSidebarTabs(unconfigured))) +
+      (await litHtml(renderSidebarSearch(unconfigured))) +
+      (await litHtml(renderSidebarFilters(unconfigured, DEFAULT_FILTER))) +
+      (await litHtml(renderSidebarResults(unconfigured, DEFAULT_FILTER))) +
+      (await litHtml(renderSidebarFooter(unconfigured)));
+    assert.strictEqual(composedUnconfigured, await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER)));
   });
 
   test('refreshing footer escapes the registry host and is empty without one', async () => {

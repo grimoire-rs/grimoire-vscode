@@ -381,7 +381,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   add('refreshing-footer-with-host', r.renderRefreshingFooter('ghcr.io'));
   add('refreshing-footer-null', r.renderRefreshingFooter(null));
 
-  // --- renderSidebar: the five regions composed ---
+  // --- renderSidebar: the six regions composed ---
   add(
     'sidebar-composed-browse',
     r.renderSidebar(sidebarState({ items: buildCards([searchItem()], []) }), DEFAULT_FILTER),
