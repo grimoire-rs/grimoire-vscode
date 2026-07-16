@@ -497,9 +497,9 @@ export function scopeRowMenuEntries(install: InstallVM | null): MenuEntry[] {
   return [];
 }
 
-// --- Shareable deep links (vscode://grimoire-rs.grimoire/open?repo=…) ---
+// --- Shareable deep links (vscode://grimoire-rs.grimoire-vscode/open?repo=…) ---
 
-export const EXTENSION_ID = 'grimoire-rs.grimoire';
+export const EXTENSION_ID = 'grimoire-rs.grimoire-vscode';
 
 /** Scheme is passed in (vscode.env.uriScheme differs for stable/insiders). */
 export function buildShareLink(scheme: string, repo: string): string {

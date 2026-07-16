@@ -206,7 +206,7 @@ function isolateCache(api: GrimoireApi): string {
 }
 
 async function activateExtension(): Promise<GrimoireApi> {
-  const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire');
+  const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire-vscode');
   assert.ok(extension, 'extension not found');
   const api = await extension.activate();
   assert.ok(api, 'extension returned no API');
@@ -1626,7 +1626,7 @@ suite('extension integration', () => {
     const api = await activateExtension();
     const repo = 'ghcr.io/grimoire-rs/skills/grim-usage';
     await api.handleUri(
-      vscode.Uri.parse(`vscode://grimoire-rs.grimoire/open?repo=${encodeURIComponent(repo)}`),
+      vscode.Uri.parse(`vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`),
     );
     assert.ok(api.providers.details.openRepos.includes(repo));
   });
@@ -1634,9 +1634,9 @@ suite('extension integration', () => {
   test('deep link ignores malformed repos and non-/open paths', async () => {
     const api = await activateExtension();
     const before = api.providers.details.openRepos.length;
-    await api.handleUri(vscode.Uri.parse('vscode://grimoire-rs.grimoire/open?repo=junk'));
+    await api.handleUri(vscode.Uri.parse('vscode://grimoire-rs.grimoire-vscode/open?repo=junk'));
     await api.handleUri(
-      vscode.Uri.parse('vscode://grimoire-rs.grimoire/elsewhere?repo=ghcr.io/a/b/c'),
+      vscode.Uri.parse('vscode://grimoire-rs.grimoire-vscode/elsewhere?repo=ghcr.io/a/b/c'),
     );
     assert.strictEqual(api.providers.details.openRepos.length, before);
   });

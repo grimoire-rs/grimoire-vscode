@@ -1,5 +1,5 @@
 {
-  "name": "grimoire",
+  "name": "grimoire-vscode",
   "displayName": "Grimoire",
   "description": "Marketplace for AI artifacts — search, install, and manage grim skills, rules, agents, MCP servers, and bundles.",
   "version": "0.1.0",

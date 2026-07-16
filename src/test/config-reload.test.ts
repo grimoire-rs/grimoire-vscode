@@ -52,7 +52,7 @@ suite('config reload: grimoire.path.executable', () => {
 
   test('ScopeService.snapshot() reflects a config change immediately, without reactivating', async function () {
     this.timeout(20000);
-    const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire');
+    const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire-vscode');
     assert.ok(extension);
     const api = await extension.activate();
     const cfg = vscode.workspace.getConfiguration('grimoire');
@@ -77,7 +77,7 @@ suite('config reload: grimoire.path.executable', () => {
 
   test('changing the setting alone (no manual refresh call) makes the extension re-invoke grim', async function () {
     this.timeout(20000);
-    const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire');
+    const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire-vscode');
     assert.ok(extension);
     await extension.activate();
     const cfg = vscode.workspace.getConfiguration('grimoire');

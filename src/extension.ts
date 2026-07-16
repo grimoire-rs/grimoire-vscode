@@ -169,7 +169,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
 
   const sidebar = new SidebarProvider(context.extensionUri, scopes, catalog, delegate, output);
 
-  // Deep link: vscode://grimoire-rs.grimoire/open?repo=<repo> focuses Browse
+  // Deep link: vscode://grimoire-rs.grimoire-vscode/open?repo=<repo> focuses Browse
   // with the artifact searched and opens its (permanent) details panel.
   const handleUri = async (uri: vscode.Uri): Promise<void> => {
     if (uri.path !== '/open') {

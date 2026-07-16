@@ -856,7 +856,7 @@ suite('share links', () => {
 
   test('build/parse round-trips through urlencoding', () => {
     const link = buildShareLink('vscode', repo);
-    assert.strictEqual(link, `vscode://grimoire-rs.grimoire/open?repo=${encodeURIComponent(repo)}`);
+    assert.strictEqual(link, `vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`);
     assert.strictEqual(parseShareLink(new URL(link).search.slice(1)), repo);
   });
 
@@ -870,7 +870,7 @@ suite('share links', () => {
   test('hostile repo stays urlencoded (no live markup in the link)', () => {
     const link = buildShareLink('vscode-insiders', '"><script>alert(1)</script>');
     assert.ok(!link.includes('<script>'));
-    assert.ok(link.startsWith('vscode-insiders://grimoire-rs.grimoire/open?repo='));
+    assert.ok(link.startsWith('vscode-insiders://grimoire-rs.grimoire-vscode/open?repo='));
   });
 
   test('isValidRepo accepts real repos, rejects junk and hostile input', () => {
