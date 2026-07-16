@@ -8,3 +8,4 @@ coverage/
 handoff.zip
 .serena/
 TODO.md
+.claude/state/

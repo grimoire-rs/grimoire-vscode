@@ -10,7 +10,9 @@ MCP servers, bundles). Sibling repo: `../grimoire` (the Rust CLI).
 
 ## Build & verify
 
-npm is the build runner (no bun, no task runner).
+npm is the build runner (no bun). `taskfile.yml` exists only as a thin wrapper
+for the swarm/finalize skills (`task verify`, `task checkpoint`, `task git:merge`)
+— builds stay npm-driven.
 
 - `npm run check` — lint + type-check + build. Run after every change.
 - `npm test` — full suite under @vscode/test-cli with coverage (c8). Linux headless: `xvfb-run -a npm test`.

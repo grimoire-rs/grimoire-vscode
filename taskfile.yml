@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Convenience tasks for the swarm/finalize skills (.claude/skills). Build
+# remains npm-driven (see CLAUDE.md); this file only wraps git hygiene and
+# the quality gate the skills invoke as `task verify`.
+
+version: '3'
+
+includes:
+  git: ./taskfiles/git.taskfile.yml
+
+tasks:
+  verify:
+    desc: Full quality gate (lint + type-check + build + tests)
+    cmds:
+      - npm run check
+      - npm test
+
+  checkpoint:
+    desc: Create or amend the rolling `Checkpoint` WIP commit
+    cmds:
+      - if: '! [[ $(git show -s --format=%s HEAD) == "Checkpoint" ]]'
+        cmd: git commit --allow-empty -m "Checkpoint"
+      - cmd: git add .
+      - cmd: git commit --amend --no-edit --allow-empty
