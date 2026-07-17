@@ -3,15 +3,20 @@
 // contract (spec settings-impl-spec.md §2/§3). Uses a dedicated POSIX stub
 // (Windows cannot execFile shell scripts — skipped there, same as
 // extension.test.ts) rather than the shared one, since `grim config ...`
-// dispatch needs its own canned shapes. Only global scope is exercised — it
-// needs no workspace folder, so this suite stays independent of the
-// fixtures/workspace project used elsewhere.
+// dispatch needs its own canned shapes. Most cases exercise global scope only
+// (no workspace-folder dependency); the project-init flow below is the one
+// exception and relies on the workspace folder .vscode-test.mjs always opens
+// (src/test/fixtures/workspace) — it never touches that folder's real
+// grimoire.toml, only this suite's own stub responses.
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GrimoireApi } from '../extension';
+import { ScopeService } from '../scopes';
+import { SettingsManager } from '../views/settings';
+import { Watchers } from '../watchers';
 import type { HostToSettings, SettingsToHost } from '../webview/protocol';
 
 const isWindows = process.platform === 'win32';
@@ -21,6 +26,14 @@ interface Stub {
   executable: string;
   argvLog: string;
 }
+
+/** The (fake) global $GRIM_HOME — a real directory the stub's global-scope
+ *  writes touch (grimoire.toml) as a side effect, same as real grim persisting
+ *  a config change to disk. Exists so the external-edit/self-write watcher
+ *  tests have a real file to watch: it's the SAME path handed back as
+ *  `grim_home` in contextDoc(), which is what production `rebuildWatchers()`
+ *  arms its global-scope watch against. */
+const GRIM_HOME_DIR = path.join(os.tmpdir(), 'grim-settings-home');
 
 function canned(dir: string, name: string, doc: unknown): void {
   fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(doc));
@@ -32,12 +45,37 @@ function writeStub(): Stub {
   const executable = path.join(dir, 'grim');
   const script = `#!/bin/sh
 echo "$@" >> "${argvLog}"
+scope=project
 if [ "$1" = "--global" ]; then
+  scope=global
   shift
 fi
 cmd="$1"
+touch_home() {
+  # Mimics real grim persisting a global-scope write to grimoire.toml —
+  # only for global scope, so project-scope writes never touch this file.
+  [ "$scope" = "global" ] || return 0
+  echo "$1" >> "${GRIM_HOME_DIR}/grimoire.toml"
+  # Self-write-suppression test: holds the grim process open past the file
+  # write so the fs event has time to arrive (and be dropped) WHILE the
+  # caller's suspendWhile is still active, instead of racing suspendDepth
+  # returning to 0 against inotify delivery latency.
+  [ -f "${dir}/slow-touch" ] && sleep 0.5
+}
 if [ "$cmd" = "context" ]; then
-  [ -f "${dir}/context.json" ] && { cat "${dir}/context.json"; exit 0; }
+  if [ "$scope" = "global" ]; then
+    [ -f "${dir}/context.json" ] && { cat "${dir}/context.json"; exit 0; }
+  else
+    if [ -f "${dir}/project-initialized" ]; then
+      [ -f "${dir}/context-project-after.json" ] && { cat "${dir}/context-project-after.json"; exit 0; }
+    else
+      [ -f "${dir}/context-project-before.json" ] && { cat "${dir}/context-project-before.json"; exit 0; }
+    fi
+  fi
+fi
+if [ "$cmd" = "init" ]; then
+  touch "${dir}/project-initialized"
+  [ -f "${dir}/init.json" ] && { cat "${dir}/init.json"; exit 0; }
 fi
 if [ "$cmd" = "config" ]; then
   sub="$2"
@@ -52,6 +90,7 @@ if [ "$cmd" = "config" ]; then
       lock-once)
         if [ -f "${dir}/lock-hit" ]; then
           rm -f "${dir}/lock-hit"
+          touch_home "set lock-once"
           cat "${dir}/config-set.json"
         else
           touch "${dir}/lock-hit"
@@ -59,17 +98,43 @@ if [ "$cmd" = "config" ]; then
         fi
         exit 0 ;;
       *)
-        [ -f "${dir}/config-set.json" ] && { cat "${dir}/config-set.json"; exit 0; } ;;
+        if [ -f "${dir}/config-set.json" ]; then
+          touch_home "set $key"
+          cat "${dir}/config-set.json"
+          exit 0
+        fi ;;
     esac
   elif [ "$sub" = "unset" ]; then
     [ -f "${dir}/config-unset.json" ] && { cat "${dir}/config-unset.json"; exit 0; }
   elif [ "$sub" = "registry" ]; then
     action="$3"
+    alias_arg="$4"
     case "$action" in
       list) [ -f "${dir}/registry-list.json" ] && { cat "${dir}/registry-list.json"; exit 0; } ;;
-      add) [ -f "${dir}/registry-add.json" ] && { cat "${dir}/registry-add.json"; exit 0; } ;;
-      rm) [ -f "${dir}/registry-rm.json" ] && { cat "${dir}/registry-rm.json"; exit 0; } ;;
-      use) [ -f "${dir}/registry-use.json" ] && { cat "${dir}/registry-use.json"; exit 0; } ;;
+      add)
+        case "$alias_arg" in
+          dup-alias)
+            echo '{"error":{"code":"usage","exit":64,"message":"registry alias already exists"}}'
+            exit 0 ;;
+          *)
+            if [ -f "${dir}/registry-add.json" ]; then
+              touch_home "registry-add $alias_arg"
+              cat "${dir}/registry-add.json"
+              exit 0
+            fi ;;
+        esac ;;
+      rm)
+        if [ -f "${dir}/registry-rm.json" ]; then
+          touch_home "registry-rm $alias_arg"
+          cat "${dir}/registry-rm.json"
+          exit 0
+        fi ;;
+      use)
+        if [ -f "${dir}/registry-use.json" ]; then
+          touch_home "registry-use $alias_arg"
+          cat "${dir}/registry-use.json"
+          exit 0
+        fi ;;
     esac
   fi
 fi
@@ -88,9 +153,29 @@ function contextDoc(): Record<string, unknown> {
     config_exists: true,
     lock_path: '/nonexistent/global-grimoire.lock',
     lock_exists: true,
-    grim_home: path.join(os.tmpdir(), 'grim-settings-home'),
+    grim_home: GRIM_HOME_DIR,
     offline: false,
     clients: ['claude'],
+    registries: [],
+    default_registry: null,
+  };
+}
+
+/** Project-scope `grim context` before/after `grim init` — the stub's `init`
+ *  handler flips which of these it returns (project-initialized marker), so
+ *  `ready` -> `initProject` -> re-fetch can be driven end to end. */
+function contextProjectDoc(configExists: boolean): Record<string, unknown> {
+  return {
+    version: '0.9.0',
+    scope: 'project',
+    workspace: '/fixture-workspace',
+    config_path: '/fixture-workspace/grimoire.toml',
+    config_exists: configExists,
+    lock_path: '/fixture-workspace/grimoire.lock',
+    lock_exists: configExists,
+    grim_home: GRIM_HOME_DIR,
+    offline: false,
+    clients: [],
     registries: [],
     default_registry: null,
   };
@@ -162,6 +247,22 @@ async function send(
   await api.providers.settings.onMessage(panel, message);
 }
 
+function waitFor(check: () => boolean, timeoutMs = 8000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const tick = () => {
+      if (check()) {
+        resolve();
+      } else if (Date.now() - start > timeoutMs) {
+        reject(new Error('timeout waiting for condition'));
+      } else {
+        setTimeout(tick, 100);
+      }
+    };
+    tick();
+  });
+}
+
 suite('settings host integration', () => {
   let stub: Stub;
 
@@ -171,6 +272,9 @@ suite('settings host integration', () => {
     }
     stub = writeStub();
     canned(stub.dir, 'context', contextDoc());
+    canned(stub.dir, 'context-project-before', contextProjectDoc(false));
+    canned(stub.dir, 'context-project-after', contextProjectDoc(true));
+    canned(stub.dir, 'init', { path: '/fixture-workspace/grimoire.toml', scope: 'project', status: 'created' });
     canned(stub.dir, 'config-list', { items: [configEntry('expand_levels')] });
     canned(stub.dir, 'registry-list', { items: [] });
     canned(stub.dir, 'config-set', {
@@ -179,6 +283,26 @@ suite('settings host integration', () => {
       value: '2',
       scope: 'global',
     });
+    canned(stub.dir, 'registry-add', {
+      action: 'registry-added',
+      key: 'acme',
+      value: 'ghcr.io/acme',
+      scope: 'global',
+    });
+    canned(stub.dir, 'registry-rm', {
+      action: 'registry-removed',
+      key: 'acme',
+      value: null,
+      scope: 'global',
+    });
+    canned(stub.dir, 'registry-use', {
+      action: 'registry-default',
+      key: 'acme',
+      value: null,
+      scope: 'global',
+    });
+    fs.mkdirSync(GRIM_HOME_DIR, { recursive: true });
+    fs.writeFileSync(path.join(GRIM_HOME_DIR, 'grimoire.toml'), 'initial\n');
     await vscode.workspace
       .getConfiguration('grimoire')
       .update('path.executable', stub.executable, vscode.ConfigurationTarget.Global);
@@ -191,6 +315,7 @@ suite('settings host integration', () => {
     await vscode.workspace
       .getConfiguration('grimoire')
       .update('path.executable', undefined, vscode.ConfigurationTarget.Global);
+    fs.rmSync(GRIM_HOME_DIR, { recursive: true, force: true });
   });
 
   test('ready posts a ready-phase state built from config list + registry list', async () => {
@@ -251,5 +376,165 @@ suite('settings host integration', () => {
     assert.strictEqual(last.type, 'state', 'the retried write should succeed and repost state');
     const setCalls = argvLines(stub).filter((l) => l.startsWith('config set lock-once'));
     assert.strictEqual(setCalls.length, 2, 'expected exactly one retry after the exit-75 failure');
+  });
+
+  test('addRegistry success re-fetches and reposts state', async () => {
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    await send(api, panel, {
+      type: 'addRegistry',
+      scope: 'global',
+      alias: 'acme',
+      locator: { oci: 'ghcr.io/acme' },
+      default: false,
+    });
+    assert.strictEqual(posts.length, 1);
+    assert.strictEqual(posts[0]?.type, 'state');
+  });
+
+  test('addRegistry with a duplicate alias (exit 64) posts writeError only', async () => {
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    await send(api, panel, {
+      type: 'addRegistry',
+      scope: 'global',
+      alias: 'dup-alias',
+      locator: { oci: 'ghcr.io/dup' },
+      default: false,
+    });
+    assert.strictEqual(posts.length, 1, 'expected exactly one post: writeError, no state repost');
+    const message = posts[0];
+    assert.ok(message);
+    assert.strictEqual(message.type, 'writeError');
+    if (message.type === 'writeError') {
+      assert.strictEqual(message.key, 'dup-alias');
+      assert.match(message.message, /already exists/);
+    }
+  });
+
+  test('removeRegistry success re-fetches and reposts state', async () => {
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    await send(api, panel, { type: 'removeRegistry', scope: 'global', alias: 'acme' });
+    assert.strictEqual(posts.length, 1);
+    assert.strictEqual(posts[0]?.type, 'state');
+  });
+
+  test('useRegistry success re-fetches and reposts state', async () => {
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    await send(api, panel, { type: 'useRegistry', scope: 'global', alias: 'acme' });
+    assert.strictEqual(posts.length, 1);
+    assert.strictEqual(posts[0]?.type, 'state');
+  });
+
+  test('project scope: no toml -> initProject -> re-fetch shows the ready panel', async () => {
+    fs.rmSync(path.join(stub.dir, 'project-initialized'), { force: true });
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    fs.rmSync(stub.argvLog, { force: true });
+
+    await send(api, panel, { type: 'ready', scope: 'project' });
+    assert.strictEqual(posts.length, 1);
+    const before = posts[0];
+    assert.ok(before);
+    assert.strictEqual(before.type, 'state');
+    if (before.type === 'state') {
+      assert.strictEqual(before.state.phase, 'project-no-toml');
+    }
+    posts.length = 0;
+
+    await send(api, panel, { type: 'initProject' });
+    const initCalls = argvLines(stub).filter((l) => l.startsWith('init'));
+    assert.strictEqual(initCalls.length, 1);
+    assert.ok(!initCalls[0]?.includes('--global'), 'init targets the project scope');
+
+    const after = posts[posts.length - 1];
+    assert.ok(after);
+    assert.strictEqual(after.type, 'state');
+    if (after.type === 'state') {
+      assert.strictEqual(after.state.phase, 'ready');
+      assert.strictEqual(after.state.groups.flatMap((g) => g.rows).length, 1);
+    }
+  });
+
+  test('a settings write suspends its own watcher event; a genuine external edit still refreshes', async function () {
+    this.timeout(15000);
+    // A standalone SettingsManager + Watchers pair (NOT the extension's
+    // shared singleton — this test needs its own Watchers instance with a
+    // short debounce so it doesn't cost a full second per assertion). It
+    // still goes through the SAME grim stub (readConfig() picks up whatever
+    // grimoire.path.executable is currently set to, module-wide).
+    const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire-vscode');
+    assert.ok(extension);
+    const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+    const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
+    const watchers = new Watchers(() => void manager.refreshOpenPanel(), 40);
+    const suspendWhile = <T>(fn: () => Promise<T>): Promise<T> => watchers.suspendWhile(fn);
+    const manager = new SettingsManager(
+      extension.extensionUri,
+      scopes,
+      fakeOutput,
+      async () => {},
+      async () => {},
+      suspendWhile,
+    );
+    const { panel, posts } = fakeSettingsPanel();
+    // refreshOpenPanel() (the watcher's onChange target) posts to the
+    // private `panel` field open() normally sets — open() would create a
+    // REAL webview panel whose own bundle boots and posts its own 'ready'
+    // asynchronously (racing this test's scripted messages), so assign the
+    // field directly instead: deterministic, and every repost (explicit
+    // write AND watcher-driven) lands in the same `posts` array either way.
+    (manager as unknown as { panel: vscode.WebviewPanel }).panel = panel;
+    try {
+      watchers.rebuild(GRIM_HOME_DIR);
+      await manager.onMessage(panel, { type: 'ready', scope: 'global' }); // establishes activeScope
+      assert.strictEqual(posts.length, 1);
+
+      // The write's own side effect (touch_home in the stub) mutates
+      // GRIM_HOME_DIR/grimoire.toml — the very file `watchers` above watches.
+      // suspendWhile must swallow that event: only the write's own explicit
+      // repost should show up here. `slow-touch` holds the stub process open
+      // past the file write so the fs event has time to arrive while still
+      // inside suspendWhile, instead of racing suspendDepth returning to 0
+      // (see writeStub's touch_home).
+      fs.writeFileSync(path.join(stub.dir, 'slow-touch'), '');
+      await manager.onMessage(panel, {
+        type: 'setValue',
+        scope: 'global',
+        key: 'options.expand_levels',
+        value: '2',
+      });
+      fs.rmSync(path.join(stub.dir, 'slow-touch'), { force: true });
+      assert.strictEqual(posts.length, 2, "the write's own repost");
+      assert.strictEqual(posts[1]?.type, 'state');
+
+      // Give the debounced watcher a full window to fire a spurious extra
+      // refresh from that same self-inflicted edit, were suspendWhile not
+      // covering it.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.strictEqual(
+        posts.length,
+        2,
+        "the write's own edit must not trigger a second, redundant refresh",
+      );
+
+      // Now a genuine external edit (not through any grim write) — the
+      // watcher must still be alive and refresh the open panel.
+      fs.appendFileSync(path.join(GRIM_HOME_DIR, 'grimoire.toml'), 'external edit\n');
+      await waitFor(() => posts.length > 2);
+      assert.strictEqual(posts[2]?.type, 'state');
+    } finally {
+      watchers.dispose();
+    }
   });
 });
