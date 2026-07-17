@@ -64,6 +64,17 @@ touch_home() {
 }
 if [ "$cmd" = "context" ]; then
   if [ "$scope" = "global" ]; then
+    # Global's own before/after pair (mirrors project's below) is opt-in: only
+    # consulted once a test has actually canned one of the two files, so every
+    # pre-existing global-scope test (relying on the plain context.json,
+    # config_exists:true unconditionally) is unaffected.
+    if [ -f "${dir}/context-global-before.json" ] || [ -f "${dir}/context-global-after.json" ]; then
+      if [ -f "${dir}/global-initialized" ]; then
+        [ -f "${dir}/context-global-after.json" ] && { cat "${dir}/context-global-after.json"; exit 0; }
+      else
+        [ -f "${dir}/context-global-before.json" ] && { cat "${dir}/context-global-before.json"; exit 0; }
+      fi
+    fi
     [ -f "${dir}/context.json" ] && { cat "${dir}/context.json"; exit 0; }
   else
     if [ -f "${dir}/project-initialized" ]; then
@@ -74,7 +85,11 @@ if [ "$cmd" = "context" ]; then
   fi
 fi
 if [ "$cmd" = "init" ]; then
-  touch "${dir}/project-initialized"
+  if [ "$scope" = "global" ]; then
+    touch "${dir}/global-initialized"
+  else
+    touch "${dir}/project-initialized"
+  fi
   [ -f "${dir}/init.json" ] && { cat "${dir}/init.json"; exit 0; }
 fi
 if [ "$cmd" = "config" ]; then
@@ -177,23 +192,63 @@ function contextDoc(): Record<string, unknown> {
   };
 }
 
-/** Project-scope `grim context` before/after `grim init` — the stub's `init`
- *  handler flips which of these it returns (project-initialized marker), so
- *  `ready` -> `initProject` -> re-fetch can be driven end to end. */
-function contextProjectDoc(configExists: boolean): Record<string, unknown> {
+/** Global-scope `grim context` before/after `grim init --global` — same
+ *  before/after-marker convention as contextProjectDoc, gated behind its own
+ *  opt-in files (see the stub script's comment) so every OTHER global-scope
+ *  test, which never cans these, keeps hitting the plain contextDoc()
+ *  (config_exists: true) exactly as before. */
+function contextGlobalDoc(configExists: boolean): Record<string, unknown> {
   return {
     version: '0.9.0',
-    scope: 'project',
-    workspace: '/fixture-workspace',
-    config_path: '/fixture-workspace/grimoire.toml',
+    scope: 'global',
+    workspace: null,
+    config_path: '/nonexistent/global-grimoire.toml',
     config_exists: configExists,
-    lock_path: '/fixture-workspace/grimoire.lock',
+    lock_path: '/nonexistent/global-grimoire.lock',
     lock_exists: configExists,
     grim_home: GRIM_HOME_DIR,
     offline: false,
     clients: [],
     registries: [],
     default_registry: null,
+  };
+}
+
+/** Project-scope `grim context` AFTER `grim init` — the stub's `init` handler
+ *  flips which of these two docs it returns (project-initialized marker), so
+ *  `ready` -> `initProject` -> re-fetch can be driven end to end. Only ever
+ *  the config_exists:true shape: real grim never succeeds with
+ *  config_exists:false for project scope (see notDiscoveredDoc below). */
+function contextProjectDoc(): Record<string, unknown> {
+  return {
+    version: '0.9.0',
+    scope: 'project',
+    workspace: '/fixture-workspace',
+    config_path: '/fixture-workspace/grimoire.toml',
+    config_exists: true,
+    lock_path: '/fixture-workspace/grimoire.lock',
+    lock_exists: true,
+    grim_home: GRIM_HOME_DIR,
+    offline: false,
+    clients: [],
+    registries: [],
+    default_registry: null,
+  };
+}
+
+/** grim's real failure shape for `context` when no grimoire.toml exists
+ *  anywhere up the directory tree from the project workspace folder
+ *  (ConfigError::NotDiscovered) — verified live against grim 0.9.0. This is
+ *  the BEFORE-init state for project scope: grim's walk-up discovery itself
+ *  fails, so `context` never reaches the point of reporting
+ *  config_exists:false (see isProjectNotDiscovered, src/scopes.ts). */
+function notDiscoveredDoc(): Record<string, unknown> {
+  return {
+    error: {
+      code: 'not-found',
+      exit: 79,
+      message: '/fixture-workspace: no grimoire.toml found by walking up from the working directory',
+    },
   };
 }
 
@@ -288,8 +343,8 @@ suite('settings host integration', () => {
     }
     stub = writeStub();
     canned(stub.dir, 'context', contextDoc());
-    canned(stub.dir, 'context-project-before', contextProjectDoc(false));
-    canned(stub.dir, 'context-project-after', contextProjectDoc(true));
+    canned(stub.dir, 'context-project-before', notDiscoveredDoc());
+    canned(stub.dir, 'context-project-after', contextProjectDoc());
     canned(stub.dir, 'init', { path: '/fixture-workspace/grimoire.toml', scope: 'project', status: 'created' });
     canned(stub.dir, 'config-list', { items: [configEntry('expand_levels')] });
     canned(stub.dir, 'registry-list', { items: [] });
@@ -458,6 +513,12 @@ suite('settings host integration', () => {
     assert.strictEqual(posts[0]?.type, 'state');
   });
 
+  // Regression: real grim's `context` FAILS outright (NotDiscovered, code
+  // "not-found", exit 79 — see notDiscoveredDoc/isProjectNotDiscovered) for
+  // an unconfigured project, rather than succeeding with
+  // config_exists:false. buildState() must route that failure to the
+  // 'project-no-toml' empty state, not let it fall through to the generic
+  // 'error' phase with grim's raw walk-up message.
   test('project scope: no toml -> initProject -> re-fetch shows the ready panel', async () => {
     fs.rmSync(path.join(stub.dir, 'project-initialized'), { force: true });
     const api = await activateExtension();
@@ -470,7 +531,13 @@ suite('settings host integration', () => {
     assert.ok(before);
     assert.strictEqual(before.type, 'state');
     if (before.type === 'state') {
+      assert.notStrictEqual(
+        before.state.phase,
+        'error',
+        'the NotDiscovered probe failure must not surface as a raw grim error',
+      );
       assert.strictEqual(before.state.phase, 'project-no-toml');
+      assert.strictEqual(before.state.error, undefined, 'no raw grim message leaks through');
     }
     posts.length = 0;
 
@@ -478,6 +545,55 @@ suite('settings host integration', () => {
     const initCalls = argvLines(stub).filter((l) => l.startsWith('init'));
     assert.strictEqual(initCalls.length, 1);
     assert.ok(!initCalls[0]?.includes('--global'), 'init targets the project scope');
+
+    const after = posts[posts.length - 1];
+    assert.ok(after);
+    assert.strictEqual(after.type, 'state');
+    if (after.type === 'state') {
+      assert.strictEqual(after.state.phase, 'ready');
+      assert.strictEqual(after.state.groups.flatMap((g) => g.rows).length, 1);
+    }
+  });
+
+  // Regression (user-reported bug, spec §2 — user-decided 2026-07-17): opening
+  // Settings must never materialize a config file. Global used to always call
+  // `config list`/`registry list` (and render as fully "ready") even with no
+  // global grimoire.toml, so the form's very first control edit silently
+  // created the file with no explicit Initialize step ever having run. Mirrors
+  // the project no-toml test above, but for Global, and additionally asserts
+  // the absence of the materializing calls (not just the resulting phase).
+  test('global scope: no toml -> ready posts global-no-toml WITHOUT calling config list/registry list/init; initGlobal -> grim init --global -> re-fetch', async () => {
+    fs.rmSync(path.join(stub.dir, 'global-initialized'), { force: true });
+    canned(stub.dir, 'context-global-before', contextGlobalDoc(false));
+    canned(stub.dir, 'context-global-after', contextGlobalDoc(true));
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    fs.rmSync(stub.argvLog, { force: true });
+
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    assert.strictEqual(posts.length, 1);
+    const before = posts[0];
+    assert.ok(before);
+    assert.strictEqual(before.type, 'state');
+    if (before.type === 'state') {
+      assert.strictEqual(before.state.phase, 'global-no-toml');
+      assert.strictEqual(before.state.groups.length, 0);
+    }
+    const preInitCalls = argvLines(stub);
+    assert.ok(
+      !preInitCalls.some((l) => l.startsWith('config list') || l.startsWith('config registry list')),
+      `opening an unconfigured Global scope must never call config/registry list, got: ${JSON.stringify(preInitCalls)}`,
+    );
+    assert.ok(
+      !preInitCalls.some((l) => l.startsWith('init')),
+      'must never auto-init on open — init runs only via the initGlobal message',
+    );
+    posts.length = 0;
+
+    await send(api, panel, { type: 'initGlobal' });
+    const initCalls = argvLines(stub).filter((l) => l.startsWith('init'));
+    assert.strictEqual(initCalls.length, 1);
+    assert.ok(initCalls[0]?.includes('--global'), 'init targets the global scope');
 
     const after = posts[posts.length - 1];
     assert.ok(after);

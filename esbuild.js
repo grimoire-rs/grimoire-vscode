@@ -65,6 +65,7 @@ async function main() {
     entryPoints: {
       sidebar: 'src/webview/sidebar/main.ts',
       details: 'src/webview/details/main.ts',
+      settings: 'src/webview/settings/main.ts',
     },
     format: 'iife',
     platform: 'browser',

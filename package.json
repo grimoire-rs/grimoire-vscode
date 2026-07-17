@@ -96,6 +96,12 @@
         "category": "Grimoire"
       },
       {
+        "command": "grimoire.openSettings",
+        "title": "Open Settings",
+        "category": "Grimoire",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "grimoire.showOutput",
         "title": "Show Output",
         "category": "Grimoire"
@@ -139,6 +145,11 @@
           "command": "grimoire.updateAll",
           "when": "view == grimoire.marketplace",
           "group": "navigation@4"
+        },
+        {
+          "command": "grimoire.openSettings",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@5"
         }
       ],
       "commandPalette": [
@@ -165,11 +176,6 @@
           ],
           "default": "project",
           "description": "Preferred install scope when both are available."
-        },
-        "grimoire.showDeprecated": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show deprecated artifacts in search results."
         },
         "grimoire.watchForChanges": {
           "type": "boolean",

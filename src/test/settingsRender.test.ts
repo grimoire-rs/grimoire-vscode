@@ -40,6 +40,30 @@ suite('settings frozen goldens', () => {
   }
 });
 
+suite('settings controls', () => {
+  // Regression check for the dirty-value-flag bug (a plain `value="${…}"`
+  // attribute binding stops updating an <input> the user has already typed
+  // into — see textControl/numberControl's comment in render.ts). The SSR
+  // golden path above can't tell the two binding kinds apart (@lit-labs/ssr
+  // renders a reflected property identically to a plain attribute — see
+  // renderPropertyPart in its render-value.js), so this inspects the
+  // TemplateResult's own static strings for the literal `.value=` marker lit
+  // uses to recognize a property binding at template-parse time, before any
+  // DOM is involved.
+  test('text/number controls bind value via the lit-html property syntax, not a plain attribute', () => {
+    const stringRow = buildSettingsRow(wireConfigEntry({ type: 'string', value: 'x' }));
+    const integerRow = buildSettingsRow(wireConfigEntry({ type: 'integer', value: '1' }));
+    for (const row of [stringRow, integerRow]) {
+      const tpl = render.renderControl(row) as unknown as { strings: TemplateStringsArray };
+      const raw = tpl.strings.raw.join('');
+      assert.ok(
+        raw.includes('.value="'),
+        `expected a property binding (".value=") for a ${row.type} control, got: ${raw}`,
+      );
+    }
+  });
+});
+
 suite('settings escaping', () => {
   test('hostile row title/description/value stay inert', async () => {
     const row = buildSettingsRow(
@@ -98,10 +122,25 @@ suite('settings escaping', () => {
       render.renderSettings(settingsState(), {
         open: true,
         draft: { alias: 'x', kind: 'oci', locator: 'y', default: false },
+        helpOpen: null,
         error: '<script>alert(1)</script>',
       }),
     );
     assert.ok(!html.includes('<script>alert(1)'));
     assert.ok(html.includes('&lt;script&gt;'));
+  });
+
+  test('a rejected registry rm/use surfaces its message over the table and stays inert', async () => {
+    const html = await litHtml(
+      render.renderSettings(settingsState(), undefined, '<script>alert(1)</script> refused'),
+    );
+    assert.ok(html.includes('refused'));
+    assert.ok(!html.includes('<script>alert(1)'));
+    assert.ok(html.includes('&lt;script&gt;'));
+  });
+
+  test('no registryError renders no banner', async () => {
+    const html = await litHtml(render.renderSettings(settingsState()));
+    assert.ok(!html.includes('codicon-error'));
   });
 });

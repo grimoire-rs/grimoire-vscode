@@ -3,7 +3,6 @@
 // fetched, for the "Cached catalog · synced Nm ago" footer.
 import { searchArgs, type GrimResult, type ItemsEnvelope, type SearchItem } from './grim';
 import type { ScopeService } from './scopes';
-import { readConfig } from './config';
 
 export interface CatalogState {
   items: SearchItem[];
@@ -26,10 +25,11 @@ export class CatalogService {
     query: string,
     options: { refresh?: boolean; projectConfigured?: boolean } = {},
   ): Promise<CatalogState> {
-    const args = searchArgs(query, {
-      ...(readConfig().showDeprecated ? { showDeprecated: true } : {}),
-      ...(options.refresh ? { refresh: true } : {}),
-    });
+    // grim's own `options.show_deprecated` config (set via the Settings panel,
+    // which replaced the old grimoire.showDeprecated VS Code setting) drives
+    // this now — the flag is omitted so `grim search` honors whatever the
+    // user has configured, no VS Code-side override.
+    const args = searchArgs(query, options.refresh ? { refresh: true } : {});
     // Browse is discovery, not project state: an open folder searches project
     // scope ONLY when it has a grimoire.toml. Without one, project-scope search
     // has no registries and returns []; fall back to global so the global
@@ -38,8 +38,7 @@ export class CatalogService {
     // treats a FAILED project probe as "configured" — otherwise a transient
     // probe error would silently fall back to global too, instead of searching
     // project scope and surfacing the failure as a search error.
-    const scope =
-      this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
+    const scope = this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
     const result: GrimResult<ItemsEnvelope<SearchItem>> = await this.scopes.run(args, scope);
     if (!result.ok) {
       if (result.kind === 'not-found') {

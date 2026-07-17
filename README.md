@@ -46,6 +46,11 @@ AI artifacts your tools rely on.
 - **Live refresh** — watches `grimoire.toml` / `grimoire.lock` and refreshes the
   views when things change on disk, so the UI stays in sync with the `grim` CLI
   and its terminal UI (TUI).
+- **Configure grim itself** — the $(settings-gear) icon opens a **Settings**
+  editor tab with Project / Global peer tabs for every `grim config` key
+  (registry, clients, TUI defaults, …) and registry management, backed
+  directly by `grim config`/`grim config registry` — no separate copy of the
+  config to keep in sync.
 
 Installing artifacts runs the `grim` executable, so Grimoire's install actions
 require a **trusted** workspace.
@@ -54,31 +59,31 @@ require a **trusted** workspace.
 
 Run from the Command Palette (all under the **Grimoire** category).
 
-| Command | Does |
-| --- | --- |
-| `Grimoire: Search Artifacts` | Focus the Browse tab and jump to its search box |
-| `Grimoire: Refresh Catalog` | Re-fetch the catalog and refresh every tab |
-| `Grimoire: Update All Artifacts` | Update every artifact with a pending update (project + global) |
+| Command                                        | Does                                                                             |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| `Grimoire: Search Artifacts`                   | Focus the Browse tab and jump to its search box                                  |
+| `Grimoire: Refresh Catalog`                    | Re-fetch the catalog and refresh every tab                                       |
+| `Grimoire: Update All Artifacts`               | Update every artifact with a pending update (project + global)                   |
 | `Grimoire: Initialize Project (grimoire.toml)` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
-| `Grimoire: Install grim CLI` | Download the latest `grim` release from GitHub |
-| `Grimoire: Show Output` | Open the Grimoire output channel |
-| `Grimoire: Report Bug` | Open a prefilled GitHub bug report |
-| `Grimoire: Request Feature` | Open a prefilled GitHub feature request |
+| `Grimoire: Install grim CLI`                   | Download the latest `grim` release from GitHub                                   |
+| `Grimoire: Open Settings`                      | Open the Settings editor tab (`grim config` UI)                                  |
+| `Grimoire: Show Output`                        | Open the Grimoire output channel                                                 |
+| `Grimoire: Report Bug`                         | Open a prefilled GitHub bug report                                               |
+| `Grimoire: Request Feature`                    | Open a prefilled GitHub feature request                                          |
 
 The `grimoire.openDetails` command is intentionally omitted — it's invoked via
 the `vscode://` deep link, not run from the Command Palette.
 
 ## Settings
 
-| Setting | Default | Does |
-| --- | --- | --- |
-| `grimoire.path.executable` | `grim` | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute |
-| `grimoire.defaultScope` | `project` | Install scope (`project` or `global`) for the **Pin to a tag** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
-| `grimoire.showDeprecated` | `true` | Show deprecated artifacts in search results |
-| `grimoire.watchForChanges` | `true` | Refresh views when `grimoire.toml` / `grimoire.lock` change |
-| `grimoire.prefetchDetails` | `true` | Prefetch top Browse results so details open instantly and card logos appear |
-| `grimoire.checkForUpdates` | `true` | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page) |
-| `grimoire.extraEnv` | `{}` | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials) |
+| Setting                    | Default   | Does                                                                                                                                                                                   |
+| -------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grimoire.path.executable` | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                  |
+| `grimoire.defaultScope`    | `project` | Install scope (`project` or `global`) for the **Pin to a tag** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
+| `grimoire.watchForChanges` | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                            |
+| `grimoire.prefetchDetails` | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                            |
+| `grimoire.checkForUpdates` | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                     |
+| `grimoire.extraEnv`        | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                      |
 
 ## Requirements
 

@@ -6,12 +6,24 @@ All notable changes to the Grimoire VS Code extension.
 
 ### Added
 
+- **Settings editor tab** — the $(settings-gear) icon on the marketplace view
+  (or `Grimoire: Open Settings`) opens a Project / Global peer-tab editor for
+  every `grim config` key (registry, clients, TUI defaults, …) plus registry
+  add/remove/set-default, read/written directly through `grim config` /
+  `grim config registry` — no separate copy of the config to fall out of sync.
 - **Daily grim update check** — checks GitHub once a day for a newer `grim`
   release. When Grimoire manages the binary (auto-installed into extension
   storage) the toast offers a one-click update; a PATH- or manually-installed
   grim gets a link to the release page instead. Configurable via
   `grimoire.checkForUpdates` (default on); "Skip This Version" suppresses that
   version. (#34)
+
+### Removed
+
+- **`grimoire.showDeprecated` setting** — superseded by the Settings tab's
+  `options.show_deprecated` (a `grim config` key, the same value the CLI and
+  TUI honor). `grim search` now honors your grim config directly instead of
+  the VS Code-side override the extension used to pass on every search.
 
 ### Fixed
 

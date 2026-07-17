@@ -25,6 +25,7 @@ import { Prefetcher } from './prefetch';
 import { ScopeService } from './scopes';
 import { DetailsManager, DETAILS_VIEW_TYPE } from './views/details';
 import { pickVersion } from './views/pickVersion';
+import { SettingsManager } from './views/settings';
 import { SidebarProvider } from './views/sidebar';
 import { Watchers } from './watchers';
 import { artifactName, isValidRepo, parseShareLink, refRepo } from './webview/model';
@@ -36,6 +37,7 @@ export interface GrimoireApi {
   providers: {
     sidebar: SidebarProvider;
     details: DetailsManager;
+    settings: SettingsManager;
   };
   /** Deep-link handler (test seam; fired for real via registerUriHandler). */
   handleUri(uri: vscode.Uri): Promise<void>;
@@ -54,7 +56,25 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // sidebar.refresh posts its loading state BEFORE taking the snapshot (the
     // slow part), so the webview's refreshing-footer timer starts at t=0; the
     // details panels take their own snapshots inside buildVM regardless.
-    await Promise.all([sidebar.refresh(options), details.refreshOpenPanels()]);
+    // `settings` is declared below; this closure only reads it at call time
+    // (async, post-activation), so the forward reference is safe.
+    await Promise.all([
+      sidebar.refresh(options),
+      details.refreshOpenPanels(),
+      settings.refreshOpenPanel(),
+    ]);
+  };
+
+  // Sidebar + details only, NOT settings — SettingsManager's own write/init
+  // completion (writeInner/initProject in views/settings.ts) already reposts
+  // its own panel explicitly once grim confirms. Feeding it the full
+  // `refreshAll` above (which ALSO calls settings.refreshOpenPanel()) would
+  // fetch `grim config list`/`registry list` and post 'state' TWICE per
+  // write. Every other refreshAll trigger (install grim, workspace-folder or
+  // configuration changes) is not itself a settings write, so those still go
+  // through the full `refreshAll`, which does include settings.
+  const refreshSidebarAndDetails = async (): Promise<void> => {
+    await Promise.all([sidebar.refresh(), details.refreshOpenPanels()]);
   };
 
   const offerInstallGrim = async (): Promise<void> => {
@@ -114,8 +134,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     await suspendWhile(async () => {
       const result = await scopes.run<ActionReport>(addArgs(`${refRepo(ref)}:${tag}`), scope);
       if (!result.ok) {
-        const message =
-          result.kind === 'not-found' ? 'grim executable not found' : result.message;
+        const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
         notifyError(`Grimoire: ${message}`);
       }
       await refreshAll();
@@ -176,6 +195,15 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   };
 
   const sidebar = new SidebarProvider(context.extensionUri, scopes, catalog, delegate, output);
+
+  const settings = new SettingsManager(
+    context.extensionUri,
+    scopes,
+    output,
+    refreshSidebarAndDetails,
+    offerInstallGrim,
+    suspendWhile,
+  );
 
   // Deep link: vscode://grimoire-rs.grimoire-vscode/open?repo=<repo> focuses Browse
   // with the artifact searched and opens its (permanent) details panel.
@@ -324,6 +352,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       }),
     ),
     vscode.commands.registerCommand('grimoire.installGrim', () => runInstallGrim()),
+    vscode.commands.registerCommand('grimoire.openSettings', () => settings.open()),
     vscode.commands.registerCommand('grimoire.showOutput', () => output.show()),
     vscode.commands.registerCommand('grimoire.openDetails', (repo: unknown) => {
       if (typeof repo === 'string' && repo.length > 0) {
@@ -332,7 +361,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     }),
     vscode.commands.registerCommand('grimoire.reportBug', () =>
       vscode.env.openExternal(
-        vscode.Uri.parse('https://github.com/grimoire-rs/grimoire/issues/new?template=bug_report.yml'),
+        vscode.Uri.parse(
+          'https://github.com/grimoire-rs/grimoire/issues/new?template=bug_report.yml',
+        ),
       ),
     ),
     vscode.commands.registerCommand('grimoire.requestFeature', () =>
@@ -347,7 +378,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   return {
     refresh: refreshAll,
     scopes,
-    providers: { sidebar, details },
+    providers: { sidebar, details, settings },
     handleUri,
   };
 }

@@ -1,7 +1,8 @@
 // View-model fixture builders for the Settings panel, mirroring vms.ts's role
-// for the sidebar/details goldens. Descriptions use the exact §7 runtime
-// copy from settings-impl-spec.md (grim's next-release strings) per the spec's
-// fixture instruction.
+// for the sidebar/details goldens. Descriptions use the exact runtime copy
+// grim's next release ships for the 7 fixed `options.*` keys, not a
+// placeholder — a real string exercises the same markdown-it inline-render
+// path (backtick spans, etc.) production actually hits.
 import type {
   WireConfigEntry,
   WireRegistryEntry,
@@ -12,18 +13,19 @@ import type { ScopesVM, SettingsState } from '../../webview/protocol';
 export function wireConfigEntry(overrides: Partial<WireConfigEntry> = {}): WireConfigEntry {
   return {
     key: 'options.default_view',
-    value: 'flat',
+    value: null,
     set: false,
     type: 'enum',
     title: 'Default view',
-    description: 'Sets the view the browser opens in. Defaults to `flat`; `tree` groups items by path segments.',
-    default: 'flat',
+    description:
+      'Sets the view the browser opens in. Defaults to `tree`, grouping items by path segments; `flat` lists them ungrouped.',
+    default: 'tree',
     values: ['flat', 'tree'],
     ...overrides,
   };
 }
 
-/** The 7 fixed `options.*` keys grim returns, in stable order (spec §7 copy). */
+/** The 7 fixed `options.*` keys grim returns, in stable order. */
 export function wireConfigEntries(): WireConfigEntry[] {
   return [
     wireConfigEntry({
@@ -44,7 +46,7 @@ export function wireConfigEntries(): WireConfigEntry[] {
       type: 'string-set',
       title: 'Clients',
       description:
-        'Determines which clients receive installs and updates when `--client` is absent. Auto-detects clients when left empty, falling back to `claude`.',
+        'Determines which clients receive installs and updates when `--client` is absent. Auto-detects clients when left empty, falling back to all clients when none are detected.',
       default: null,
       values: ['claude', 'copilot', 'cursor'],
     }),
@@ -61,12 +63,13 @@ export function wireConfigEntries(): WireConfigEntry[] {
     }),
     wireConfigEntry({
       key: 'options.default_view',
-      value: 'flat',
+      value: null,
       set: false,
       type: 'enum',
       title: 'Default view',
-      description: 'Sets the view the browser opens in. Defaults to `flat`; `tree` groups items by path segments.',
-      default: 'flat',
+      description:
+        'Sets the view the browser opens in. Defaults to `tree`, grouping items by path segments; `flat` lists them ungrouped.',
+      default: 'tree',
       values: ['flat', 'tree'],
     }),
     wireConfigEntry({
@@ -129,7 +132,7 @@ export function settingsSource(overrides: Partial<SettingsSource> = {}): Setting
     scope: 'project',
     scopes: scopesVM(),
     grimMissing: false,
-    configPath: '/work/my-app/.grimoire/grimoire.toml',
+    configPath: '/work/my-app/grimoire.toml',
     configExists: true,
     entries: wireConfigEntries(),
     registries: [
@@ -146,7 +149,8 @@ export function settingsState(overrides: Partial<SettingsState> = {}): SettingsS
     phase: 'ready',
     projectOpen: true,
     projectName: 'my-app',
-    configPath: '/work/my-app/.grimoire/grimoire.toml',
+    configPath: '/work/my-app/grimoire.toml',
+    rawConfigPath: '/work/my-app/grimoire.toml',
     groups: [],
     registries: [],
     ...overrides,

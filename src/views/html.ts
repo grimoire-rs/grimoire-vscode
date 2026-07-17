@@ -10,7 +10,7 @@ export function nonce(): string {
 export function webviewHtml(
   webview: vscode.Webview,
   extensionUri: vscode.Uri,
-  bundle: 'sidebar' | 'details',
+  bundle: 'sidebar' | 'details' | 'settings',
   rootAttrs = '',
   /** Server-side body inlined into #root so the first HTML parse shows structure
    *  before the script runs (details skeleton). Trusted markup — callers pass

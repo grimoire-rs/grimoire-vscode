@@ -4,7 +4,6 @@ import type { Scope } from './grim';
 export interface GrimoireConfig {
   executable: string;
   defaultScope: Scope;
-  showDeprecated: boolean;
   watchForChanges: boolean;
   prefetchDetails: boolean;
   checkForUpdates: boolean;
@@ -20,7 +19,6 @@ export function readConfig(): GrimoireConfig {
   return {
     executable: cfg.get<string>('path.executable', DEFAULT_EXECUTABLE) || DEFAULT_EXECUTABLE,
     defaultScope: defaultScope === 'global' ? 'global' : 'project',
-    showDeprecated: cfg.get<boolean>('showDeprecated', true),
     watchForChanges: cfg.get<boolean>('watchForChanges', true),
     prefetchDetails: cfg.get<boolean>('prefetchDetails', true),
     checkForUpdates: cfg.get<boolean>('checkForUpdates', true),

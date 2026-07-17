@@ -7,14 +7,22 @@ import {
   buildSettingsRow,
   buildSettingsVM,
   chipHasComma,
+  consumeAwaitingConfirm,
   defaultHint,
+  draftToLocator,
   EMPTY_REGISTRY_DRAFT,
+  enumSelectedValue,
+  isModified,
   isValidChip,
   isValidInteger,
   joinList,
+  LOCATOR_PLACEHOLDER,
   reloadedKeys,
+  resolveScopeSwitch,
   resolveSettingsPhase,
+  shouldBlockNumberWheel,
   splitList,
+  toggleRegistryHelp,
 } from '../webview/settings/model';
 import { scopesVM, settingsSource, settingsState, wireConfigEntries, wireConfigEntry, wireRegistryEntry } from './fixtures/settingsVms';
 
@@ -30,15 +38,58 @@ suite('buildSettingsRow', () => {
     assert.strictEqual(row.type, 'unknown');
   });
 
-  test('modified is value !== default, independent of `set`', () => {
+  // Regression (verifier-flagged): an UNSET row (value null, default
+  // non-null) previously showed the modified accent + bg tint just because
+  // null !== the default — modified must require the row to actually be SET.
+  test('modified requires the row to be SET — an unset row never shows modified, even if value differs from default', () => {
     assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'flat', default: 'flat', set: true })).modified, false);
-    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: false })).modified, true);
+    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: false })).modified, false);
+    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: true })).modified, true);
   });
 
   test('every row starts idle with no error message', () => {
     const row = buildSettingsRow(wireConfigEntry());
     assert.strictEqual(row.status, 'idle');
     assert.strictEqual(row.errorMessage, undefined);
+  });
+});
+
+suite('isModified', () => {
+  test('unset row never shows modified, even when its value differs from a non-null default', () => {
+    assert.strictEqual(isModified(false, null, 'tree'), false);
+    assert.strictEqual(isModified(false, 'tree', 'flat'), false);
+  });
+
+  test('a set row is modified only when value differs from default', () => {
+    assert.strictEqual(isModified(true, 'flat', 'tree'), true);
+    assert.strictEqual(isModified(true, 'tree', 'tree'), false);
+  });
+});
+
+suite('enumSelectedValue', () => {
+  test('a SET row selects its own value', () => {
+    assert.strictEqual(
+      enumSelectedValue({ value: 'flat', default: 'tree', values: ['flat', 'tree'] }),
+      'flat',
+    );
+  });
+
+  // Regression: an unset "Default view" row rendered "flat" (values[0])
+  // selected even though the effective default is "tree" — the dropdown
+  // must select the row's DEFAULT for an unset row, never just the first
+  // enum option.
+  test('an UNSET row (value null) selects the DEFAULT, never the first values[] entry', () => {
+    assert.strictEqual(
+      enumSelectedValue({ value: null, default: 'tree', values: ['flat', 'tree'] }),
+      'tree',
+    );
+  });
+
+  test('unset with no fixed default falls back to the first values[] entry', () => {
+    assert.strictEqual(
+      enumSelectedValue({ value: null, default: null, values: ['flat', 'tree'] }),
+      'flat',
+    );
   });
 });
 
@@ -50,7 +101,7 @@ suite('defaultHint', () => {
     );
     assert.strictEqual(
       defaultHint('options.clients', null),
-      'Not set — clients are auto-detected, falling back to claude.',
+      'Not set — clients are auto-detected, falling back to all clients when none are detected.',
     );
   });
 
@@ -145,11 +196,51 @@ suite('resolveSettingsPhase / buildSettingsVM: empty and init states', () => {
     assert.ok(vm.groups.length > 0);
   });
 
-  test('global scope has no empty state — always ready, even with no workspace open', () => {
+  // Global's readiness depends only on ITS OWN config existing — never on
+  // whether a project workspace happens to be open (the two scopes are
+  // independent; a Global tab visited with no folder open must still work).
+  test('global scope, config exists: ready regardless of project workspace state', () => {
     const vm = buildSettingsVM(
       settingsSource({ scope: 'global', scopes: scopesVM({ projectOpen: false, projectConfigured: false }) }),
     );
     assert.strictEqual(vm.phase, 'ready');
+  });
+
+  // Regression (user-reported bug, spec §2 — user-decided 2026-07-17): Global
+  // used to render as unconditionally 'ready' even with no global
+  // grimoire.toml, so the always-visible form's first control edit silently
+  // materialized the file with no explicit Initialize step. Global now gates
+  // on configExists exactly like Project.
+  test('global scope with no grimoire.toml yet -> global-no-toml, mirroring project-no-toml', () => {
+    const vm = buildSettingsVM(settingsSource({ scope: 'global', configExists: false }));
+    assert.strictEqual(vm.phase, 'global-no-toml');
+    assert.strictEqual(vm.groups.length, 0);
+    assert.strictEqual(vm.registries.length, 0);
+    // Tab-bar path label stays hidden (design item 1) — same rule as project.
+    assert.strictEqual(vm.configPath, null);
+    // But the empty-state COPY needs the real, unhardcoded path (unlike
+    // project's fixed `grimoire.toml` text) — rawConfigPath carries
+    // it through regardless of existence.
+    assert.strictEqual(vm.rawConfigPath, settingsSource().configPath);
+  });
+
+  test('rawConfigPath carries the resolved path through even once ready (not just the empty states)', () => {
+    const vm = buildSettingsVM(settingsSource({ scope: 'global' }));
+    assert.strictEqual(vm.phase, 'ready');
+    assert.strictEqual(vm.rawConfigPath, settingsSource().configPath);
+    assert.strictEqual(vm.configPath, settingsSource().configPath);
+  });
+});
+
+suite('shouldBlockNumberWheel', () => {
+  test('blocks only a wheel event over a FOCUSED number input', () => {
+    assert.strictEqual(shouldBlockNumberWheel(true, true), true);
+  });
+
+  test('never blocks page scroll everywhere else', () => {
+    assert.strictEqual(shouldBlockNumberWheel(true, false), false, 'unfocused number input');
+    assert.strictEqual(shouldBlockNumberWheel(false, true), false, 'a different, focused element');
+    assert.strictEqual(shouldBlockNumberWheel(false, false), false);
   });
 });
 
@@ -249,5 +340,113 @@ suite('addRegistryDraftValid', () => {
       true,
     );
     assert.strictEqual(addRegistryDraftValid({ ...EMPTY_REGISTRY_DRAFT, alias: '  ', locator: 'x' }), false);
+  });
+});
+
+suite('EMPTY_REGISTRY_DRAFT', () => {
+  test('defaults to Index locator — the common case', () => {
+    assert.strictEqual(EMPTY_REGISTRY_DRAFT.kind, 'index');
+  });
+});
+
+suite('draftToLocator', () => {
+  test('index kind maps to the {index} RegistryLocator variant', () => {
+    assert.deepStrictEqual(
+      draftToLocator({ ...EMPTY_REGISTRY_DRAFT, kind: 'index', locator: ' https://x/index.json ' }),
+      { index: 'https://x/index.json' },
+    );
+  });
+
+  test('oci kind maps to the {oci} RegistryLocator variant', () => {
+    assert.deepStrictEqual(
+      draftToLocator({ ...EMPTY_REGISTRY_DRAFT, kind: 'oci', locator: ' ghcr.io/acme ' }),
+      { oci: 'ghcr.io/acme' },
+    );
+  });
+});
+
+suite('LOCATOR_PLACEHOLDER', () => {
+  test('one placeholder per registry type', () => {
+    assert.strictEqual(
+      LOCATOR_PLACEHOLDER.index,
+      'https://example.com/index.json — or — git repository URL',
+    );
+    assert.strictEqual(LOCATOR_PLACEHOLDER.oci, 'ghcr.io/org');
+  });
+});
+
+suite('toggleRegistryHelp', () => {
+  test('closed -> clicking an icon opens its tooltip', () => {
+    assert.strictEqual(toggleRegistryHelp(null, 'index'), 'index');
+    assert.strictEqual(toggleRegistryHelp(null, 'oci'), 'oci');
+  });
+
+  test('clicking the OPEN icon again closes it', () => {
+    assert.strictEqual(toggleRegistryHelp('index', 'index'), null);
+    assert.strictEqual(toggleRegistryHelp('oci', 'oci'), null);
+  });
+
+  test('clicking the OTHER icon switches to it — only one open at a time', () => {
+    assert.strictEqual(toggleRegistryHelp('index', 'oci'), 'oci');
+    assert.strictEqual(toggleRegistryHelp('oci', 'index'), 'index');
+  });
+});
+
+suite('consumeAwaitingConfirm', () => {
+  test('no credits outstanding -> not self-triggered, stays at 0', () => {
+    assert.deepStrictEqual(consumeAwaitingConfirm(0), { selfTriggered: false, next: 0 });
+  });
+
+  test('one credit outstanding -> self-triggered, consumed down to 0', () => {
+    assert.deepStrictEqual(consumeAwaitingConfirm(1), { selfTriggered: true, next: 0 });
+  });
+
+  // Regression: two overlapping self-writes in the same scope (B queues
+  // behind A's grim round trip) used to zero the whole counter on A's own
+  // confirmation, leaving B's later confirmation looking external. A repost
+  // must consume at most ONE credit so B's own credit survives A's.
+  test('two credits outstanding -> the first repost stays self-triggered and leaves one credit for the second', () => {
+    const first = consumeAwaitingConfirm(2);
+    assert.deepStrictEqual(first, { selfTriggered: true, next: 1 });
+    const second = consumeAwaitingConfirm(first.next);
+    assert.deepStrictEqual(second, { selfTriggered: true, next: 0 });
+  });
+
+  test('never goes negative', () => {
+    assert.deepStrictEqual(consumeAwaitingConfirm(0).next, 0);
+  });
+});
+
+// Item 3 regression: pins the scope-switch decision logic main.ts's
+// 'set-scope' handler defers to. The bug (every switch forcing the
+// structurally different 'loading' template, tearing the form down and
+// rebuilding it twice) lived in main.ts, which only runs in a webview DOM
+// and isn't unit-tested directly anywhere in this suite (no jsdom dependency,
+// same as sidebar/details' main.ts files) — the settingsRender goldens are a
+// string-render rig (@lit-labs/ssr) that can't observe node identity/patch-
+// vs-replace either. Pinning resolveScopeSwitch's pure decision is the
+// strongest feasible regression: it proves a cache hit reuses the SAME VM
+// reference (so lit-html's keyed repeat() patches rows instead of the
+// subtree being torn down) and that only a true first-visit (no cache) still
+// falls back to the loading placeholder.
+suite('resolveScopeSwitch', () => {
+  test('cache hit: shows the cached VM immediately (same reference — no clone) and flags a non-structural refresh', () => {
+    const cached = settingsState({ scope: 'global' });
+    const current = settingsState({ scope: 'project' });
+    const result = resolveScopeSwitch('global', cached, current);
+    assert.strictEqual(result.vm, cached);
+    assert.strictEqual(result.refreshing, true);
+  });
+
+  test('no cache, but a VM already showing: falls back to the loading placeholder for the target scope', () => {
+    const current = settingsState({ scope: 'project' });
+    const result = resolveScopeSwitch('global', undefined, current);
+    assert.strictEqual(result.refreshing, false);
+    assert.strictEqual(result.vm?.scope, 'global');
+    assert.strictEqual(result.vm?.phase, 'loading');
+  });
+
+  test('no cache and nothing showing yet: nothing to render', () => {
+    assert.deepStrictEqual(resolveScopeSwitch('global', undefined, null), { vm: null, refreshing: false });
   });
 });

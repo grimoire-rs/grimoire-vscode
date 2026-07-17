@@ -1,0 +1,679 @@
+/* Grimoire Settings panel. Colors are `--vscode-*` tokens only; the mockup's Dark Modern
+ * hexes are reused as fallback values via the SAME var(...) bindings already
+ * established in sidebar.css/details.css for shared hexes (#3c3c3c borders,
+ * #2d2d2d chip bg, #0078d4/#026ec1 button blue/hover, the muted text ramp).
+ * Three new mappings this view introduces (no prior binding existed):
+ *   - error red (#f14c4c/#f48771)   -> --vscode-inputValidation-errorBorder / --vscode-errorForeground
+ *   - default-registry star (#e2c08d) -> --vscode-gitDecoration-modifiedResourceForeground (closest gold-ish token; picked once, here)
+ *   - chip-selected accent (#3794ff)  -> --vscode-focusBorder
+ */
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: 13px;
+  /* Shared centered-column geometry (item 3): tabs, content, and footer all
+   * size their inner wrapper to this max-width/horizontal-padding so the
+   * three strips line up on wide panels instead of drifting independently. */
+  --settings-col-max-width: 780px;
+  --settings-col-padding-x: 32px;
+}
+
+.mono {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* --- Tabs (item 1) --- */
+/* Outer bar stays full-bleed (border-bottom spans the whole panel, same as
+ * native VS Code Settings); the inner wrapper shares .settings-content's
+ * max-width/horizontal-padding so tabs/path label align with the body
+ * instead of the viewport edge at wide panel widths (item 2). `margin: 0
+ * auto` centers the whole column on panels wider than 780px (item 3) — the
+ * path label's own `margin-left: auto` still pins it to this now-centered
+ * row's right edge. */
+.settings-tabs {
+  border-bottom: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.2));
+}
+
+.settings-tabs-inner {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  max-width: var(--settings-col-max-width);
+  margin: 0 auto;
+  padding: 14px var(--settings-col-padding-x) 0;
+}
+
+.settings-tab {
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 0 0 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  color: var(--vscode-foreground);
+}
+
+.settings-tab.active {
+  color: var(--vscode-foreground);
+  font-weight: 600;
+  border-bottom-color: var(--vscode-foreground);
+}
+
+.settings-path {
+  margin-left: auto;
+  padding-bottom: 8px;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* --- Content column (item 1: body max-width 780, padding 20/32/30) --- */
+/* margin: 0 auto centers the column on panels wider than 780px (item 3). */
+.settings-content {
+  max-width: var(--settings-col-max-width);
+  margin: 0 auto;
+  padding: 20px var(--settings-col-padding-x) 30px;
+}
+
+/* Non-structural loading indicator (item 3): a scope switch shows the
+ * previously-cached VM immediately and dims it until the host's fresh fetch
+ * confirms — never a subtree swap to a different template. */
+.settings-content.refreshing {
+  opacity: 0.6;
+}
+
+/* --- Groups (item 2) --- */
+.settings-group {
+  margin: 0 0 4px;
+}
+
+.settings-group + .settings-group {
+  margin-top: 22px;
+}
+
+.group-header {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* --- Row (item 3) --- */
+.settings-row {
+  padding: 12px 14px;
+  border-left: 2px solid transparent;
+}
+
+.settings-row.modified {
+  border-left-color: var(--vscode-button-background, #0078d4);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-row.saving {
+  opacity: 0.55;
+}
+
+.row-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.row-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.row-badge .codicon {
+  font-size: 11px;
+}
+
+.row-discard {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--vscode-icon-foreground);
+  cursor: pointer;
+}
+
+.row-discard .codicon {
+  font-size: 13px;
+}
+
+.row-desc {
+  margin: 3px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.row-desc code {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+.row-control {
+  display: flex;
+}
+
+.row-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--vscode-errorForeground);
+}
+
+.row-error .codicon {
+  font-size: 12px;
+}
+
+.row-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* --- Controls --- */
+
+/* Toggle: 34x18 pill. */
+.toggle {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--vscode-widget-border, #3c3c3c);
+  cursor: pointer;
+}
+
+.toggle.on {
+  background: var(--vscode-button-background, #0078d4);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--vscode-foreground, #cccccc);
+  transition: left 0.1s ease;
+}
+
+.toggle.on .toggle-knob {
+  left: 18px;
+  background: #ffffff;
+}
+
+/* Dropdown, text, number inputs: shared chrome. */
+.settings-select,
+.settings-input {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: var(--vscode-font-family);
+}
+
+.settings-select {
+  width: 200px;
+}
+
+.settings-input {
+  width: 360px;
+}
+
+.settings-input-number {
+  width: 64px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  /* Plain box like VS Code's own number settings — no native spinner. */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.settings-input-number::-webkit-inner-spin-button,
+.settings-input-number::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.settings-select:focus,
+.settings-input:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder);
+}
+
+.settings-input.error,
+.chip-editor.error {
+  border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
+}
+
+.settings-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+.settings-readonly {
+  padding: 4px 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Closed-set chips (Clients). */
+.chips-closed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip-closed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 9px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-toolbar-hoverBackground, #2d2d2d);
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.chip-closed:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.chip-closed.selected {
+  color: var(--vscode-foreground);
+  background: rgba(55, 148, 255, 0.14);
+  border-color: var(--vscode-focusBorder, #3794ff);
+}
+
+.chip-closed .codicon {
+  font-size: 11px;
+}
+
+/* Free chip editor (Tree separators). */
+.chip-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 348px;
+  min-height: 28px;
+  padding: 3px 6px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+}
+
+.chip-free {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--vscode-toolbar-hoverBackground, #2d2d2d);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--vscode-icon-foreground);
+  cursor: pointer;
+}
+
+.chip-remove .codicon {
+  font-size: 10px;
+}
+
+.chip-input {
+  flex: 1;
+  min-width: 90px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  font-size: 12px;
+}
+
+.chip-input::placeholder {
+  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+/* --- Buttons --- */
+.btn {
+  border: none;
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.btn.secondary {
+  background: var(--vscode-button-secondaryBackground, var(--vscode-input-background));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.icon-button {
+  background: transparent;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--vscode-icon-foreground);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.link-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+/* --- Registries --- */
+.registries-blurb {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.registry-table {
+  margin: 0 0 14px;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.registry-row {
+  display: grid;
+  grid-template-columns: 120px 64px 1fr 76px 76px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, #232323);
+}
+
+.registry-row:last-child {
+  border-bottom: none;
+}
+
+.registry-row:not(.registry-header):hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.registry-header {
+  padding: 6px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.06));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.registry-alias {
+  font-weight: 600;
+}
+
+.registry-row.legacy {
+  opacity: 0.55;
+}
+
+.legacy-alias {
+  font-style: italic;
+  font-weight: 400;
+}
+
+.registry-type,
+.registry-locator {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registry-star {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.registry-star-empty {
+  color: var(--vscode-descriptionForeground);
+}
+
+.registry-star-empty:hover:not(:disabled) {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d);
+}
+
+.registry-lock {
+  color: var(--vscode-descriptionForeground);
+}
+
+.registry-footnote {
+  padding: 0 12px 8px;
+  font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.registries-empty {
+  padding: 10px 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* --- Add-registry form (3b) --- */
+.add-registry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--vscode-editorWidget-background, #232323);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+}
+
+.form-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-label {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.form-alias.error {
+  border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
+}
+
+.radio-row {
+  display: flex;
+  gap: 18px;
+}
+
+.radio-label,
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Per-radio info icon (design item 3) + its floating tooltip anchor. */
+.radio-kind-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.form-info-button {
+  color: var(--vscode-descriptionForeground);
+}
+
+.form-info-button:hover {
+  color: var(--vscode-foreground);
+}
+
+.form-info-button .codicon {
+  font-size: 13px;
+}
+
+.registry-help-tooltip {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: var(--vscode-editorWidget-background, #232323);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* --- Empty / init states (item 4) --- */
+/* max-width + margin: 0 auto (item 3) so the empty state centers on its own,
+ * independent of its .settings-content parent already doing the same. */
+.settings-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 54px 40px 58px;
+  text-align: center;
+}
+
+.settings-empty-icon {
+  font-size: 44px !important;
+  color: var(--vscode-disabledForeground, #4d4d4d);
+}
+
+.settings-empty-title {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-empty-body {
+  margin: 0;
+  max-width: 340px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--vscode-descriptionForeground);
+}
+
+.settings-empty-action {
+  margin-top: 14px;
+}
+
+.inline-code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, #2b2b2b);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.settings-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+.error-state {
+  padding: 16px 32px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--vscode-errorForeground);
+  font-size: 12px;
+}
+
+/* --- Footer --- */
+/* Outer bar stays full-bleed (border-top spans the whole panel), same split
+ * as .settings-tabs/.settings-tabs-inner: the inner wrapper shares the
+ * centered-column geometry so the links line up with the body/tabs instead
+ * of the panel edge on wide panels. */
+.settings-footer {
+  border-top: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.2));
+}
+
+.settings-footer-inner {
+  display: flex;
+  gap: 16px;
+  max-width: var(--settings-col-max-width);
+  margin: 0 auto;
+  padding: 10px var(--settings-col-padding-x);
+}

@@ -70,13 +70,18 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
   add('settings-ready-empty-registries', r.renderSettings(settingsState({ groups: readyGroups, registries: [] })));
   add(
     'settings-ready-add-registry-open',
-    r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT }),
+    r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
+  );
+  add(
+    'settings-ready-add-registry-help-open',
+    r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: 'index' }),
   );
   add(
     'settings-ready-add-registry-error',
     r.renderSettings(readyState, {
       open: true,
       draft: { alias: 'ghcr', kind: 'oci', locator: 'ghcr.io/dup', default: false },
+      helpOpen: null,
       error: 'Registry alias "ghcr" already exists.',
     } satisfies AddRegistryUI),
   );
@@ -88,6 +93,19 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
     ),
   );
   add('settings-project-no-toml', r.renderSettings(settingsState({ phase: 'project-no-toml', configPath: null, groups: [], registries: [] })));
+  add(
+    'settings-global-no-toml',
+    r.renderSettings(
+      settingsState({
+        scope: 'global',
+        phase: 'global-no-toml',
+        configPath: null,
+        rawConfigPath: '/home/user/grimoire.toml',
+        groups: [],
+        registries: [],
+      }),
+    ),
+  );
   add('settings-no-grim', r.renderSettings(settingsState({ phase: 'no-grim', configPath: null, groups: [], registries: [] })));
   add('settings-loading', r.renderSettings(settingsState({ phase: 'loading', configPath: null, groups: [], registries: [] })));
   add('settings-error', r.renderSettings(settingsState({ phase: 'error', groups: [], registries: [], error: 'grim exited with status 1' })));

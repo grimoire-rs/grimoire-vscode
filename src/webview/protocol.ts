@@ -189,3 +189,127 @@ export type HostToDetails =
   | { type: 'revalidate'; state: RevalidateState; message?: string }
   /** The panel was promoted out of the preview slot — clear the pin. */
   | { type: 'promoted' };
+
+// --- Settings (singleton editor-area panel) ---
+
+/** Grim's presentation type for a config key's value. webview/settings/model.ts's
+ *  buildSettingsRow narrows the wire's open `string` (grim.ts's ConfigEntry.type)
+ *  down to this closed set; an unrecognized future value degrades to 'unknown'
+ *  (a read-only row) rather than throwing — same split as ArtifactKind (closed,
+ *  webview) vs SearchItem.kind (open, wire). */
+export type SettingsControlType =
+  | 'string'
+  | 'boolean'
+  | 'enum'
+  | 'string-list'
+  | 'string-set'
+  | 'integer';
+
+/** Per-row transient UI state the webview overlays locally around a write —
+ *  mirrors details/main.ts's `vm.busy` direct-mutation pattern; not part of
+ *  grim's wire contract, never posted by the host inside a row itself. */
+export type SettingsRowStatus = 'idle' | 'saving' | 'error' | 'reloaded';
+
+export interface SettingsRowVM {
+  key: string;
+  title: string;
+  description: string;
+  type: SettingsControlType | 'unknown';
+  value: string | null;
+  default: string | null;
+  set: boolean;
+  /** enum/string-set option list; null for every other type. */
+  values: string[] | null;
+  /** value !== default — drives the row's left-border state-bar accent
+   *  (design item 3); independent of `set` (the discard-icon condition). */
+  modified: boolean;
+  /** Precomputed caption under the row: "Default: false" or, for the two
+   *  null-default keys (default_registry/clients), a behavioral sentence. */
+  hint: string;
+  status: SettingsRowStatus;
+  /** Set only alongside status === 'error' — the rejected-value inline message. */
+  errorMessage?: string;
+}
+
+export interface SettingsGroupVM {
+  title: string;
+  rows: SettingsRowVM[];
+}
+
+export interface SettingsRegistryVM {
+  alias: string | null;
+  /** 'unknown' only for a malformed row (neither oci nor index set) — grim's
+   *  contract guarantees exactly one of the two, but this stays defensive
+   *  rather than throw (frozen/additive tolerance, same policy as everywhere
+   *  else in the wire contract). */
+  type: 'oci' | 'index' | 'unknown';
+  locator: string;
+  default: boolean;
+  /** alias === null: a legacy pre-alias row — read-only (no remove action). */
+  legacy: boolean;
+}
+
+export type SettingsPhase =
+  | 'loading'
+  | 'ready'
+  | 'error'
+  | 'no-grim'
+  | 'no-folder'
+  | 'project-no-toml'
+  | 'global-no-toml';
+
+export interface SettingsState {
+  scope: Scope;
+  phase: SettingsPhase;
+  /** A workspace folder is open — mirrors ScopesVM.projectOpen (reused as the
+   *  source for buildSettingsVM's phase resolution). */
+  projectOpen: boolean;
+  projectName: string | null;
+  /** Active scope's grimoire.toml path, shown as the faint tab-bar label —
+   *  null when it doesn't exist yet (project-no-toml/global-no-toml) or isn't
+   *  known. */
+  configPath: string | null;
+  /** grim context's config_path verbatim, regardless of whether the file
+   *  exists — used ONLY by the 'global-no-toml' empty state's inline-code
+   *  path chip (design: the real path, never hardcoded, since $GRIM_HOME is
+   *  overridable — contrast with project's fixed `grimoire.toml`
+   *  copy). Null whenever the path itself isn't known (no-folder/no-grim/error). */
+  rawConfigPath: string | null;
+  groups: SettingsGroupVM[];
+  registries: SettingsRegistryVM[];
+  error?: string;
+}
+
+/** Exactly one of `oci`/`index` — duplicated from grim.ts's RegistryLocator so
+ *  this shared, dependency-free module stays independent of the host-only
+ *  grim.ts at runtime (same convention as webview/model.ts's WireSearchItem). */
+export type RegistryLocator = { oci: string } | { index: string };
+
+export type SettingsToHost =
+  | { type: 'ready'; scope: Scope }
+  | { type: 'switchScope'; scope: Scope }
+  | { type: 'setValue'; scope: Scope; key: string; value: string }
+  | { type: 'unsetValue'; scope: Scope; key: string }
+  | {
+      type: 'addRegistry';
+      scope: Scope;
+      alias: string;
+      locator: RegistryLocator;
+      default: boolean;
+    }
+  | { type: 'removeRegistry'; scope: Scope; alias: string }
+  | { type: 'useRegistry'; scope: Scope; alias: string }
+  | { type: 'initProject' }
+  | { type: 'initGlobal' }
+  | { type: 'openConfigFile'; scope: Scope }
+  | { type: 'openVsCodeSettings' }
+  | { type: 'openExternal'; url: string }
+  | { type: 'installGrim' };
+
+export type HostToSettings =
+  | { type: 'state'; state: SettingsState }
+  /** A write was rejected (grim exit 65/64, or the write-queue's lock-retry
+   *  gave up): `key` is the config key OR the attempted registry alias — the
+   *  one row/form the message belongs to. The state itself is unchanged
+   *  (nothing was written), so no accompanying 'state' post follows. */
+  | { type: 'writeError'; scope: Scope; key: string; message: string };
