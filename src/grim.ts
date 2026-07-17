@@ -163,6 +163,52 @@ export interface ItemsEnvelope<T> {
   items: T[];
 }
 
+// --- Config wire types (`grim config ...`). `type` is grim's presentation
+// --- metadata for a key's value (string/boolean/enum/string-set/string-list/
+// --- integer today) — kept as an open `string` here, not a closed union: the
+// --- JSON contract is frozen/additive, so a future grim may add a type this
+// --- extension doesn't know yet. Narrowing + the "unknown type degrades to a
+// --- read-only row" rule live in webview/settings (buildSettingsVM), same
+// --- split as SearchItem.kind (open here) / ArtifactKind (closed, webview).
+
+/** One row of `grim config list --all`. All 8 fields always present
+ *  (always-present-null policy) whether or not `--all` was passed. */
+export interface ConfigEntry {
+  key: string;
+  value: string | null;
+  set: boolean;
+  type: string;
+  title: string;
+  description: string;
+  default: string | null;
+  values: string[] | null;
+}
+
+/** One row of `grim config registry list`. Exactly one of `oci`/`index` is
+ *  non-null for a valid entry; `alias: null` marks a legacy (pre-alias) row. */
+export interface RegistryEntry {
+  alias: string | null;
+  oci: string | null;
+  index: string | null;
+  default: boolean;
+}
+
+/** The write confirmation shared by `config set`, `config unset`, and every
+ *  `config registry add|rm|use` — one report shape, discriminated by `action`. */
+export type ConfigWriteAction =
+  | 'set'
+  | 'unset'
+  | 'registry-added'
+  | 'registry-removed'
+  | 'registry-default';
+
+export interface ConfigWriteResult {
+  action: ConfigWriteAction;
+  key: string;
+  value: string | null;
+  scope: Scope;
+}
+
 // --- Results
 
 export type GrimResult<T> =
@@ -402,4 +448,58 @@ export function initArgs(options: { registry?: string } = {}): string[] {
     args.push('--registry', options.registry);
   }
   return args;
+}
+
+// --- Config argv builders (`grim config ...`). Scope is still not a builder
+// --- concern here — ScopeService.run prepends `--global` for global-scope
+// --- calls (see withGlobalFlag in scopes.ts); these builders never emit it.
+
+export function configListArgs(options: { all?: boolean } = {}): string[] {
+  const args = ['config', 'list'];
+  if (options.all) {
+    args.push('--all');
+  }
+  return args;
+}
+
+export function configSetArgs(key: string, value: string): string[] {
+  return ['config', 'set', key, value];
+}
+
+export function configUnsetArgs(key: string): string[] {
+  return ['config', 'unset', key];
+}
+
+export function registryListArgs(): string[] {
+  return ['config', 'registry', 'list'];
+}
+
+/** Exactly one of `oci`/`index` — clap's `--oci`/`--index` are
+ *  mutually exclusive, so a discriminated union makes the invalid "both" or
+ *  "neither" state unrepresentable at the call site instead of a runtime check. */
+export type RegistryLocator = { oci: string } | { index: string };
+
+export function registryAddArgs(
+  alias: string,
+  locator: RegistryLocator,
+  options: { default?: boolean } = {},
+): string[] {
+  const args = ['config', 'registry', 'add', alias];
+  if ('oci' in locator) {
+    args.push('--oci', locator.oci);
+  } else {
+    args.push('--index', locator.index);
+  }
+  if (options.default) {
+    args.push('--default');
+  }
+  return args;
+}
+
+export function registryRmArgs(alias: string): string[] {
+  return ['config', 'registry', 'rm', alias];
+}
+
+export function registryUseArgs(alias: string): string[] {
+  return ['config', 'registry', 'use', alias];
 }
