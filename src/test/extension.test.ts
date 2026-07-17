@@ -3,10 +3,22 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { parseDeclaredRefs, projectSearchable, ScopeService, withGlobalFlag } from '../scopes';
+import {
+  isProjectNotDiscovered,
+  parseDeclaredRefs,
+  projectSearchable,
+  ScopeService,
+  withGlobalFlag,
+} from '../scopes';
 import type { Snapshot } from '../scopes';
 import { artifactName } from '../webview/model';
-import type { DetailsVM, HostToDetails, RevalidateState } from '../webview/protocol';
+import type {
+  DetailsVM,
+  HostToDetails,
+  HostToSidebar,
+  RevalidateState,
+  SidebarState,
+} from '../webview/protocol';
 import type { GrimoireApi } from '../extension';
 import type { ContextInfo, GrimResult, Scope } from '../grim';
 
@@ -207,6 +219,32 @@ function fakePanel(): {
   return { panel, posts, revalidates, revalidateMessages };
 }
 
+/** A detached webview-view double for the sidebar so its posted states (a
+ *  no-op until a real view resolves — see SidebarProvider.post) can be
+ *  observed. Models fakePanel(); resolveWebviewView additionally needs
+ *  asWebviewUri/cspSource to build the HTML shell, and onDidReceiveMessage to
+ *  wire the (unused here — tests call handleMessage/refresh directly) message
+ *  channel. */
+function fakeView(): { view: vscode.WebviewView; states: SidebarState[] } {
+  const states: SidebarState[] = [];
+  const view = {
+    webview: {
+      options: undefined,
+      html: '',
+      cspSource: 'vscode-resource:',
+      asWebviewUri: (uri: vscode.Uri) => uri,
+      onDidReceiveMessage: () => ({ dispose() {} }),
+      postMessage: (message: HostToSidebar) => {
+        if (message.type === 'state') {
+          states.push(message.state);
+        }
+        return Promise.resolve(true);
+      },
+    },
+  } as unknown as vscode.WebviewView;
+  return { view, states };
+}
+
 /** Minimal OutputChannel double that captures appendLine calls. */
 function recordingOutput(lines: string[]): vscode.OutputChannel {
   return { appendLine: (l: string) => lines.push(l) } as unknown as vscode.OutputChannel;
@@ -297,6 +335,68 @@ suite('extension integration', () => {
       !search.includes('--show-deprecated'),
       `search honors grim's own config, no VS Code-side override: ${search}`,
     );
+  });
+
+  test('project with no grimoire.toml (NotDiscovered): browse falls back to global, notice offers init, no raw grim error leaks (items 2 + 3)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // The shell stub cans one context.json for both scopes (it can't fake a
+    // per-scope split — see the "run override" suite above), so this overrides
+    // scopes.run on the ACTIVATED extension's real, shared ScopeService: project
+    // context fails exactly like real grim's NotDiscovered (verified live
+    // against grim 0.9.0 — see isProjectNotDiscovered), global context/search
+    // succeed with one item, so an incorrect scope choice is visible as a
+    // missing item rather than silently passing.
+    const originalRun = api.scopes.run;
+    const globalItem = searchItem('ghcr.io/grimoire-rs/skills/global-only');
+    // Overriding run() entirely bypasses the real spawn (and its argv log) the
+    // same way the "run override" suite's per-scope fakes do — record what
+    // scope each command was called with directly instead.
+    const searchCalls: Scope[] = [];
+    try {
+      api.scopes.run = (async <T>(args: string[], scope: Scope): Promise<GrimResult<T>> => {
+        const cmd = args[0];
+        if (cmd === 'context' && scope === 'project') {
+          return {
+            ok: false,
+            kind: 'error',
+            code: 'not-found',
+            exitCode: 79,
+            message: '/ws: no grimoire.toml found by walking up from the working directory',
+          } as GrimResult<T>;
+        }
+        if (cmd === 'context') {
+          return { ok: true, value: contextDoc({ config_exists: true }) } as GrimResult<T>;
+        }
+        if (cmd === 'search') {
+          searchCalls.push(scope);
+          return {
+            ok: true,
+            value: { items: scope === 'global' ? [globalItem] : [] },
+          } as GrimResult<T>;
+        }
+        return { ok: true, value: { items: [] } } as GrimResult<T>;
+      }) as typeof api.scopes.run;
+      await api.providers.sidebar.refresh();
+      assert.deepStrictEqual(searchCalls, ['global'], 'browse falls back to global scope');
+      const last = states.at(-1);
+      assert.ok(last, 'no state was posted');
+      assert.notStrictEqual(last.phase, 'error', 'no raw grim error state — the NotDiscovered probe failure must not surface as a search error');
+      assert.strictEqual(last.scopes.projectConfigured, false);
+      // projectOpen:true + projectConfigured:false is exactly
+      // renderSidebarNotice's trigger condition (the init-offer banner is
+      // covered on its own in render.test.ts / parity's notice-init-project).
+      assert.strictEqual(last.scopes.projectOpen, true);
+      assert.ok(
+        last.items.some((c) => c.repo === globalItem['repo']),
+        'the global-scope item populated browse',
+      );
+    } finally {
+      api.scopes.run = originalRun;
+      canned(stub, 'context', contextDoc());
+    }
   });
 
   test('grimoire.refresh forces a catalog refresh (--refresh)', async function () {
@@ -1817,6 +1917,61 @@ suite('projectSearchable', () => {
   });
 });
 
+suite('isProjectNotDiscovered', () => {
+  test('true for the NotDiscovered shape grim reports (code "not-found", exit 79)', () => {
+    assert.strictEqual(
+      isProjectNotDiscovered({
+        ok: false,
+        kind: 'error',
+        code: 'not-found',
+        exitCode: 79,
+        message: '/ws: no grimoire.toml found by walking up from the working directory',
+      }),
+      true,
+    );
+  });
+
+  test('false for a different error code (a genuine transient failure)', () => {
+    assert.strictEqual(
+      isProjectNotDiscovered({
+        ok: false,
+        kind: 'error',
+        code: 'no-permission',
+        exitCode: 77,
+        message: 'permission denied',
+      }),
+      false,
+    );
+  });
+
+  test('false for the grim-binary-missing kind (a different failure class entirely)', () => {
+    assert.strictEqual(isProjectNotDiscovered({ ok: false, kind: 'not-found' }), false);
+  });
+
+  test('false for a successful probe', () => {
+    assert.strictEqual(
+      isProjectNotDiscovered({
+        ok: true,
+        value: {
+          version: '0.9.0',
+          scope: 'project',
+          workspace: '/ws',
+          config_path: '/ws/grimoire.toml',
+          config_exists: true,
+          lock_path: '/ws/grimoire.lock',
+          lock_exists: false,
+          grim_home: '/home/user/.grimoire',
+          offline: false,
+          clients: [],
+          registries: [],
+          default_registry: null,
+        },
+      }),
+      false,
+    );
+  });
+});
+
 // snapshot()'s flag-setting branch and the init gate need per-scope outcomes
 // the shell stub can't fake (it cans one context.json for BOTH scopes), so
 // these override run() on the instance — the seam every spawn goes through.
@@ -1851,6 +2006,19 @@ suite('project probe failure (run override)', () => {
     message: 'transient probe failure',
   };
 
+  // grim's real shape for "no grimoire.toml anywhere up the tree": `context`
+  // itself fails (ConfigError::NotDiscovered) rather than succeeding with
+  // config_exists:false — verified live against grim 0.9.0. code/exitCode
+  // are the structural signal isProjectNotDiscovered reads; never string-match
+  // `message` (it's a real, path-specific grim string).
+  const notDiscovered: GrimResult<ContextInfo> = {
+    ok: false,
+    kind: 'error',
+    code: 'not-found',
+    exitCode: 79,
+    message: '/ws: no grimoire.toml found by walking up from the working directory',
+  };
+
   test('snapshot() sets projectProbeFailed on a project probe error, keeping it searchable', async () => {
     const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
     scopes.run = scopedRun(probeError);
@@ -1858,6 +2026,19 @@ suite('project probe failure (run override)', () => {
     assert.strictEqual(snap.projectProbeFailed, true);
     assert.strictEqual(snap.project, undefined, 'a failed probe yields no project snapshot');
     assert.strictEqual(projectSearchable(snap), true);
+  });
+
+  test('snapshot() does NOT set projectProbeFailed on NotDiscovered — it must read as plain unconfigured', async () => {
+    const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
+    scopes.run = scopedRun(notDiscovered);
+    const snap = await scopes.snapshot();
+    assert.strictEqual(snap.projectProbeFailed, undefined);
+    assert.strictEqual(snap.project, undefined);
+    // The behavioral crux of the fix: unlike a genuine probe error, this must
+    // fall back to global (browse) rather than re-querying an unconfigured
+    // project and surfacing grim's raw "no grimoire.toml found by walking
+    // up..." message.
+    assert.strictEqual(projectSearchable(snap), false);
   });
 
   test('projectNeedsInit: only a positive "no config" probe triggers init', async () => {
@@ -1870,6 +2051,12 @@ suite('project probe failure (run override)', () => {
     assert.strictEqual(await scopes.projectNeedsInit(), true);
     scopes.run = scopedRun({ ok: true, value: probeContext(true) });
     assert.strictEqual(await scopes.projectNeedsInit(), false);
+  });
+
+  test('projectNeedsInit: NotDiscovered also triggers init (the common real-world shape)', async () => {
+    const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
+    scopes.run = scopedRun(notDiscovered);
+    assert.strictEqual(await scopes.projectNeedsInit(), true);
   });
 });
 

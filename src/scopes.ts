@@ -32,11 +32,15 @@ export interface Snapshot {
   grimMissing: boolean;
   error?: string;
   /** Set when a workspace folder is open and the project-scope `grim context`
-   *  probe itself failed (transient error, not "no grimoire.toml"). `project`
-   *  is `undefined` in both that case and the merely-unconfigured case, so
-   *  without this flag a failed probe reads as "unconfigured" downstream —
-   *  silently flipping browse/search to the global registry set instead of
-   *  surfacing the probe failure. See projectSearchable(). */
+   *  probe failed for a reason OTHER than the ordinary "no grimoire.toml"
+   *  outcome (see `isProjectNotDiscovered`) — a genuine transient error
+   *  (permissions, I/O, malformed config). `project` is `undefined` in both
+   *  that case and the merely-unconfigured case, so without this flag a
+   *  genuine failure reads as "unconfigured" downstream — silently flipping
+   *  browse/search to the global registry set instead of surfacing the probe
+   *  failure. The ordinary no-toml outcome must NOT set this flag: it needs
+   *  to read exactly like "unconfigured" so the global fallback and the
+   *  init-offer notice both fire. See projectSearchable(). */
   projectProbeFailed?: boolean;
 }
 
@@ -74,14 +78,33 @@ export function withGlobalFlag(args: string[]): string[] {
   return ['--global', ...args];
 }
 
+/** True when a failed project-scope `grim context` probe failed for the
+ *  ORDINARY reason — no grimoire.toml exists anywhere up the directory tree
+ *  from the workspace folder. grim reports this as an error envelope, not a
+ *  success with `config_exists: false`: `ProjectConfig::discover_from`'s
+ *  walk-up itself fails with `NotDiscovered` (code "not-found", exit 79) when
+ *  it finds nothing, so `context` (which requires discovery to succeed before
+ *  it can report anything) never reaches the point of emitting
+ *  `config_exists: false` — verified against grim 0.9.0. grimoire-vscode
+ *  never passes `--config`, so this is the only way `context` fails with this
+ *  code for project scope; a genuine transient failure (permissions, I/O,
+ *  malformed config) always carries a different code. Structural detection
+ *  off the error code — never string-matches grim's message text. Pure;
+ *  exported for tests. */
+export function isProjectNotDiscovered(probe: GrimResult<ContextInfo>): boolean {
+  return !probe.ok && probe.kind === 'error' && probe.code === 'not-found';
+}
+
 /** Collapses project scope's tri-state — configured, unconfigured, or probe
  *  failed — into whether project scope is what a browse/search should target.
  *  `config_exists` alone can't tell "no grimoire.toml" apart from "the probe
- *  errored", since both leave `snapshot.project` undefined; treating a failed
- *  probe as searchable keeps browse on project scope so the failure surfaces
- *  as a search error, rather than silently falling back to global's registry
- *  set. This matches project scope's behavior before the global fallback
- *  landed, when it was searched unconditionally. Pure; exported for tests. */
+ *  errored", since both leave `snapshot.project` undefined; treating a
+ *  GENUINELY failed probe (see `isProjectNotDiscovered`) as searchable keeps
+ *  browse on project scope so the failure surfaces as a search error, rather
+ *  than silently falling back to global's registry set. The ordinary
+ *  "no grimoire.toml" outcome is deliberately NOT flagged as a probe failure
+ *  (see `projectProbeFailed`'s doc comment) — it reads as plain unconfigured
+ *  here, which is what drives the global fallback. Pure; exported for tests. */
 export function projectSearchable(snapshot: Snapshot): boolean {
   return (snapshot.project?.context.config_exists ?? false) || (snapshot.projectProbeFailed ?? false);
 }
@@ -142,19 +165,24 @@ export class ScopeService {
   }
 
   /**
-   * True ONLY when the probe positively reports "no grimoire.toml" — a failed
-   * probe returns false. Deliberately asymmetric with projectConfigured():
-   * install flows run `grim init` on this signal, and init writes at the cwd
-   * while config discovery walks UP, so initializing on a transient probe
-   * failure could shadow a parent directory's config. When the probe fails,
-   * skipping init lets `grim add` surface the real error instead.
+   * True when the project genuinely has no grimoire.toml — either the probe
+   * succeeds with `config_exists: false`, or (the common case in practice;
+   * see `isProjectNotDiscovered`) it fails with grim's `NotDiscovered`
+   * (code "not-found"). False for any OTHER probe failure: install flows run
+   * `grim init` on this signal, and init writes at the cwd while config
+   * discovery walks UP, so initializing on a transient probe failure could
+   * shadow a parent directory's config. When the probe fails for some other
+   * reason, skipping init lets `grim add` surface the real error instead.
    */
   async projectNeedsInit(): Promise<boolean> {
     if (!this.projectFolder()) {
       return false;
     }
     const ctx = await this.run<ContextInfo>(contextArgs(), 'project');
-    return ctx.ok && !ctx.value.config_exists;
+    if (!ctx.ok) {
+      return isProjectNotDiscovered(ctx);
+    }
+    return !ctx.value.config_exists;
   }
 
   /** Logs which grim binary is actually being spawned — call at activation and on
@@ -244,10 +272,15 @@ export class ScopeService {
     }
     if (project?.snapshot) {
       snapshot.project = project.snapshot;
-    } else if (project && !project.probe.ok) {
-      // The project probe itself failed (transient error) rather than simply
-      // finding no grimoire.toml — flag it so downstream consumers don't read
-      // this as "unconfigured" (see projectProbeFailed doc comment).
+    } else if (project && !project.probe.ok && !isProjectNotDiscovered(project.probe)) {
+      // The project probe failed for a reason OTHER than "no grimoire.toml"
+      // (see isProjectNotDiscovered) — flag it so downstream consumers don't
+      // read this as "unconfigured" (see projectProbeFailed doc comment).
+      // The ordinary no-toml outcome is deliberately left unflagged here: it
+      // must read exactly like "unconfigured", the same as a hypothetical
+      // config_exists:false success, so projectSearchable's global fallback
+      // and the init-offer notice both fire instead of surfacing grim's raw
+      // "no grimoire.toml found by walking up..." message.
       snapshot.projectProbeFailed = true;
     }
     this.lastSnapshot = snapshot;
