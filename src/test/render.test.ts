@@ -839,6 +839,25 @@ suite('details rendering', () => {
     assert.ok(!html.toLowerCase().includes('star'));
   });
 
+  test('header description renders inline markdown (no <p> wrapper)', async () => {
+    const html = await litHtml(
+      renderDetails(detailsVM({ description: 'Drive the `grim` **CLI** — see [docs](https://grim.rs).' })),
+    );
+    assert.ok(html.includes('<code>grim</code>'), 'code span renders');
+    assert.ok(html.includes('<strong>CLI</strong>'), 'emphasis renders');
+    assert.ok(html.includes('href="https://grim.rs"'), 'link renders');
+    assert.ok(!/<div class="header-desc"><p>/.test(html), 'inline render has no <p> wrapper');
+  });
+
+  test('hostile header description stays inert (markdown-it html:false)', async () => {
+    const html = await litHtml(
+      renderDetails(detailsVM({ description: '<img src=x onerror=alert(1)> **bold**' })),
+    );
+    assert.ok(!html.includes('<img src=x'), 'raw HTML not emitted');
+    assert.ok(html.includes('&lt;img src=x'), 'raw HTML escaped');
+    assert.ok(html.includes('<strong>bold</strong>'), 'markdown still renders');
+  });
+
   test('header badge resolves a floating "latest" install to the concrete latestVersion', async () => {
     const html = await litHtml(
       renderDetails(

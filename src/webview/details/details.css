@@ -223,6 +223,25 @@ body {
   max-width: var(--content-width);
 }
 
+/* Inline markdown in the description (renderInline): code spans and links get
+ * the same treatment as the md-body; strong/em ride browser defaults. */
+.header-desc code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.header-desc a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
+.header-desc a:hover {
+  text-decoration: underline;
+}
+
 vscode-button.sm {
   font-size: 11px;
 }

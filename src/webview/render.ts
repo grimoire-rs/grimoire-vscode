@@ -13,6 +13,7 @@ import { html, nothing, type TemplateResult } from 'lit-html';
 import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { repeat } from 'lit-html/directives/repeat.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { createMarkdown } from './markdown';
 import type {
   BundleMemberVM,
   CardVM,
@@ -40,6 +41,19 @@ import {
   viaBundleTitle,
   type MenuEntry,
 } from './model';
+
+// Shared markdown-it for inline bits rendered in the templates (e.g. the header
+// description). html:false keeps raw HTML inert; renderInline emits no <p>
+// wrapper — inline constructs only (emphasis, code spans, links), which is all a
+// one-line description should carry. Same instance the details bodies use.
+const md = createMarkdown();
+
+/** Header description rendered as inline markdown. markdown-it output is
+ *  html:false (inert) so unsafeHTML injects it like the details bodies do;
+ *  linkify/emphasis/code spans render, raw HTML stays escaped. */
+function headerDesc(description: string | null): TemplateResult | string {
+  return description ? html`${unsafeHTML(md.renderInline(description))}` : '';
+}
 
 export function esc(value: string): string {
   return value
@@ -949,7 +963,7 @@ export function renderDetails(vm: DetailsVM): TemplateResult {
         ? html`<button class="header-share header-pin" data-action="promote" title="Keep open"><span class="codicon codicon-pin"></span></button>`
         : nothing}
     </div>
-    <div class="header-desc">${vm.description ?? ''}</div>
+    <div class="header-desc">${headerDesc(vm.description)}</div>
     ${renderHeaderActions(vm)}
   </div>
 </div>`;
