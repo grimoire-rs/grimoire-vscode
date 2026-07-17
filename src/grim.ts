@@ -462,8 +462,14 @@ export function configListArgs(options: { all?: boolean } = {}): string[] {
   return args;
 }
 
+/** `value` is free text a user can type into a Settings text/chip control and
+ *  may start with "-"/"--" (same clap hazard searchArgs documents for a
+ *  free-text positional: `config set <key> <value>` are both trailing
+ *  positionals with no `allow_hyphen_values`, so a value like "--foo" parses
+ *  as an unknown flag instead of the intended positional). `--` forces both
+ *  to parse positionally regardless of content. */
 export function configSetArgs(key: string, value: string): string[] {
-  return ['config', 'set', key, value];
+  return ['config', 'set', '--', key, value];
 }
 
 export function configUnsetArgs(key: string): string[] {
@@ -479,27 +485,36 @@ export function registryListArgs(): string[] {
  *  "neither" state unrepresentable at the call site instead of a runtime check. */
 export type RegistryLocator = { oci: string } | { index: string };
 
+/** `alias`/`locator` are free text (the add-registry form) and may start with
+ *  "-"/"--" — the same hazard class as configSetArgs's `value`. `--oci`/
+ *  `--index` are FLAG values, not positionals, so the `--` separator can't
+ *  protect them (it disables flag parsing for everything after it, which
+ *  would also swallow `--default`); the `--flag=value` form sidesteps that
+ *  unambiguously instead, since `=` delimits the value from the flag name at
+ *  the token level regardless of what the value looks like. `alias` IS a
+ *  trailing positional (nothing follows it), so it gets searchArgs's `--`
+ *  treatment, emitted last. */
 export function registryAddArgs(
   alias: string,
   locator: RegistryLocator,
   options: { default?: boolean } = {},
 ): string[] {
-  const args = ['config', 'registry', 'add', alias];
-  if ('oci' in locator) {
-    args.push('--oci', locator.oci);
-  } else {
-    args.push('--index', locator.index);
-  }
+  const args = ['config', 'registry', 'add'];
+  args.push('oci' in locator ? `--oci=${locator.oci}` : `--index=${locator.index}`);
   if (options.default) {
     args.push('--default');
   }
+  args.push('--', alias);
   return args;
 }
 
+/** `alias` names an existing registry — but one originally created via
+ *  registryAddArgs's free-text alias field, so it may still start with
+ *  "-"/"--"; same `--` treatment as configSetArgs. */
 export function registryRmArgs(alias: string): string[] {
-  return ['config', 'registry', 'rm', alias];
+  return ['config', 'registry', 'rm', '--', alias];
 }
 
 export function registryUseArgs(alias: string): string[] {
-  return ['config', 'registry', 'use', alias];
+  return ['config', 'registry', 'use', '--', alias];
 }

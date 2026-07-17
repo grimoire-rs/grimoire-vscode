@@ -1,6 +1,6 @@
 // Integration coverage for SettingsManager (src/views/settings.ts): the
 // message-driven write queue, lock-retry, and success/failure repost
-// contract (spec settings-impl-spec.md §2/§3). Uses a dedicated POSIX stub
+// contract. Uses a dedicated POSIX stub
 // (Windows cannot execFile shell scripts — skipped there, same as
 // extension.test.ts) rather than the shared one, since `grim config ...`
 // dispatch needs its own canned shapes. Most cases exercise global scope only
@@ -82,7 +82,16 @@ if [ "$cmd" = "config" ]; then
   if [ "$sub" = "list" ]; then
     [ -f "${dir}/config-list.json" ] && { cat "${dir}/config-list.json"; exit 0; }
   elif [ "$sub" = "set" ]; then
-    key="$3"
+    # configSetArgs emits config set -- key value (grim.ts), but runJson
+    # inserts --format json right before that --, so key/value's exact
+    # position shifts (and --global, already shifted off above, would too) —
+    # grab the last two "$@" tokens instead of a fixed index.
+    key=""
+    value=""
+    for tok in "$@"; do
+      key="$value"
+      value="$tok"
+    done
     case "$key" in
       reject-value)
         echo '{"error":{"code":"data","exit":65,"message":"invalid value for options.reject-value"}}'
@@ -108,7 +117,14 @@ if [ "$cmd" = "config" ]; then
     [ -f "${dir}/config-unset.json" ] && { cat "${dir}/config-unset.json"; exit 0; }
   elif [ "$sub" = "registry" ]; then
     action="$3"
-    alias_arg="$4"
+    # registryAddArgs/registryRmArgs/registryUseArgs (grim.ts) all now emit
+    # the alias as the LAST token (after a --, or after the --oci=/--index=
+    # flag for add) rather than at a fixed position — grab the last "$@"
+    # entry instead of a fixed $4.
+    alias_arg=""
+    for tok in "$@"; do
+      alias_arg="$tok"
+    done
     case "$action" in
       list) [ -f "${dir}/registry-list.json" ] && { cat "${dir}/registry-list.json"; exit 0; } ;;
       add)
@@ -374,7 +390,13 @@ suite('settings host integration', () => {
     const last = posts[posts.length - 1];
     assert.ok(last);
     assert.strictEqual(last.type, 'state', 'the retried write should succeed and repost state');
-    const setCalls = argvLines(stub).filter((l) => l.startsWith('config set lock-once'));
+    // Not a startsWith: runJson inserts `--format json` before configSetArgs's
+    // own `--`, so the logged line is `config set --format json -- lock-once
+    // x` (plus a trailing `--global`, moved there by argvLines) — match on
+    // the stable `-- lock-once` pair the builder always emits together.
+    const setCalls = argvLines(stub).filter(
+      (l) => l.startsWith('config set') && l.includes('-- lock-once'),
+    );
     assert.strictEqual(setCalls.length, 2, 'expected exactly one retry after the exit-75 failure');
   });
 

@@ -129,6 +129,7 @@ suite('grim arg builders', () => {
     assert.deepStrictEqual(configSetArgs('options.tui.default_view', 'tree'), [
       'config',
       'set',
+      '--',
       'options.tui.default_view',
       'tree',
     ]);
@@ -139,10 +140,25 @@ suite('grim arg builders', () => {
     ]);
   });
 
+  test('configSetArgs forces a leading-hyphen value positional (no allow_hyphen_values on grim\'s `set`)', () => {
+    assert.deepStrictEqual(configSetArgs('options.tui.tree_separators', '--'), [
+      'config',
+      'set',
+      '--',
+      'options.tui.tree_separators',
+      '--',
+    ]);
+  });
+
   test('registryListArgs/registryRmArgs/registryUseArgs', () => {
     assert.deepStrictEqual(registryListArgs(), ['config', 'registry', 'list']);
-    assert.deepStrictEqual(registryRmArgs('acme'), ['config', 'registry', 'rm', 'acme']);
-    assert.deepStrictEqual(registryUseArgs('acme'), ['config', 'registry', 'use', 'acme']);
+    assert.deepStrictEqual(registryRmArgs('acme'), ['config', 'registry', 'rm', '--', 'acme']);
+    assert.deepStrictEqual(registryUseArgs('acme'), ['config', 'registry', 'use', '--', 'acme']);
+  });
+
+  test('registryRmArgs/registryUseArgs force a leading-hyphen alias positional', () => {
+    assert.deepStrictEqual(registryRmArgs('-x'), ['config', 'registry', 'rm', '--', '-x']);
+    assert.deepStrictEqual(registryUseArgs('-x'), ['config', 'registry', 'use', '--', '-x']);
   });
 
   test('registryAddArgs with --oci', () => {
@@ -150,9 +166,9 @@ suite('grim arg builders', () => {
       'config',
       'registry',
       'add',
+      '--oci=ghcr.io/acme',
+      '--',
       'acme',
-      '--oci',
-      'ghcr.io/acme',
     ]);
   });
 
@@ -163,12 +179,23 @@ suite('grim arg builders', () => {
         'config',
         'registry',
         'add',
-        'pub',
-        '--index',
-        'https://index.example/index.json',
+        '--index=https://index.example/index.json',
         '--default',
+        '--',
+        'pub',
       ],
     );
+  });
+
+  test('registryAddArgs forces a leading-hyphen alias positional and protects the locator via --flag=value', () => {
+    assert.deepStrictEqual(registryAddArgs('-x', { oci: '--not-a-flag' }), [
+      'config',
+      'registry',
+      'add',
+      '--oci=--not-a-flag',
+      '--',
+      '-x',
+    ]);
   });
 });
 
