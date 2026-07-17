@@ -345,16 +345,21 @@ function renderEmpty(state: SidebarState): TemplateResult {
 </div>`;
 }
 
-function renderLoading(defaultRegistry: string | null): TemplateResult {
+function renderLoading(): TemplateResult {
   // Fade is applied via .skeleton-row-N classes — inline style= is blocked by
   // the webview CSP (style-src is nonce/cspSource only). Line widths vary per
-  // row (design html:333) so the skeleton doesn't read as four clones.
+  // row (design html:333) so the skeleton doesn't read as four clones. The
+  // "Refreshing…" line is NOT rendered here — it lives in the pinned #sb-footer
+  // region (renderSidebarFooter), never inside this scrollable skeleton block
+  // (item 1: a loading footer embedded here sits wherever the short skeleton
+  // ends, which visually detaches it from the view's bottom edge until the
+  // first real footer lands).
   const skeleton = (w1: string, w2: string, w3: string, fade: string): TemplateResult => html`
   <div class="skeleton-row${fade ? ` ${fade}` : ''}">
     <div class="skeleton-tile"></div>
     <div class="skeleton-lines"><div class="skeleton-line ${w1}"></div><div class="skeleton-line thin ${w2}"></div><div class="skeleton-line thin ${w3}"></div></div>
   </div>`;
-  return html`<vscode-progress-bar></vscode-progress-bar>${skeleton('w55', 'w92', 'w70', '')}${skeleton('w44', 'w88', 'w62', 'skeleton-row-2')}${skeleton('w60', 'w80', 'w74', 'skeleton-row-3')}${skeleton('w50', 'w85', 'w58', 'skeleton-row-4')}${renderRefreshingFooter(defaultRegistry)}`;
+  return html`<vscode-progress-bar></vscode-progress-bar>${skeleton('w55', 'w92', 'w70', '')}${skeleton('w44', 'w88', 'w62', 'skeleton-row-2')}${skeleton('w60', 'w80', 'w74', 'skeleton-row-3')}${skeleton('w50', 'w85', 'w58', 'skeleton-row-4')}`;
 }
 
 /** The "Refreshing from <host>…" line. Standalone so a background refresh over
@@ -371,7 +376,12 @@ export function renderRefreshingFooter(defaultRegistry: string | null): Template
  *  (its own #sb-notice region in main.ts) — normal flow, never overlaying the
  *  results. Notification look (VS Code notification tokens + info icon), not
  *  the old blockquote-style box. Self-gating: no-grim and first-load states
- *  post no snapshot, so projectOpen is false and nothing renders. */
+ *  post no snapshot, so projectOpen is false and nothing renders. Design's
+ *  init-offer pattern (mockup 3c) is a full-panel replacement in the Settings
+ *  view, which has nothing else to show alongside it; the sidebar always has
+ *  the global catalog fallback showing beneath this notice (item 3), so it
+ *  stays this compact banner rather than displacing real results — button
+ *  copy/emphasis still matches 3c ("Initialize Project Config", primary). */
 export function renderSidebarNotice(state: SidebarState): TemplateResult | typeof nothing {
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
     return nothing;
@@ -380,8 +390,8 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
 <div class="init-notification">
   <span class="codicon codicon-info init-icon"></span>
   <div class="init-body">
-    <span>No grimoire.toml in this workspace — project scope is unavailable.</span>
-    <vscode-button class="sm" secondary data-action="init-project">Initialize project</vscode-button>
+    <span>No grimoire.toml in this workspace — showing the global catalog instead.</span>
+    <vscode-button class="sm" data-action="init-project">Initialize Project Config</vscode-button>
   </div>
 </div>`;
 }
@@ -455,7 +465,7 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     return renderNoGrim();
   }
   if (state.phase === 'loading') {
-    return renderLoading(state.defaultRegistry ?? null);
+    return renderLoading();
   }
   if (state.phase === 'error') {
     return html`<div class="error-state"><span class="codicon codicon-error"></span> ${state.error ?? 'Unknown error'}</div>`;
@@ -502,9 +512,21 @@ export function renderSidebarTabs(state: SidebarState): TemplateResult | typeof 
 }
 
 /** The cached-catalog status line, rendered into its own bottom-pinned region
- *  (#sb-footer) so it never scrolls with results. Loading has its own footer. */
+ *  (#sb-footer) so it never scrolls with results and is anchored at the
+ *  bottom in every phase that has anything to show there (item 1) — loading
+ *  included: it renders the SAME "Refreshing…" template main.ts swaps into
+ *  this region for a background refresh over already-painted results, so the
+ *  first-ever load (no painted state yet) pins it identically instead of
+ *  leaving it stranded inside the scrollable skeleton. no-grim has nothing to
+ *  sync or refresh, so it renders nothing. */
 export function renderSidebarFooter(state: SidebarState): TemplateResult | typeof nothing {
-  return state.phase === 'ready' || state.phase === 'error' ? renderFooter(state) : nothing;
+  if (state.phase === 'ready' || state.phase === 'error') {
+    return renderFooter(state);
+  }
+  if (state.phase === 'loading') {
+    return renderRefreshingFooter(state.defaultRegistry ?? null);
+  }
+  return nothing;
 }
 
 export function renderSidebar(state: SidebarState, filter: CardFilter): TemplateResult {

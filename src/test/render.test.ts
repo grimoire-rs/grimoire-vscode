@@ -514,8 +514,13 @@ suite('sidebar rendering', () => {
       assert.ok(html.includes('Catalog cache ·'), mode);
       assert.match(html, /<span class="footer-ts">synced 12 min ago<\/span>/);
     }
-    // Loading/no-grim show no idle status line (loading has its own footer).
-    assert.strictEqual(await litString(renderSidebarFooter(sidebarState({ phase: 'loading' }))), '');
+    // Loading shows the "Refreshing…" line in the SAME pinned region (item 1:
+    // it must never be stranded inside the scrollable results instead), never
+    // the idle "Catalog cache" line; no-grim has nothing to sync and shows
+    // no footer at all.
+    const loadingHtml = await litHtml(renderSidebarFooter(sidebarState({ phase: 'loading' })));
+    assert.ok(loadingHtml.includes('class="footer loading-footer"'));
+    assert.ok(!loadingHtml.includes('Catalog cache ·'));
     assert.strictEqual(await litString(renderSidebarFooter(sidebarState({ phase: 'no-grim' }))), '');
   });
 
