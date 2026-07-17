@@ -1,0 +1,52 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Release preparation for the VS Code extension. Mirrors ../grimoire's
+# release:prepare, adapted to the npm toolchain: the version lives in
+# package.json (bumped via native `npm version`, not cargo-edit). git-cliff
+# computes the next version and regenerates CHANGELOG.md from conventional
+# commits (config: cliff.toml, keepachangelog format).
+
+version: '3'
+
+tasks:
+  # Full release preparation: compute next version, bump package.json,
+  # regenerate CHANGELOG.md, run verify. After this succeeds, the human
+  # reviews and commits.
+  #
+  # Version selection:
+  #   task release:prepare BUMP=auto                 # git-cliff picks the bump from commits
+  #   task release:prepare BUMP=minor                # force a bump level
+  #   task release:prepare BUMP=auto VERSION=1.4.0   # pin an exact version (v prefix optional)
+  #
+  # BUMP is a required enum. This repo has no .taskrc.yml, so there is no
+  # interactive menu — pass BUMP on the CLI.
+  prepare:
+    desc: 'Prepare a release (BUMP=auto|patch|minor|major, or VERSION=x.y.z)'
+    requires:
+      vars:
+        - name: BUMP
+          enum: [auto, patch, minor, major]
+    vars:
+      # git-cliff computes the next version from git history. `auto` lets it pick
+      # the bump from conventional commits; otherwise BUMP forces the level.
+      # VERSION pins an exact value and wins over BUMP.
+      NEXT_VERSION:
+        sh: |
+          if [ -n "{{.VERSION}}" ]; then
+            printf 'v%s' "{{.VERSION | default "" | trimPrefix "v"}}"
+          elif [ "{{.BUMP}}" = "auto" ]; then
+            git-cliff --bumped-version
+          else
+            git-cliff --bumped-version --bump "{{.BUMP}}"
+          fi
+    cmds:
+      - echo "Next version:{{.NEXT_VERSION}}"
+      - npm version "{{.NEXT_VERSION | trimPrefix "v"}}" --no-git-tag-version
+      - git-cliff --tag "{{.NEXT_VERSION}}" -o CHANGELOG.md
+      - task verify
+      - |
+        echo ""
+        echo "Release prepared ({{.NEXT_VERSION}}). Review changes, then:"
+        echo "  git add -A && git commit -m 'release: {{.NEXT_VERSION}}'"
+        echo "  git tag {{.NEXT_VERSION}}"
+        echo "  git push --atomic origin main {{.NEXT_VERSION}}"
