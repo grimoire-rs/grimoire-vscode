@@ -290,6 +290,13 @@ suite('extension integration', () => {
     const search = lines.find((l) => l.startsWith('search'));
     assert.ok(search, 'search was invoked');
     assert.ok(!search.includes('--refresh'), `plain refresh stays cached: ${search}`);
+    // §5 removal regression: grimoire.showDeprecated is retired in favor of
+    // grim's own options.show_deprecated (set via the Settings panel) — the
+    // extension must never override it with a VS Code-side flag.
+    assert.ok(
+      !search.includes('--show-deprecated'),
+      `search honors grim's own config, no VS Code-side override: ${search}`,
+    );
   });
 
   test('grimoire.refresh forces a catalog refresh (--refresh)', async function () {
