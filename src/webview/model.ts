@@ -188,9 +188,39 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
       name: item.name,
       viaBundles: parseViaBundles(item.source),
       floating: item.pinned === null,
+      clientsMissing: item.clients_missing ?? [],
+      clientsExtra: item.clients_extra ?? [],
+      deprecated: item.deprecated ?? null,
+      replacedBy: item.replaced_by ?? null,
     });
   }
   return byRepo;
+}
+
+/** True when an install's client set has drifted from the project's
+ *  configured target — grim status's `clients_missing`/`clients_extra` array
+ *  non-emptiness IS the explicit-clients signal (grim emits both `[]` under
+ *  autodetect), so no extra state to gate on; works on a plain refresh, not
+ *  just `--check`. */
+export function hasClientDrift(
+  install: Pick<InstallVM, 'clientsMissing' | 'clientsExtra'>,
+): boolean {
+  return (install.clientsMissing?.length ?? 0) > 0 || (install.clientsExtra?.length ?? 0) > 0;
+}
+
+/** Drift badge tooltip: "Missing: a, b · Extra: c", either half omitted when
+ *  empty. Pure string builder for the render layer. */
+export function clientDriftTooltip(
+  install: Pick<InstallVM, 'clientsMissing' | 'clientsExtra'>,
+): string {
+  const parts: string[] = [];
+  if (install.clientsMissing && install.clientsMissing.length > 0) {
+    parts.push(`Missing: ${install.clientsMissing.join(', ')}`);
+  }
+  if (install.clientsExtra && install.clientsExtra.length > 0) {
+    parts.push(`Extra: ${install.clientsExtra.join(', ')}`);
+  }
+  return parts.join(' · ');
 }
 
 /** The install that applies for a card's single installed chip: a project
@@ -280,8 +310,11 @@ export function buildInstalledCards(
         registryHost: registryHost(repo),
         latestVersion: item?.version ?? item?.latest_tag ?? null,
         state: 'installed',
-        deprecated: item?.deprecated ?? null,
-        replacedBy: item?.replaced_by ?? null,
+        // Catalog item wins when known; otherwise fall back to the status
+        // item's own --check-populated fields (e.g. an artifact installed
+        // out-of-band that never showed up in the browse catalog snapshot).
+        deprecated: item?.deprecated ?? install.deprecated ?? null,
+        replacedBy: item?.replaced_by ?? install.replacedBy ?? null,
         installs: [install],
         privateRegistry: isPrivateRegistry(registryHost(repo), authed, defaultRegistryHost),
       });

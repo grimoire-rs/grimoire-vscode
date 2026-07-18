@@ -304,6 +304,11 @@ vscode-textfield#search {
   top: 1px;
 }
 
+.deprecated-msg a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
 .card-delta {
   font-size: 10.5px;
   color: var(--vscode-descriptionForeground);
@@ -487,6 +492,23 @@ vscode-button.sm {
   color: var(--vscode-foreground);
   background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
   border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+}
+
+/* Client-set drift badge (Installed tab): clients_missing/clients_extra
+   non-empty on the row's install. */
+.drift-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 14%, transparent);
+}
+
+.drift-badge .codicon {
+  font-size: 10px;
 }
 
 /* Both menus (gear/chevron and right-click) append onto #root and position

@@ -54,6 +54,17 @@ suite('escaping', () => {
     const html = await litHtml(renderCard(card({ repo: '"><script>x</script>' })));
     assert.ok(!html.includes('"><script>'));
   });
+
+  test('a hostile registry-sourced replacedBy ref stays escaped in the card switch-to-replacement link', async () => {
+    const hostile = '"><script>alert(1)</script>';
+    const html = await litHtml(
+      renderCard(card({ state: 'deprecated', deprecated: 'use x instead', replacedBy: hostile })),
+    );
+    assert.ok(!html.includes('"><script>'));
+    const escaped = '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;';
+    assert.ok(html.includes(`data-repo="${escaped}"`), 'attribute position stays escaped');
+    assert.ok(html.includes(`>${escaped}</a>`), 'text-content position stays escaped');
+  });
 });
 
 suite('card rendering', () => {
@@ -324,6 +335,53 @@ suite('card rendering', () => {
     assert.ok(html.includes('client-chip'));
     assert.ok(html.includes('codicon-check'));
     assert.ok(html.includes('data-action="menu"'));
+    assert.ok(!html.includes('drift-badge'), 'no drift on an install with no clients_missing/clients_extra');
+  });
+
+  test('scope-variant card shows a client-drift badge iff clients_missing/clients_extra is non-empty', async () => {
+    const driftingInstall = {
+      scope: 'project' as const,
+      version: '1.4.2',
+      updateAvailable: false,
+      clients: ['claude'],
+      state: 'installed',
+      kind: 'skill',
+      name: 'grim-usage',
+      viaBundles: [],
+      clientsMissing: ['opencode'],
+      clientsExtra: ['copilot'],
+    };
+    const withDrift = await litHtml(
+      renderCard(card({ state: 'installed', installs: [driftingInstall] }), {
+        variant: 'scope',
+        scope: 'project',
+      }),
+    );
+    assert.ok(withDrift.includes('drift-badge'));
+    assert.ok(withDrift.includes('Missing: opencode'), 'tooltip lists the missing client');
+    assert.ok(withDrift.includes('Extra: copilot'), 'tooltip lists the extra client');
+
+    const missingOnly = await litHtml(
+      renderCard(
+        card({
+          state: 'installed',
+          installs: [{ ...driftingInstall, clientsMissing: ['opencode'], clientsExtra: [] }],
+        }),
+        { variant: 'scope', scope: 'project' },
+      ),
+    );
+    assert.ok(missingOnly.includes('drift-badge'));
+
+    const noDrift = await litHtml(
+      renderCard(
+        card({
+          state: 'installed',
+          installs: [{ ...driftingInstall, clientsMissing: [], clientsExtra: [] }],
+        }),
+        { variant: 'scope', scope: 'project' },
+      ),
+    );
+    assert.ok(!noDrift.includes('drift-badge'), 'empty arrays render no badge');
   });
 
   test('deprecated card struck through with warning', async () => {
@@ -331,6 +389,23 @@ suite('card rendering', () => {
     assert.ok(html.includes('class="card deprecated"'));
     assert.ok(html.includes('codicon-warning'));
     assert.ok(html.includes('use x instead'));
+    assert.ok(!html.includes('data-action="open-details"'), 'no replacement link when replacedBy is null');
+  });
+
+  test('deprecated card with replacedBy gains a "use <replacedBy>" switch-to-replacement link', async () => {
+    const html = await litHtml(
+      renderCard(
+        card({
+          state: 'deprecated',
+          deprecated: 'use x instead',
+          replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+        }),
+      ),
+    );
+    assert.ok(html.includes('data-action="open-details"'));
+    assert.ok(html.includes('data-repo="ghcr.io/grimoire-rs/skills/new-skill"'));
+    assert.ok(html.includes('>ghcr.io/grimoire-rs/skills/new-skill<'));
+    assert.ok(html.includes('use'), 'link copy names the replacement');
   });
 
   test('gear menu disables uninstall for a via-bundle install', async () => {

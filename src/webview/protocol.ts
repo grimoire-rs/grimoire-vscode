@@ -24,6 +24,21 @@ export interface InstallVM {
   /** True when the lock has no pinned entry (grim `pinned: null`) — the install
    *  tracks a floating tag rather than an exact pin. */
   floating?: boolean;
+  /** Clients the project's config targets but this install has no recorded
+   *  output for (grim status `clients_missing`, desired − recorded). Absent/[]
+   *  means no drift, including when `[options].clients` is unset (autodetect —
+   *  grim never diffs against live detection there). */
+  clientsMissing?: string[];
+  /** Clients this install has a recorded output for but the config no longer
+   *  targets (grim status `clients_extra`, recorded − desired). Same [] /
+   *  absence semantics as {@link clientsMissing}. */
+  clientsExtra?: string[];
+  /** Per-status-item deprecation notice, populated only under `--check` (null
+   *  otherwise) — buildInstalledCards' fallback source when the artifact isn't
+   *  present in the browse catalog snapshot. */
+  deprecated?: string | null;
+  /** Publisher-named successor for {@link deprecated}, same population rule. */
+  replacedBy?: string | null;
 }
 
 export interface CardVM {

@@ -27,9 +27,11 @@ import {
   CardFilter,
   KIND_ICONS,
   cardMenuEntries,
+  clientDriftTooltip,
   concreteVersion,
   effectiveInstall,
   filterCards,
+  hasClientDrift,
   installedViewCards,
   normalizeKind,
   registriesOf,
@@ -181,6 +183,24 @@ export interface CardVariant {
   scope?: 'project' | 'global';
 }
 
+/** "→ use <replacedBy>" link on a card's deprecated line — mirrors the details
+ *  deprecation banner's replacement link (renderDeprecationBanner below). */
+function cardReplacementLink(replacedBy: string | null): TemplateResult | typeof nothing {
+  return replacedBy
+    ? html` → use <a href="#" data-action="open-details" data-repo="${replacedBy}" class="mono">${replacedBy}</a>`
+    : nothing;
+}
+
+/** Client-drift badge for an installed scope row (Installed tab): shown iff
+ *  the install's clients_missing/clients_extra carry any entries — array
+ *  non-emptiness is itself the explicit-clients signal, so no other gating. */
+function clientDriftBadge(install: InstallVM | undefined): TemplateResult | typeof nothing {
+  if (!install || !hasClientDrift(install)) {
+    return nothing;
+  }
+  return html`<span class="drift-badge" title="${clientDriftTooltip(install)}"><span class="codicon codicon-warning"></span>Client drift</span>`;
+}
+
 export function renderCard(card: CardVM, options: CardVariant = {}): TemplateResult {
   const variant = options.variant ?? 'browse';
   const deprecatedClass = card.state === 'deprecated' ? ' deprecated' : '';
@@ -188,7 +208,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     ? html`<span class="version mono">${card.latestVersion}</span>`
     : nothing;
   const deprecatedLine = card.deprecated
-    ? html`<div class="card-desc deprecated-msg"><span class="codicon codicon-warning"></span> ${card.deprecated}</div>`
+    ? html`<div class="card-desc deprecated-msg"><span class="codicon codicon-warning"></span> ${card.deprecated}${cardReplacementLink(card.replacedBy)}</div>`
     : nothing;
   const title = html`
     <div class="card-title">
@@ -219,7 +239,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
         ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
         : nothing;
     body = html`${title}${deprecatedLine}
-    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}
+    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}
       <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button></span>
     </div>`;
   } else {

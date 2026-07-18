@@ -186,6 +186,16 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     r.renderCard(card({ state: 'deprecated', deprecated: 'Use new-skill instead.' })),
   );
   add(
+    'card-browse-deprecated-replacedby',
+    r.renderCard(
+      card({
+        state: 'deprecated',
+        deprecated: 'Use new-skill instead.',
+        replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+      }),
+    ),
+  );
+  add(
     'card-browse-private-registry',
     r.renderCard(card({ privateRegistry: true })),
   );
@@ -217,6 +227,16 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       variant: 'scope',
       scope: 'project',
     }),
+  );
+  add(
+    'card-scope-client-drift',
+    r.renderCard(
+      card({
+        state: 'installed',
+        installs: [{ ...projectInstall, clientsMissing: ['opencode'], clientsExtra: ['copilot'] }],
+      }),
+      { variant: 'scope', scope: 'project' },
+    ),
   );
   add(
     'card-scope-global-bundle',

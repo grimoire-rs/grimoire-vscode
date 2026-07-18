@@ -9,12 +9,14 @@ import {
   buildShareLink,
   buildSkeletonVM,
   cardMenuEntries,
+  clientDriftTooltip,
   computeUpdateAvailable,
   concreteVersion,
   DEFAULT_FILTER,
   effectiveInstall,
   filterCards,
   findAssetPath,
+  hasClientDrift,
   INTERACTIVE_SELECTOR,
   isInteractiveTarget,
   isValidRepo,
@@ -252,6 +254,90 @@ suite('card building', () => {
       },
     ]);
     assert.strictEqual(pinned[0]?.installs[0]?.floating, false);
+  });
+
+  test('buildInstalledCards prefers the catalog item over the status item for deprecated/replacedBy', () => {
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [
+        statusItem({
+          deprecated: 'status-sourced notice',
+          replaced_by: 'ghcr.io/x/skills/status-replacement',
+        }),
+      ],
+      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const withCatalog = buildInstalledCards(
+      [
+        searchItem({
+          deprecated: 'catalog-sourced notice',
+          replaced_by: 'ghcr.io/x/skills/catalog-replacement',
+        }),
+      ],
+      [scope],
+    );
+    assert.strictEqual(withCatalog[0]?.deprecated, 'catalog-sourced notice');
+    assert.strictEqual(withCatalog[0]?.replacedBy, 'ghcr.io/x/skills/catalog-replacement');
+
+    // Artifact installed but absent from the browse catalog snapshot (e.g. a
+    // registry the current search didn't cover) falls back to the status
+    // item's own --check-populated fields.
+    const withoutCatalog = buildInstalledCards([], [scope]);
+    assert.strictEqual(withoutCatalog[0]?.deprecated, 'status-sourced notice');
+    assert.strictEqual(withoutCatalog[0]?.replacedBy, 'ghcr.io/x/skills/status-replacement');
+    assert.strictEqual(
+      withoutCatalog[0]?.state,
+      'deprecated',
+      'rowState is recomputed off the fallback deprecated',
+    );
+  });
+});
+
+suite('client drift', () => {
+  test('hasClientDrift is false with no drift (absent or empty arrays), true when either side is non-empty', () => {
+    assert.strictEqual(hasClientDrift(install({})), false, 'absent fields default to no drift');
+    assert.strictEqual(
+      hasClientDrift(install({ clientsMissing: [], clientsExtra: [] })),
+      false,
+    );
+    assert.strictEqual(hasClientDrift(install({ clientsMissing: ['opencode'] })), true);
+    assert.strictEqual(hasClientDrift(install({ clientsExtra: ['copilot'] })), true);
+  });
+
+  test('clientDriftTooltip lists missing/extra client names, omitting an empty side', () => {
+    assert.strictEqual(
+      clientDriftTooltip(install({ clientsMissing: ['opencode'], clientsExtra: ['copilot'] })),
+      'Missing: opencode · Extra: copilot',
+    );
+    assert.strictEqual(
+      clientDriftTooltip(install({ clientsMissing: ['opencode', 'copilot'] })),
+      'Missing: opencode, copilot',
+    );
+    assert.strictEqual(clientDriftTooltip(install({ clientsExtra: ['copilot'] })), 'Extra: copilot');
+    assert.strictEqual(clientDriftTooltip(install({})), '');
+  });
+
+  test('installIndex threads clients_missing/clients_extra from the status item onto the InstallVM', () => {
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [statusItem({ clients_missing: ['opencode'], clients_extra: ['copilot'] })],
+      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const cards = buildCards([searchItem()], [scope]);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clientsMissing, ['opencode']);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clientsExtra, ['copilot']);
+  });
+
+  test('a status item with no explicit-clients drift threads empty arrays (autodetect carve-out)', () => {
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [statusItem()],
+      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const cards = buildCards([searchItem()], [scope]);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clientsMissing, []);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clientsExtra, []);
+    assert.strictEqual(hasClientDrift(cards[0]?.installs[0] as InstallVM), false);
   });
 });
 
