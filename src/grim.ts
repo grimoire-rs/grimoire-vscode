@@ -268,6 +268,10 @@ export interface ConfigWriteResult {
   key: string;
   value: string | null;
   scope: Scope;
+  // `--dry-run` is `set`-only in grim: `true` when the write was validated
+  // and reported but never committed, `false` for every real write (and for
+  // `unset`/registry actions, which have no dry-run surface at all).
+  dry_run: boolean;
 }
 
 // --- Results
@@ -549,9 +553,17 @@ export function configListArgs(options: { all?: boolean } = {}): string[] {
  *  free-text positional: `config set <key> <value>` are both trailing
  *  positionals with no `allow_hyphen_values`, so a value like "--foo" parses
  *  as an unknown flag instead of the intended positional). `--` forces both
- *  to parse positionally regardless of content. */
-export function configSetArgs(key: string, value: string): string[] {
-  return ['config', 'set', '--', key, value];
+ *  to parse positionally regardless of content — so `--dry-run` (a flag,
+ *  not a positional) must land BEFORE the `--` separator, or it would be
+ *  swallowed as a third positional instead of parsed as a flag. `--dry-run`
+ *  is `set`-only in grim: validates and reports without writing. */
+export function configSetArgs(key: string, value: string, options: { dryRun?: boolean } = {}): string[] {
+  const args = ['config', 'set'];
+  if (options.dryRun) {
+    args.push('--dry-run');
+  }
+  args.push('--', key, value);
+  return args;
 }
 
 export function configUnsetArgs(key: string): string[] {

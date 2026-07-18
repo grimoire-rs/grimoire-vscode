@@ -156,6 +156,23 @@ suite('grim arg builders', () => {
     ]);
   });
 
+  test('configSetArgs({dryRun: true}) puts the flag before the -- separator', () => {
+    // --dry-run is a flag, not a positional: it must land before the `--`
+    // that forces key/value to parse positionally, or it would itself be
+    // swallowed as a third positional.
+    assert.deepStrictEqual(
+      configSetArgs('options.tui.default_view', 'tree', { dryRun: true }),
+      ['config', 'set', '--dry-run', '--', 'options.tui.default_view', 'tree'],
+    );
+  });
+
+  test('configSetArgs({dryRun: false}) matches the no-options form', () => {
+    assert.deepStrictEqual(
+      configSetArgs('options.tui.default_view', 'tree', { dryRun: false }),
+      configSetArgs('options.tui.default_view', 'tree'),
+    );
+  });
+
   test('registryListArgs/registryRmArgs/registryUseArgs', () => {
     assert.deepStrictEqual(registryListArgs(), ['config', 'registry', 'list']);
     assert.deepStrictEqual(registryRmArgs('acme'), ['config', 'registry', 'rm', '--', 'acme']);
@@ -481,6 +498,24 @@ suite('grim report parsing', () => {
     assert.ok(registryAdded.ok);
     assert.strictEqual(registryAdded.value.action, 'registry-added');
     assert.strictEqual(registryAdded.value.scope, 'global');
+  });
+
+  test('ConfigWriteResult carries dry_run verbatim: true for --dry-run, false for a real write', () => {
+    const dryRun = parseReport<ConfigWriteResult>(
+      '{"action":"set","key":"options.tui.default_view","value":"tree","scope":"project","dry_run":true}',
+      0,
+      '',
+    );
+    assert.ok(dryRun.ok);
+    assert.strictEqual(dryRun.value.dry_run, true);
+
+    const realWrite = parseReport<ConfigWriteResult>(
+      '{"action":"set","key":"options.tui.default_view","value":"tree","scope":"project","dry_run":false}',
+      0,
+      '',
+    );
+    assert.ok(realWrite.ok);
+    assert.strictEqual(realWrite.value.dry_run, false);
   });
 
   test('config set with an invalid value is an exit-65 error envelope', () => {

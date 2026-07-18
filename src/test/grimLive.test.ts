@@ -1,12 +1,17 @@
 import * as assert from 'assert';
 import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
+  configSetArgs,
   contextArgs,
   describeArgs,
   fetchArgs,
   registryFieldsArgs,
   runJson,
   statusArgs,
+  type ConfigWriteResult,
   type ContextInfo,
   type DigestResult,
   type ItemsEnvelope,
@@ -98,6 +103,38 @@ suite('grim live (real binary)', function () {
         assert.strictEqual(typeof field.title, 'string');
         assert.ok(field.title.length > 0);
       }
+    }
+  });
+
+  test('config set --dry-run is a supported flag (release gate), validates without writing', async () => {
+    // THE release gate for this surface: a grim predating `--dry-run` on
+    // `config set` would reject it at clap-parse time (exit 64) — same
+    // signal as the status --check and registry fields gates above.
+    // `--config` (like `--global`) is a top-level scope flag, so it goes
+    // BEFORE the subcommand tree, never after configSetArgs's trailing `--`
+    // (see withGlobalFlag). A real key against a scratch config file proves
+    // the stronger claim than "not exit 64": grim validates and reports
+    // `dry_run: true` while leaving the file exactly as it started.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-live-dry-run-'));
+    const configPath = path.join(tmpDir, 'config.toml');
+    fs.writeFileSync(configPath, '');
+    try {
+      const result = await runJson<ConfigWriteResult>(
+        GRIM,
+        ['--config', configPath, ...configSetArgs('options.tui.default_view', 'tree', { dryRun: true })],
+        { timeoutMs: 15000 },
+      );
+      assert.ok(result.ok, result.ok ? '' : `config set --dry-run not ok: ${JSON.stringify(result)}`);
+      if (result.ok) {
+        assert.strictEqual(result.value.dry_run, true);
+      }
+      assert.strictEqual(
+        fs.readFileSync(configPath, 'utf8'),
+        '',
+        'dry-run must not write the config file',
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
