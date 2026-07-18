@@ -9,7 +9,9 @@ import {
   type ActionReport,
   type ContextInfo,
   type GrimResult,
+  type ItemsEnvelope,
   type Scope,
+  type UpdateEntry,
 } from './grim';
 import {
   RELEASE_PAGE,
@@ -335,18 +337,63 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
         await runWithStatusProgress('Updating all artifacts', async () => {
           // Skip project unless it has a grimoire.toml — `grim update --project`
           // in an unconfigured workspace just errors.
-          const failed = (scope: Scope, result: GrimResult<ActionReport>): void => {
+          // Names dropped across BOTH scopes, split by why: reaped (unmodified
+          // client output removed) vs. kept-modified (locally-edited output left
+          // in place, needs `--force` to replace) — collected across the whole
+          // command so one toast covers both scopes' runs.
+          const reaped: string[] = [];
+          const keptModified: string[] = [];
+          const handle = (scope: Scope, result: GrimResult<ItemsEnvelope<UpdateEntry>>): void => {
             if (!result.ok) {
               const message =
                 result.kind === 'not-found' ? 'grim executable not found' : result.message;
               output.appendLine(`error: grim update --${scope}: ${message}`);
               notifyError(`Grimoire: grim update (${scope}): ${message}`);
+              return;
             }
+            // Boundary guard: an envelope that parses ok but whose `items` is
+            // missing or not an array must not poison the summary (same guard
+            // as CatalogService.search).
+            const items = Array.isArray(result.value.items) ? result.value.items : [];
+            const counts: Record<UpdateEntry['action'], number> = {
+              updated: 0,
+              unchanged: 0,
+              removed: 0,
+              'kept-modified': 0,
+            };
+            for (const item of items) {
+              counts[item.action]++;
+              if (item.reaped_clients.length > 0) {
+                reaped.push(item.name);
+              }
+              if (item.kept_modified_clients.length > 0) {
+                keptModified.push(item.name);
+              }
+            }
+            output.appendLine(
+              `grim update (${scope}): ${counts.updated} updated, ${counts.unchanged} unchanged, ` +
+                `${counts.removed} removed, ${counts['kept-modified']} kept-modified`,
+            );
           };
           if (await scopes.projectConfigured()) {
-            failed('project', await scopes.run<ActionReport>(updateArgs(), 'project'));
+            handle('project', await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'project'));
           }
-          failed('global', await scopes.run<ActionReport>(updateArgs(), 'global'));
+          handle('global', await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'global'));
+          // Reap only ever fires against an explicitly set `[options].clients`
+          // (grim-side gate) — autodetect leaves both arrays empty on every
+          // row, so this toast stays silent on the common path.
+          if (reaped.length > 0 || keptModified.length > 0) {
+            const parts: string[] = [];
+            if (reaped.length > 0) {
+              parts.push(`removed stale client output for ${reaped.join(', ')}`);
+            }
+            if (keptModified.length > 0) {
+              parts.push(
+                `kept locally-modified client output for ${keptModified.join(', ')} (rerun update --force to replace)`,
+              );
+            }
+            void vscode.window.showInformationMessage(`Grimoire: update ${parts.join('; ')}.`);
+          }
         });
         await refreshAll();
       }),

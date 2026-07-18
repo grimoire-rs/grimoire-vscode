@@ -11,7 +11,6 @@ import {
   describeArgs,
   fetchArgs,
   initArgs,
-  installArgs,
   isRetryable,
   parseReport,
   registryAddArgs,
@@ -29,6 +28,7 @@ import {
   type ItemsEnvelope,
   type RegistryEntry,
   type SearchItem,
+  type UpdateEntry,
 } from '../grim';
 
 suite('grim arg builders', () => {
@@ -104,7 +104,7 @@ suite('grim arg builders', () => {
     assert.deepStrictEqual(contextArgs(), ['context']);
   });
 
-  test('add/remove/uninstall/update/install/init args', () => {
+  test('add/remove/uninstall/update/init args', () => {
     assert.deepStrictEqual(addArgs('a/b:1', { kind: 'skill', name: 'b', noInstall: true }), [
       'add',
       'a/b:1',
@@ -118,7 +118,6 @@ suite('grim arg builders', () => {
     assert.deepStrictEqual(uninstallArgs('rule', 'r'), ['uninstall', 'rule', 'r']);
     assert.deepStrictEqual(updateArgs(), ['update']);
     assert.deepStrictEqual(updateArgs(['a', 'b']), ['update', 'a', 'b']);
-    assert.deepStrictEqual(installArgs({ client: 'claude' }), ['install', '--client', 'claude']);
     assert.deepStrictEqual(initArgs({ registry: 'ghcr.io/x' }), [
       'init',
       '--registry',
@@ -363,6 +362,64 @@ suite('grim report parsing', () => {
     const result = parseReport<ConfigEntry>(doc, 0, '');
     assert.ok(result.ok);
     assert.strictEqual(result.value.type, 'duration');
+  });
+
+  test('UpdateEntry: nulls and empty client arrays survive parsing', () => {
+    const doc = JSON.stringify({
+      items: [
+        {
+          kind: 'skill',
+          name: 'code-review',
+          old: null,
+          new: 'sha256:abc',
+          action: 'updated',
+          reaped_clients: [],
+          kept_modified_clients: [],
+        },
+      ],
+    });
+    const result = parseReport<ItemsEnvelope<UpdateEntry>>(doc, 0, '');
+    assert.ok(result.ok);
+    const entry = result.value.items[0];
+    assert.ok(entry);
+    assert.strictEqual(entry.old, null);
+    assert.strictEqual(entry.new, 'sha256:abc');
+    assert.strictEqual(entry.action, 'updated');
+    assert.deepStrictEqual(entry.reaped_clients, []);
+    assert.deepStrictEqual(entry.kept_modified_clients, []);
+  });
+
+  test('UpdateEntry: removed/kept-modified rows carry a null new digest and populated client arrays', () => {
+    const doc = JSON.stringify({
+      items: [
+        {
+          kind: 'rule',
+          name: 'dropped-rule',
+          old: 'sha256:old1',
+          new: null,
+          action: 'removed',
+          reaped_clients: ['copilot'],
+          kept_modified_clients: [],
+        },
+        {
+          kind: 'rule',
+          name: 'edited-rule',
+          old: 'sha256:old2',
+          new: null,
+          action: 'kept-modified',
+          reaped_clients: [],
+          kept_modified_clients: ['claude'],
+        },
+      ],
+    });
+    const result = parseReport<ItemsEnvelope<UpdateEntry>>(doc, 0, '');
+    assert.ok(result.ok);
+    const [removed, keptModified] = result.value.items;
+    assert.ok(removed && keptModified);
+    assert.strictEqual(removed.new, null);
+    assert.deepStrictEqual(removed.reaped_clients, ['copilot']);
+    assert.strictEqual(keptModified.action, 'kept-modified');
+    assert.deepStrictEqual(keptModified.kept_modified_clients, ['claude']);
   });
 
   test('RegistryEntry: legacy (alias-less) row survives parsing', () => {

@@ -666,6 +666,83 @@ suite('extension integration', () => {
     assert.ok(updates.some((l) => !l.includes('--global')));
   });
 
+  test('updateAll toasts when a row reaps or keeps-modified a client output', async () => {
+    canned(stub, 'update', {
+      items: [
+        {
+          kind: 'skill',
+          name: 'code-review',
+          old: 'sha256:old1',
+          new: 'sha256:new1',
+          action: 'updated',
+          reaped_clients: ['copilot'],
+          kept_modified_clients: [],
+        },
+        {
+          kind: 'rule',
+          name: 'edited-rule',
+          old: 'sha256:old2',
+          new: null,
+          action: 'kept-modified',
+          reaped_clients: [],
+          kept_modified_clients: ['claude'],
+        },
+      ],
+    });
+    const window = vscode.window as unknown as { showInformationMessage: unknown };
+    const original = window.showInformationMessage;
+    const messages: string[] = [];
+    window.showInformationMessage = async (message: string) => {
+      messages.push(message);
+      return undefined;
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await vscode.commands.executeCommand('grimoire.updateAll');
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update')));
+    } finally {
+      window.showInformationMessage = original;
+      canned(stub, 'update', { items: [] });
+    }
+    const toast = messages.find((m) => m.startsWith('Grimoire: update'));
+    assert.ok(toast, `a reap/kept-modified toast was shown: ${messages.join(' | ')}`);
+    assert.ok(toast.includes('code-review'), `toast names the reaped artifact: ${toast}`);
+    assert.ok(toast.includes('edited-rule'), `toast names the kept-modified artifact: ${toast}`);
+    assert.ok(toast.includes('--force'), `toast points at the --force follow-up: ${toast}`);
+  });
+
+  test('updateAll stays silent when no row reaps or keeps-modified a client output (autodetect)', async () => {
+    canned(stub, 'update', {
+      items: [
+        {
+          kind: 'skill',
+          name: 'code-review',
+          old: 'sha256:old1',
+          new: 'sha256:new1',
+          action: 'updated',
+          reaped_clients: [],
+          kept_modified_clients: [],
+        },
+      ],
+    });
+    const window = vscode.window as unknown as { showInformationMessage: unknown };
+    const original = window.showInformationMessage;
+    let called = false;
+    window.showInformationMessage = async () => {
+      called = true;
+      return undefined;
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await vscode.commands.executeCommand('grimoire.updateAll');
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update')));
+    } finally {
+      window.showInformationMessage = original;
+      canned(stub, 'update', { items: [] });
+    }
+    assert.strictEqual(called, false, 'no toast when every row has empty reaped/kept-modified arrays');
+  });
+
   test('stale-lock update offers a full re-resolve, runs it in the same scope, no error toast', async function () {
     this.timeout(15000);
     const api = await activateExtension();

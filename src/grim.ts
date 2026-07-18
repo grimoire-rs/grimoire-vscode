@@ -178,6 +178,24 @@ export interface ItemsEnvelope<T> {
   items: T[];
 }
 
+/** One row of `grim update --format json`'s `items` envelope: one artifact's
+ *  update outcome. `old`/`new` are digests — `old: null` means the artifact
+ *  had no previous lock entry, `new: null` means the row left the lock
+ *  (pruned or kept-modified) and has no current digest.
+ *  `reaped_clients`/`kept_modified_clients` are always-present sorted client
+ *  arrays (`[]` when no client was dropped for this row); reap is only ever
+ *  attempted against an explicitly set `[options].clients` — with autodetect
+ *  (no explicit set) both stay `[]` for every row. */
+export interface UpdateEntry {
+  kind: string;
+  name: string;
+  old: string | null;
+  new: string | null;
+  action: 'updated' | 'unchanged' | 'removed' | 'kept-modified';
+  reaped_clients: string[];
+  kept_modified_clients: string[];
+}
+
 // --- Config wire types (`grim config ...`). `type` is grim's presentation
 // --- metadata for a key's value (string/boolean/enum/string-set/string-list/
 // --- integer today) — kept as an open `string` here, not a closed union: the
@@ -476,14 +494,6 @@ export function uninstallNotice(report: ActionReport): string | null {
 
 export function updateArgs(names: string[] = []): string[] {
   return ['update', ...names];
-}
-
-export function installArgs(options: { client?: string } = {}): string[] {
-  const args = ['install'];
-  if (options.client) {
-    args.push('--client', options.client);
-  }
-  return args;
 }
 
 export function initArgs(options: { registry?: string } = {}): string[] {
