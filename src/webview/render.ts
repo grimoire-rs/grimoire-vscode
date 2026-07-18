@@ -150,7 +150,7 @@ function cardAction(card: CardVM): TemplateResult {
 }
 
 /** Renders the shared menu-entry model (model.cardMenuEntries) to templates.
- *  MenuEntry.data has a CLOSED key set (repo/scope/kind/name — see model.ts), so
+ *  MenuEntry.data has a CLOSED key set (repo/scope/kind/name/replacedBy — see model.ts), so
  *  each is bound through ifDefined: an absent key omits its attribute, matching
  *  the old object-spread that only emitted present keys. */
 function renderMenuEntries(entries: MenuEntry[]): TemplateResult[] {

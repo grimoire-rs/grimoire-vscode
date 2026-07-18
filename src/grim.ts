@@ -291,9 +291,9 @@ export type GrimResult<T> =
       reason?: string;
       // Additive: grim omits this key unless `reason` is present AND that
       // reason is retryable (currently only "locked") — never a bare
-      // `false`. See isRetryable, which also treats exit 75 (lock
-      // contention) as retryable regardless of this field, for callers on
-      // older grim builds that predate it.
+      // `false`. See isRetryable, which also treats exit 75 (EX_TEMPFAIL)
+      // as retryable regardless of this field, for callers on older grim
+      // builds that predate it.
       retryable?: boolean;
     };
 
@@ -350,13 +350,15 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
 
 /** True when a failed grim call is worth retrying once: grim tagged the
  *  error itself (`retryable: true`, currently only the "locked" reason), or
- *  the exit code is 75 (lock contention, `sysexits.h` EX_TEMPFAIL) — the
- *  same signal callers checked directly before grim started emitting
- *  `retryable`. Checking the exit code too keeps this correct on older grim
- *  builds that predate the field, and even when `retryable` is present it's
- *  only ever `true` (grim never sends a bare `false`), so an explicit
- *  `false` here is treated as "not tagged" and exit 75 still wins. Pure;
- *  exported for tests. */
+ *  the exit code is 75 (`sysexits.h` EX_TEMPFAIL) — the same signal callers
+ *  checked directly before grim started emitting `retryable`. The exit-75
+ *  fallback is deliberately broader than lock contention: grim also exits
+ *  75 for other temporary failures with no `retryable` tag (e.g. a
+ *  credential-helper timeout), so this may green-light one extra attempt
+ *  there — harmless for the write/switch call sites that use it. When
+ *  `retryable` is present it's only ever `true` (grim never sends a bare
+ *  `false`), so an explicit `false` is treated as "not tagged" and exit 75
+ *  still wins. Pure; exported for tests. */
 export function isRetryable(result: { exitCode: number; retryable?: boolean }): boolean {
   return result.retryable === true || result.exitCode === 75;
 }
