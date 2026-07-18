@@ -96,6 +96,11 @@ suite('grim arg builders', () => {
   test('describe/status/context args', () => {
     assert.deepStrictEqual(describeArgs('a/b'), ['describe', 'a/b']);
     assert.deepStrictEqual(statusArgs(), ['status']);
+    // Plain status carries no --check; check:false stays offline too.
+    assert.deepStrictEqual(statusArgs({}), ['status']);
+    assert.deepStrictEqual(statusArgs({ check: false }), ['status']);
+    // check:true opts into the network-verified re-check.
+    assert.deepStrictEqual(statusArgs({ check: true }), ['status', '--check']);
     assert.deepStrictEqual(contextArgs(), ['context']);
   });
 

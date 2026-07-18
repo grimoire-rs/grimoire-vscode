@@ -92,6 +92,21 @@ export interface StatusItem {
   pinned: string | null;
   state: string;
   outputs: StatusOutput[];
+  // Client-set drift, computed from local state (config + install record) with
+  // no network — so populated on a plain `grim status`, not just `--check`.
+  // `clients_missing` is desired−recorded, `clients_extra` recorded−desired;
+  // both sorted, both `[]` when the sets agree AND always `[]` when the
+  // project's client target is unset (autodetect — no explicit set to diff).
+  clients_missing: string[];
+  clients_extra: string[];
+  // The `--check` surface: grim's live catalog lookup. `deprecated`/`replaced_by`
+  // mirror `grim search`'s fields; `update_available` is a fresh per-artifact
+  // re-resolution (true=registry newer, false=matches). All three are null on a
+  // plain `grim status` (no `--check` ⇒ no network) and for rows with no registry
+  // pin (bundle members, dev-installs, path sources); absence never lies as false.
+  deprecated: string | null;
+  replaced_by: string | null;
+  update_available: boolean | null;
 }
 
 export interface RegistryInfo {
@@ -393,8 +408,16 @@ export function describeArgs(reference: string): string[] {
   return ['describe', reference];
 }
 
-export function statusArgs(): string[] {
-  return ['status'];
+/** `--check` re-checks every registry-sourced artifact against the live catalog
+ *  (deprecation/replacement) and re-resolves each locked artifact's current tag
+ *  for honest `update_available` — network-verified, so reserved for the explicit
+ *  "Check for updates" command and the daily interval, never a plain refresh. */
+export function statusArgs(options: { check?: boolean } = {}): string[] {
+  const args = ['status'];
+  if (options.check) {
+    args.push('--check');
+  }
+  return args;
 }
 
 export function contextArgs(): string[] {

@@ -52,7 +52,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   scopes.logExecutable();
   const catalog = new CatalogService(scopes);
 
-  const refreshAll = async (options: { refresh?: boolean } = {}): Promise<void> => {
+  const refreshAll = async (options: { refresh?: boolean; check?: boolean } = {}): Promise<void> => {
     // sidebar.refresh posts its loading state BEFORE taking the snapshot (the
     // slow part), so the webview's refreshing-footer timer starts at t=0; the
     // details panels take their own snapshots inside buildVM regardless.
@@ -60,7 +60,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // (async, post-activation), so the forward reference is safe.
     await Promise.all([
       sidebar.refresh(options),
-      details.refreshOpenPanels(),
+      details.refreshOpenPanels(options),
       settings.refreshOpenPanel(),
     ]);
   };
@@ -252,6 +252,15 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       }
       // Stamp before fetching so a flaky network can't hammer GitHub.
       await context.globalState.update('updateCheck.lastCheck', Date.now());
+      // Once a day (same setting + throttle) also refresh the views with
+      // network-verified `status --check` data, so update/deprecation badges are
+      // honest rather than lock-state proxies. Fire-and-forget and decoupled
+      // from the binary-version check below — a slow or failed status check
+      // must not abort the grim-release prompt.
+      void refreshAll({ check: true }).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        output.appendLine(`update-badge check failed: ${message}`);
+      });
       const latest = await fetchLatestVersion();
       if (!latest || latest === context.globalState.get<string>('updateCheck.skippedVersion')) {
         return;
@@ -316,6 +325,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // The explicit user refresh is the one path that busts grim's on-disk
     // catalog cache; watcher/config/post-action refreshes stay cheap.
     vscode.commands.registerCommand('grimoire.refresh', () => refreshAll({ refresh: true })),
+    // Network-verified update/deprecation check (`grim status --check`), on
+    // explicit request only — plain refreshes stay offline and cheap.
+    vscode.commands.registerCommand('grimoire.checkArtifactUpdates', () =>
+      refreshAll({ check: true }),
+    ),
     vscode.commands.registerCommand('grimoire.updateAll', () =>
       suspendWhile(async () => {
         await runWithStatusProgress('Updating all artifacts', async () => {

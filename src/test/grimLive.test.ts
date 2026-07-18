@@ -5,8 +5,11 @@ import {
   describeArgs,
   fetchArgs,
   runJson,
+  statusArgs,
   type ContextInfo,
   type DigestResult,
+  type ItemsEnvelope,
+  type StatusItem,
 } from '../grim';
 import { withGlobalFlag } from '../scopes';
 
@@ -56,6 +59,20 @@ suite('grim live (real binary)', function () {
     } else {
       assert.strictEqual(result.kind, 'not-found');
     }
+  });
+
+  test('status --check is a supported flag (release gate), stays offline-clean', async () => {
+    // THE release gate for this surface: a grim predating `status --check` would
+    // reject the flag at clap-parse time (exit 64). `--offline` skips the actual
+    // network re-check (grim degrades with a stderr warning, `checked: false`) so
+    // this pins "the flag is known" fast and without a real registry round-trip.
+    const result = await runJson<ItemsEnvelope<StatusItem>>(
+      GRIM,
+      [...withGlobalFlag(statusArgs({ check: true })), '--offline'],
+      { timeoutMs: 20000 },
+    );
+    assert.ok(result.ok, result.ok ? '' : `status --check not ok: ${JSON.stringify(result)}`);
+    assert.ok(Array.isArray(result.value.items), 'status report carries an items array');
   });
 
   // describe resolves through the registry, so it can touch the network — gated.

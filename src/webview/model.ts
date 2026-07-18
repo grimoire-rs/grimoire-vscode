@@ -38,6 +38,30 @@ export interface WireStatusItem {
   pinned: string | null;
   state: string;
   outputs: { client: string; path: string }[];
+  // grim's `status` surface (always emitted by a current grim; optional here —
+  // like `source?` — so fixtures may omit them, and every reader tolerates
+  // absence). clients_missing/clients_extra come from local state (plain
+  // status); deprecated/replaced_by/update_available are populated only under
+  // `--check` and are null otherwise. See computeUpdateAvailable.
+  clients_missing?: string[];
+  clients_extra?: string[];
+  deprecated?: string | null;
+  replaced_by?: string | null;
+  update_available?: boolean | null;
+}
+
+/** Whether a card/install should surface an update. grim's authoritative
+ *  `--check` result wins when present: `true` → update badge/button, `false`
+ *  → no update even when the local lock reads `stale` (the network check is the
+ *  authority; a stale lock is still re-resolved on the Update click via the
+ *  offerFullUpdate path). `null`/absent means the check did not run, so it falls
+ *  back to the local-state proxy — `outdated` or `stale`. Pure; the single
+ *  source shared by the sidebar model and the details host. */
+export function computeUpdateAvailable(item: {
+  update_available?: boolean | null;
+  state: string;
+}): boolean {
+  return item.update_available ?? (item.state === 'outdated' || item.state === 'stale');
 }
 
 export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle'];
@@ -157,7 +181,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
     byRepo.set(repo, {
       scope: scope.scope,
       version,
-      updateAvailable: item.state === 'outdated' || item.state === 'stale',
+      updateAvailable: computeUpdateAvailable(item),
       clients: item.outputs.map((o) => o.client),
       state: item.state,
       kind: item.kind,

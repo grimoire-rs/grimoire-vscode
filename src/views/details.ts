@@ -26,6 +26,7 @@ import {
   buildDetailsVM,
   buildShareLink,
   buildSkeletonVM,
+  computeUpdateAvailable,
   findAssetPath,
   normalizeKind,
   parseViaBundles,
@@ -296,14 +297,14 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   /** Re-sends fresh view models to every open panel (after installs etc.),
    *  including the reusable preview slot. postVM re-checks the panel's repo, so
    *  a preview retargeted mid-refresh discards the stale VM. */
-  async refreshOpenPanels(): Promise<void> {
+  async refreshOpenPanels(options: { check?: boolean } = {}): Promise<void> {
     for (const [repo, panel] of this.panels) {
       if (!this.disposedPanels.has(panel)) {
-        await this.postVM(repo, panel);
+        await this.postVM(repo, panel, options);
       }
     }
     if (this.preview && !this.disposedPanels.has(this.preview.panel)) {
-      await this.postVM(this.preview.repo, this.preview.panel);
+      await this.postVM(this.preview.repo, this.preview.panel, options);
     }
   }
 
@@ -351,8 +352,12 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   /** Builds (full pipeline) and posts the VM; syncs the editor tab title + icon
    *  (design 1c). Used after actions and on refresh — the SWR open path posts
    *  via {@link paint}/{@link postBuilt} so it can reuse a pre-built VM. */
-  private async postVM(repo: string, panel: vscode.WebviewPanel): Promise<void> {
-    await this.postBuilt(repo, panel, await this.buildVM(repo));
+  private async postVM(
+    repo: string,
+    panel: vscode.WebviewPanel,
+    options: { check?: boolean } = {},
+  ): Promise<void> {
+    await this.postBuilt(repo, panel, await this.buildVM(repo, options));
   }
 
   /** Posts an already-built VM to a panel, syncing its title + icon. */
@@ -770,9 +775,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   }
 
   /** Full-pipeline VM, persisting the snapshot for a future instant paint. Used
-   *  by postVM (actions/refresh) and directly by the tests. */
-  async buildVM(repo: string): Promise<DetailsVM> {
-    const { vm, entry } = await this.buildPipeline(repo, await this.scopes.snapshot());
+   *  by postVM (actions/refresh) and directly by the tests. `check` threads to
+   *  `grim status --check` so an explicit "Check for updates" refresh gives open
+   *  panels network-verified update/deprecation data, matching the sidebar. */
+  async buildVM(repo: string, options: { check?: boolean } = {}): Promise<DetailsVM> {
+    const { vm, entry } = await this.buildPipeline(repo, await this.scopes.snapshot(options));
     if (entry) {
       await this.saveEntry(repo, entry);
     }
@@ -1000,7 +1007,7 @@ function installsFor(repo: string, scopes: ScopeStatus[]): DetailsVM['installs']
         installs.push({
           scope: scope.scope,
           version: declared ? refTag(declared) : null,
-          updateAvailable: item.state === 'outdated' || item.state === 'stale',
+          updateAvailable: computeUpdateAvailable(item),
           clients: item.outputs.map((o) => o.client),
           state: item.state,
           kind: item.kind,

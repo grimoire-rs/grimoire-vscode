@@ -246,7 +246,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /** Recomputes state and posts it to the webview (state posts are no-ops
    *  until the view resolves; the ready message re-triggers a refresh). */
-  async refresh(options: { refresh?: boolean } = {}): Promise<void> {
+  async refresh(options: { refresh?: boolean; check?: boolean } = {}): Promise<void> {
     this.postState({ phase: 'loading', items: [], installed: [] });
     // Suppress prefetch-driven logo reposts while a refresh is in flight — a
     // stale ready post would cancel the webview's pending refreshing-footer
@@ -260,8 +260,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async doRefresh(options: { refresh?: boolean }, gen: number): Promise<void> {
-    const snap = await this.scopes.snapshot();
+  private async doRefresh(
+    options: { refresh?: boolean; check?: boolean },
+    gen: number,
+  ): Promise<void> {
+    // `check` (network-verified update/deprecation data) threads to
+    // `grim status --check`; the search options below stay as-is.
+    const snap = await this.scopes.snapshot(options);
     if (gen !== this.refreshGen) {
       return; // a newer refresh started while snapshotting — it owns the state
     }

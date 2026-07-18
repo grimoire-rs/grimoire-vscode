@@ -227,16 +227,19 @@ export class ScopeService {
   }
 
   /** One scope's chain: context probe → status (only when configured). Returns
-   *  the probe too, so snapshot() can read not-found/error off the global one. */
+   *  the probe too, so snapshot() can read not-found/error off the global one.
+   *  `check` threads to `grim status --check` (network-verified update/deprecation
+   *  data); omitted on plain refreshes. */
   private async scopeSnapshot(
     scope: Scope,
+    options: { check?: boolean } = {},
   ): Promise<{ probe: GrimResult<ContextInfo>; snapshot: ScopeSnapshot | undefined }> {
     const ctx = await this.run<ContextInfo>(contextArgs(), scope);
     if (!ctx.ok) {
       return { probe: ctx, snapshot: undefined };
     }
     const status = ctx.value.config_exists
-      ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(), scope)
+      ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(options), scope)
       : undefined;
     let declared: Record<string, string> = {};
     try {
@@ -254,12 +257,14 @@ export class ScopeService {
 
   /** Gathers both scopes. `grimMissing` is set when the binary is absent. The
    *  global and project chains are independent, so they run in parallel (the
-   *  intra-chain context→status order is preserved). */
-  async snapshot(): Promise<Snapshot> {
+   *  intra-chain context→status order is preserved). `check` is threaded to
+   *  `grim status --check` in both scopes for the explicit update check + daily
+   *  interval; plain refreshes leave it off (no network). */
+  async snapshot(options: { check?: boolean } = {}): Promise<Snapshot> {
     const folder = this.projectFolder();
     const [global, project] = await Promise.all([
-      this.scopeSnapshot('global'),
-      folder ? this.scopeSnapshot('project') : Promise.resolve(undefined),
+      this.scopeSnapshot('global', options),
+      folder ? this.scopeSnapshot('project', options) : Promise.resolve(undefined),
     ]);
     if (!global.probe.ok && global.probe.kind === 'not-found') {
       return (this.lastSnapshot = { grimMissing: true });

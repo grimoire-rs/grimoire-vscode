@@ -9,6 +9,7 @@ import {
   buildShareLink,
   buildSkeletonVM,
   cardMenuEntries,
+  computeUpdateAvailable,
   concreteVersion,
   DEFAULT_FILTER,
   effectiveInstall,
@@ -102,6 +103,40 @@ suite('ref helpers', () => {
     assert.strictEqual(normalizeKind('SKILL'), 'skill');
     assert.strictEqual(normalizeKind('unknown'), null);
     assert.strictEqual(normalizeKind(null), null);
+  });
+});
+
+suite('computeUpdateAvailable', () => {
+  test('authoritative --check result wins over the lock-state proxy', () => {
+    // true → update offered regardless of state.
+    assert.strictEqual(computeUpdateAvailable({ update_available: true, state: 'installed' }), true);
+    // false suppresses the update even when the local lock reads outdated/stale
+    // (the network check is the authority; stale is still handled on Update click).
+    assert.strictEqual(computeUpdateAvailable({ update_available: false, state: 'outdated' }), false);
+    assert.strictEqual(computeUpdateAvailable({ update_available: false, state: 'stale' }), false);
+  });
+
+  test('null/absent (unchecked) falls back to the outdated/stale proxy', () => {
+    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'outdated' }), true);
+    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'stale' }), true);
+    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'installed' }), false);
+    // Field omitted entirely (a fixture / older wire item) behaves like null.
+    assert.strictEqual(computeUpdateAvailable({ state: 'stale' }), true);
+    assert.strictEqual(computeUpdateAvailable({ state: 'installed' }), false);
+  });
+
+  test('a checked false on a stale install clears the card update badge', () => {
+    // Ends up in buildCards via installIndex — proves the shared helper wins
+    // over the state proxy end-to-end, not just in isolation.
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [statusItem({ state: 'stale', update_available: false })],
+      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const card = buildCards([searchItem()], [scope])[0];
+    assert.ok(card);
+    assert.strictEqual(card.installs[0]?.updateAvailable, false);
+    assert.strictEqual(card.state, 'installed', 'no update badge when the check says none');
   });
 });
 

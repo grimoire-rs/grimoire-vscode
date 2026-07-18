@@ -80,6 +80,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "grimoire.checkArtifactUpdates",
+        "title": "Check for Updates",
+        "category": "Grimoire",
+        "icon": "$(sync)"
+      },
+      {
         "command": "grimoire.updateAll",
         "title": "Update All Artifacts",
         "category": "Grimoire",
@@ -142,14 +148,19 @@
           "group": "navigation@3"
         },
         {
-          "command": "grimoire.updateAll",
+          "command": "grimoire.checkArtifactUpdates",
           "when": "view == grimoire.marketplace",
           "group": "navigation@4"
         },
         {
-          "command": "grimoire.openSettings",
+          "command": "grimoire.updateAll",
           "when": "view == grimoire.marketplace",
           "group": "navigation@5"
+        },
+        {
+          "command": "grimoire.openSettings",
+          "when": "view == grimoire.marketplace",
+          "group": "navigation@6"
         }
       ],
       "commandPalette": [

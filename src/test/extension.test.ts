@@ -299,6 +299,7 @@ suite('extension integration', () => {
     for (const command of [
       'grimoire.focusSearch',
       'grimoire.refresh',
+      'grimoire.checkArtifactUpdates',
       'grimoire.updateAll',
       'grimoire.initProject',
       'grimoire.installGrim',
@@ -407,6 +408,79 @@ suite('extension integration', () => {
     const search = argvLines(stub).find((l) => l.startsWith('search'));
     assert.ok(search, 'search was invoked');
     assert.ok(search.includes('--refresh'), `explicit refresh carries --refresh: ${search}`);
+  });
+
+  test('a plain refresh runs grim status without --check (stays offline)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // status only runs when the scope is configured — the default stub context
+    // reports config_exists:false, so flip it on for this scope's status pass.
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    try {
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.providers.sidebar.refresh();
+      const statusLines = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(statusLines.length > 0, 'status was invoked');
+      assert.ok(
+        statusLines.every((l) => !l.includes('--check')),
+        `a plain refresh must not opt into the network check: ${statusLines.join(' | ')}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+    }
+  });
+
+  test('grimoire.checkArtifactUpdates runs grim status --check', async function () {
+    this.timeout(15000);
+    await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    try {
+      fs.rmSync(stub.argvLog, { force: true });
+      await vscode.commands.executeCommand('grimoire.checkArtifactUpdates');
+      const statusLines = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(statusLines.length > 0, 'status was invoked');
+      assert.ok(
+        statusLines.some((l) => l.includes('--check')),
+        `the check command opts into --check: ${statusLines.join(' | ')}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+    }
+  });
+
+  test('details buildVM threads {check} into its own snapshot (checked refresh path)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const details = api.providers.details;
+    const repo = 'ghcr.io/grimoire-rs/skills/check-details-vm';
+    // status only runs for a configured scope; flip config_exists on so the
+    // details snapshot issues an inspectable status pass.
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    try {
+      // A plain buildVM (open / post-action refresh) stays offline — no --check.
+      fs.rmSync(stub.argvLog, { force: true });
+      await details.buildVM(repo);
+      const plain = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(plain.length > 0, 'plain buildVM ran status');
+      assert.ok(
+        plain.every((l) => !l.includes('--check')),
+        `plain buildVM must stay offline: ${plain.join(' | ')}`,
+      );
+      // A checked buildVM — the path refreshAll({check:true}) drives through
+      // refreshOpenPanels → postVM into every open panel — opts into --check, so
+      // an open Details panel gets the same network-verified data as the sidebar
+      // (not a stale/unchecked snapshot racing the sidebar's checked one).
+      fs.rmSync(stub.argvLog, { force: true });
+      await details.buildVM(repo, { check: true });
+      const checked = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(checked.length > 0, 'checked buildVM ran status');
+      assert.ok(
+        checked.every((l) => l.includes('--check')),
+        `checked buildVM must opt into --check: ${checked.join(' | ')}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+    }
   });
 
   test('a search envelope missing items does not crash the refresh', async function () {
