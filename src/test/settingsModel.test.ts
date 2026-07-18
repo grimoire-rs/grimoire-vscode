@@ -52,6 +52,18 @@ suite('buildSettingsRow', () => {
     assert.strictEqual(row.status, 'idle');
     assert.strictEqual(row.errorMessage, undefined);
   });
+
+  test('constraints: null on the wire stays null on the row', () => {
+    const row = buildSettingsRow(wireConfigEntry({ constraints: null }));
+    assert.strictEqual(row.constraints, null);
+  });
+
+  test('constraints: wire snake_case (item_pattern/item_width) maps to the VM camelCase shape', () => {
+    const row = buildSettingsRow(
+      wireConfigEntry({ constraints: { item_pattern: '^[^\\s]$', item_width: 1 } }),
+    );
+    assert.deepStrictEqual(row.constraints, { itemPattern: '^[^\\s]$', itemWidth: 1 });
+  });
 });
 
 suite('isModified', () => {
@@ -305,13 +317,40 @@ suite('allRows', () => {
 });
 
 suite('client-side guards', () => {
-  test('isValidChip: exactly one character', () => {
-    assert.strictEqual(isValidChip('/'), true);
-    assert.strictEqual(isValidChip('--'), false);
-    assert.strictEqual(isValidChip(''), false);
+  test('isValidChip: null constraints falls back to the exactly-one-character rule', () => {
+    assert.strictEqual(isValidChip('/', null), true);
+    assert.strictEqual(isValidChip('--', null), false);
+    assert.strictEqual(isValidChip('', null), false);
   });
 
-  test('chipHasComma', () => {
+  test('isValidChip: constraints present — item_pattern is enforced', () => {
+    const constraints = { itemPattern: '^[a-z]$', itemWidth: 1 };
+    assert.strictEqual(isValidChip('a', constraints), true);
+    assert.strictEqual(isValidChip('A', constraints), false);
+    assert.strictEqual(isValidChip('1', constraints), false);
+  });
+
+  test('isValidChip: constraints present — item_width is enforced independently of the pattern', () => {
+    const constraints = { itemPattern: '^[^\\s]+$', itemWidth: 2 };
+    assert.strictEqual(isValidChip('ab', constraints), true, 'matches pattern and width');
+    assert.strictEqual(isValidChip('a', constraints), false, 'matches pattern but too narrow');
+    assert.strictEqual(isValidChip('abc', constraints), false, 'matches pattern but too wide');
+  });
+
+  test('isValidChip: real grim tree_separators constraints (advisory pattern + width 1)', () => {
+    const constraints = { itemPattern: '^[^\\s\\p{C}]$', itemWidth: 1 };
+    assert.strictEqual(isValidChip('/', constraints), true);
+    assert.strictEqual(isValidChip(' ', constraints), false, 'whitespace excluded by the pattern');
+    assert.strictEqual(isValidChip('--', constraints), false, 'width 1 rejects a 2-char chip');
+  });
+
+  test('isValidChip: an unparseable item_pattern fails open (accepts) rather than blocking a value grim might accept', () => {
+    const constraints = { itemPattern: '(unterminated', itemWidth: 1 };
+    assert.strictEqual(isValidChip('/', constraints), true);
+    assert.strictEqual(isValidChip('anything', constraints), true);
+  });
+
+  test('chipHasComma: rejected unconditionally, regardless of constraints (wire-format guard)', () => {
     assert.strictEqual(chipHasComma('a,b'), true);
     assert.strictEqual(chipHasComma('/'), false);
   });

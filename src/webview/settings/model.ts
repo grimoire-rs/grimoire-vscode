@@ -8,6 +8,7 @@ import type {
   SettingsGroupVM,
   SettingsPhase,
   SettingsRegistryVM,
+  SettingsRowConstraints,
   SettingsRowVM,
   SettingsState,
 } from '../protocol';
@@ -15,6 +16,11 @@ import type {
 // Wire shapes (duplicated from grim.ts's ConfigEntry/RegistryEntry — same
 // dependency-free convention as webview/model.ts's WireSearchItem: this pure
 // module stays independent of the host-only grim.ts at runtime).
+export interface WireConfigConstraints {
+  item_pattern: string;
+  item_width: number;
+}
+
 export interface WireConfigEntry {
   key: string;
   value: string | null;
@@ -24,6 +30,7 @@ export interface WireConfigEntry {
   description: string;
   default: string | null;
   values: string[] | null;
+  constraints: WireConfigConstraints | null;
 }
 
 export interface WireRegistryEntry {
@@ -113,6 +120,9 @@ export function buildSettingsRow(entry: WireConfigEntry): SettingsRowVM {
     modified: isModified(entry.set, entry.value, entry.default),
     hint: defaultHint(entry.key, entry.default),
     status: 'idle',
+    constraints: entry.constraints
+      ? { itemPattern: entry.constraints.item_pattern, itemWidth: entry.constraints.item_width }
+      : null,
   };
 }
 
@@ -235,9 +245,31 @@ export function reloadedKeys(prev: SettingsState, next: SettingsState): string[]
 
 // --- Client-side guards (validated locally, not round-tripped through grim) ---
 
-/** Tree-separator chip rule: exactly one character. */
-export function isValidChip(value: string): boolean {
-  return value.length === 1;
+/** Chip item-shape guard, data-driven off the row's `constraints` (grim's
+ *  `ValueConstraints`, advisory-not-authoritative per its own doc — grim's
+ *  `config set` predicate is the real gate). `constraints === null` covers
+ *  every list key with no per-item shape rule beyond `values` membership
+ *  (there are none of those with a free chip editor today) and falls back
+ *  to the original single-character rule. An unparseable `itemPattern`
+ *  (forward-incompatible regex syntax from a newer grim, or a genuine grim
+ *  bug) fails OPEN — this is only a pre-check, so it would rather
+ *  under-reject than block a value grim's own validation would accept. */
+export function isValidChip(value: string, constraints: SettingsRowConstraints | null): boolean {
+  if (constraints === null) {
+    return value.length === 1;
+  }
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(constraints.itemPattern, 'u');
+  } catch {
+    return true;
+  }
+  // ponytail: itemWidth is grim's Unicode DISPLAY width (unicode-width
+  // crate); no such measure is wired up client-side, so string length
+  // stands in — exact for today's only constrained key (single ASCII
+  // separators). Swap in a display-width library if a future key needs
+  // wide-character awareness.
+  return value.length === constraints.itemWidth && pattern.test(value);
 }
 
 /** string-list/string-set wire format is comma-joined — reject a chip value

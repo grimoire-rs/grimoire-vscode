@@ -314,6 +314,7 @@ suite('grim report parsing', () => {
           description: 'Default registry for short identifiers.',
           default: null,
           values: null,
+          constraints: null,
         },
       ],
     });
@@ -325,6 +326,24 @@ suite('grim report parsing', () => {
     assert.strictEqual(entry.set, false);
     assert.strictEqual(entry.default, null);
     assert.strictEqual(entry.values, null);
+    assert.strictEqual(entry.constraints, null);
+  });
+
+  test('ConfigEntry: a list key with an item-shape rule carries item_pattern + item_width', () => {
+    const doc = JSON.stringify({
+      key: 'options.tui.tree_separators',
+      value: '/',
+      set: false,
+      type: 'string-list',
+      title: 'Tree separators',
+      description: 'Characters that split the repository path into nested groups.',
+      default: '/',
+      values: null,
+      constraints: { item_pattern: '^[^\\s\\p{C}]$', item_width: 1 },
+    });
+    const result = parseReport<ConfigEntry>(doc, 0, '');
+    assert.ok(result.ok);
+    assert.deepStrictEqual(result.value.constraints, { item_pattern: '^[^\\s\\p{C}]$', item_width: 1 });
   });
 
   test('ConfigEntry: enum type carries its values list and a non-null default', () => {

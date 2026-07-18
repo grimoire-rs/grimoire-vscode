@@ -204,8 +204,22 @@ export interface UpdateEntry {
 // --- read-only row" rule live in webview/settings (buildSettingsVM), same
 // --- split as SearchItem.kind (open here) / ArtifactKind (closed, webview).
 
-/** One row of `grim config list --all`. All 8 fields always present
- *  (always-present-null policy) whether or not `--all` was passed. */
+/** Advisory pre-check constraints on the individual items of a list-valued
+ *  config key (e.g. `options.tui.tree_separators`) — mirrors grim's
+ *  `ValueConstraints`. Necessary, NOT sufficient: `item_pattern` can't
+ *  express every shape rule (e.g. Unicode display width, covered instead by
+ *  `item_width`); grim's own `config set` validation is authoritative
+ *  regardless of what this pre-check says. */
+export interface ConfigConstraints {
+  item_pattern: string;
+  item_width: number;
+}
+
+/** One row of `grim config list --all`. All 9 fields always present
+ *  (always-present-null policy) whether or not `--all` was passed.
+ *  `constraints` is non-null only for keys whose list items carry a shape
+ *  rule beyond membership in `values` (e.g. `options.clients`'s closed set
+ *  needs none). */
 export interface ConfigEntry {
   key: string;
   value: string | null;
@@ -215,6 +229,7 @@ export interface ConfigEntry {
   description: string;
   default: string | null;
   values: string[] | null;
+  constraints: ConfigConstraints | null;
 }
 
 /** One row of `grim config registry list`. Exactly one of `oci`/`index` is

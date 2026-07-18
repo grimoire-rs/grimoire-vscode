@@ -21,6 +21,7 @@ export function wireConfigEntry(overrides: Partial<WireConfigEntry> = {}): WireC
       'Sets the view the browser opens in. Defaults to `tree`, grouping items by path segments; `flat` lists them ungrouped.',
     default: 'tree',
     values: ['flat', 'tree'],
+    constraints: null,
     ...overrides,
   };
 }
@@ -93,6 +94,9 @@ export function wireConfigEntries(): WireConfigEntry[] {
         'Sets the characters that split the repository path into nested groups in tree view. Defaults to `/`; each entry must be a single character.',
       default: '/',
       values: null,
+      // Real grim constraints for this key (TREE_SEPARATOR_ITEM_PATTERN):
+      // any single non-whitespace, non-control character.
+      constraints: { item_pattern: '^[^\\s\\p{C}]$', item_width: 1 },
     }),
     wireConfigEntry({
       key: 'options.expand_levels',

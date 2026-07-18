@@ -265,6 +265,7 @@ function configEntry(
     description: `The ${key} option.`,
     default: '1',
     values: null,
+    constraints: null,
     ...overrides,
   };
 }

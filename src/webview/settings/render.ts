@@ -93,9 +93,10 @@ function closedChips(row: SettingsRowVM): TemplateResult {
 }
 
 /** Free chip editor (Tree separators): existing chips + a ghost-placeholder
- *  add-input. The single-char rule is a client-side guard (model.ts
- *  isValidChip); main.ts sets row.status='error' locally on violation without
- *  a round trip, so this renders the SAME error line a server rejection would. */
+ *  add-input. The item-shape rule (row.constraints, or the single-char
+ *  fallback) is a client-side guard (model.ts isValidChip); main.ts sets
+ *  row.status='error' locally on violation without a round trip, so this
+ *  renders the SAME error line a server rejection would. */
 function freeChips(row: SettingsRowVM): TemplateResult {
   const chips = splitList(row.value);
   return html`<div class="chip-editor${row.status === 'error' ? ' error' : ''}" data-key="${row.key}">

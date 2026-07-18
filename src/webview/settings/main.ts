@@ -564,7 +564,7 @@ function flushChipAdd(target: HTMLInputElement): void {
   if (!row) {
     return;
   }
-  if (!isValidChip(text) || chipHasComma(text)) {
+  if (!isValidChip(text, row.constraints) || chipHasComma(text)) {
     row.status = 'error';
     row.errorMessage = `Separator must be a single character — "${text}" was not applied.`;
     render();

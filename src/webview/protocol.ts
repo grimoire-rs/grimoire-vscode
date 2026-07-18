@@ -225,6 +225,21 @@ export type SettingsControlType =
  *  grim's wire contract, never posted by the host inside a row itself. */
 export type SettingsRowStatus = 'idle' | 'saving' | 'error' | 'reloaded';
 
+/** VM-side (camelCase) mirror of grim's `ConfigEntry.constraints` /
+ *  `ValueConstraints` — advisory, NOT sufficient (grim's own `config set`
+ *  predicate is authoritative; a value matching `itemPattern` can still be
+ *  rejected there). Present only for a list key whose items carry a shape
+ *  rule beyond membership in `SettingsRowVM.values` (e.g. tree separators);
+ *  `null` for every scalar key and for `clients`, whose closed set is
+ *  already machine-readable via `values`. */
+export interface SettingsRowConstraints {
+  /** Advisory regex a single list item should match. */
+  itemPattern: string;
+  /** Required Unicode display width of a single item — the rule
+   *  `itemPattern` can't express. */
+  itemWidth: number;
+}
+
 export interface SettingsRowVM {
   key: string;
   title: string;
@@ -244,6 +259,9 @@ export interface SettingsRowVM {
   status: SettingsRowStatus;
   /** Set only alongside status === 'error' — the rejected-value inline message. */
   errorMessage?: string;
+  /** Item-shape guard for a list-valued row's chip editor (model.ts's
+   *  isValidChip) — see {@link SettingsRowConstraints}. */
+  constraints: SettingsRowConstraints | null;
 }
 
 export interface SettingsGroupVM {
