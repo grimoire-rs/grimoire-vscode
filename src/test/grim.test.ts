@@ -14,6 +14,7 @@ import {
   isRetryable,
   parseReport,
   registryAddArgs,
+  registryFieldsArgs,
   registryListArgs,
   registryRmArgs,
   registryUseArgs,
@@ -159,6 +160,10 @@ suite('grim arg builders', () => {
     assert.deepStrictEqual(registryListArgs(), ['config', 'registry', 'list']);
     assert.deepStrictEqual(registryRmArgs('acme'), ['config', 'registry', 'rm', '--', 'acme']);
     assert.deepStrictEqual(registryUseArgs('acme'), ['config', 'registry', 'use', '--', 'acme']);
+  });
+
+  test('registryFieldsArgs: context-free, no scope/flag arguments', () => {
+    assert.deepStrictEqual(registryFieldsArgs(), ['config', 'registry', 'fields']);
   });
 
   test('registryRmArgs/registryUseArgs force a leading-hyphen alias positional', () => {

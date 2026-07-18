@@ -24,7 +24,15 @@ import {
   splitList,
   toggleRegistryHelp,
 } from '../webview/settings/model';
-import { scopesVM, settingsSource, settingsState, wireConfigEntries, wireConfigEntry, wireRegistryEntry } from './fixtures/settingsVms';
+import {
+  registryFieldVMs,
+  scopesVM,
+  settingsSource,
+  settingsState,
+  wireConfigEntries,
+  wireConfigEntry,
+  wireRegistryEntry,
+} from './fixtures/settingsVms';
 
 suite('buildSettingsRow', () => {
   test('narrows each of the 6 known types', () => {
@@ -241,6 +249,22 @@ suite('resolveSettingsPhase / buildSettingsVM: empty and init states', () => {
     assert.strictEqual(vm.phase, 'ready');
     assert.strictEqual(vm.rawConfigPath, settingsSource().configPath);
     assert.strictEqual(vm.configPath, settingsSource().configPath);
+  });
+
+  // registryFields is context-free host-side data (SettingsManager.
+  // ensureRegistryFields) — buildSettingsVM must thread it straight through
+  // regardless of phase, not just for 'ready'.
+  test('registryFields threads through unchanged in both ready and empty/init phases', () => {
+    const fields = registryFieldVMs();
+    const ready = buildSettingsVM(settingsSource({ scope: 'project', registryFields: fields }));
+    assert.strictEqual(ready.phase, 'ready');
+    assert.deepStrictEqual(ready.registryFields, fields);
+
+    const notToml = buildSettingsVM(
+      settingsSource({ scope: 'project', configExists: false, registryFields: fields }),
+    );
+    assert.strictEqual(notToml.phase, 'project-no-toml');
+    assert.deepStrictEqual(notToml.registryFields, fields);
   });
 });
 

@@ -241,6 +241,19 @@ export interface RegistryEntry {
   default: boolean;
 }
 
+/** One row of `grim config registry fields` — presentation metadata for the
+ *  add-registry form's oci/index/default controls (same title/description
+ *  convention as ConfigEntry). Context-free: no scope or workspace
+ *  dependency, unlike every other `config` subcommand here — fetched once
+ *  per Settings panel lifetime and cached (see SettingsManager), not
+ *  refetched per scope. */
+export interface RegistryFieldEntry {
+  key: string;
+  type: string;
+  title: string;
+  description: string;
+}
+
 /** The write confirmation shared by `config set`, `config unset`, and every
  *  `config registry add|rm|use` — one report shape, discriminated by `action`. */
 export type ConfigWriteAction =
@@ -547,6 +560,14 @@ export function configUnsetArgs(key: string): string[] {
 
 export function registryListArgs(): string[] {
   return ['config', 'registry', 'list'];
+}
+
+/** `grim config registry fields`: presentation metadata (title/description)
+ *  for the add-registry form's oci/index/default controls — context-free
+ *  (no scope-dependent state), so callers fetch it once rather than per
+ *  scope switch. */
+export function registryFieldsArgs(): string[] {
+  return ['config', 'registry', 'fields'];
 }
 
 /** Exactly one of `oci`/`index` — clap's `--oci`/`--index` are

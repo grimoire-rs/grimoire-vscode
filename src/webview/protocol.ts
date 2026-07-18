@@ -269,6 +269,19 @@ export interface SettingsGroupVM {
   rows: SettingsRowVM[];
 }
 
+/** grim's presentation metadata for the add-registry form's oci/index/
+ *  default controls (`config registry fields`) — fetched once per panel
+ *  lifetime (SettingsManager.ensureRegistryFields), independent of scope, so
+ *  it rides along on every SettingsState post rather than a message of its
+ *  own. `[]` means either the fetch hasn't resolved yet or it failed; either
+ *  way render.ts's per-key lookup falls back to its own hardcoded label/
+ *  tooltip copy — a failed fetch is never surfaced as an error. */
+export interface SettingsRegistryFieldVM {
+  key: string;
+  title: string;
+  description: string;
+}
+
 export interface SettingsRegistryVM {
   alias: string | null;
   /** 'unknown' only for a malformed row (neither oci nor index set) — grim's
@@ -310,6 +323,10 @@ export interface SettingsState {
   rawConfigPath: string | null;
   groups: SettingsGroupVM[];
   registries: SettingsRegistryVM[];
+  /** See {@link SettingsRegistryFieldVM} — always present (possibly `[]`),
+   *  regardless of phase, so render.ts never needs to special-case its
+   *  absence. */
+  registryFields: SettingsRegistryFieldVM[];
   error?: string;
 }
 

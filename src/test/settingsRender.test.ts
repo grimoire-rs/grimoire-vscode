@@ -7,9 +7,9 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { settingsGoldenCases } from './fixtures/settingsGoldenCases';
-import { settingsState, wireConfigEntry } from './fixtures/settingsVms';
+import { registryFieldVMs, settingsState, wireConfigEntry } from './fixtures/settingsVms';
 import * as render from '../webview/settings/render';
-import { buildSettingsRow } from '../webview/settings/model';
+import { buildSettingsRow, EMPTY_REGISTRY_DRAFT } from '../webview/settings/model';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 
@@ -64,6 +64,46 @@ suite('settings controls', () => {
   });
 });
 
+suite('settings registry field labels (grim config registry fields)', () => {
+  test('radio/checkbox labels source from grim title when the fetch succeeded', async () => {
+    const state = settingsState({ registryFields: registryFieldVMs() });
+    const html = await litHtml(
+      render.renderSettings(state, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
+    );
+    assert.ok(html.includes('Package-index locator'), 'index radio label sourced from grim title');
+    assert.ok(html.includes('OCI registry ref'), 'oci radio label sourced from grim title');
+    assert.ok(html.includes('Default registry flag'), 'checkbox label sourced from grim title');
+  });
+
+  // Spec: "Fetch failure => full hardcoded fallback for labels + tooltips" —
+  // an empty registryFields list (no fetch yet, or the fetch failed) must
+  // render EXACTLY the pre-existing hardcoded copy, no error surfaced.
+  test('empty registryFields (fetch failure or not-yet-resolved) falls back fully to the hardcoded labels', async () => {
+    const state = settingsState({ registryFields: [] });
+    const html = await litHtml(
+      render.renderSettings(state, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
+    );
+    assert.ok(html.includes('>Index<'));
+    assert.ok(html.includes('>OCI<'));
+    assert.ok(html.includes('Set as default registry'));
+  });
+
+  test('help tooltip prefers the hardcoded REGISTRY_HELP_COPY over grim description even once fetched', async () => {
+    const state = settingsState({ registryFields: registryFieldVMs() });
+    const html = await litHtml(
+      render.renderSettings(state, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: 'index' }),
+    );
+    assert.ok(
+      html.includes('curated catalogs like the hosted Grimoire index'),
+      'hardcoded tooltip copy still wins',
+    );
+    assert.ok(
+      !html.includes('Sets a package-index locator that replaces'),
+      "grim's description must not replace the hardcoded tooltip copy",
+    );
+  });
+});
+
 suite('settings escaping', () => {
   test('hostile row title/description/value stay inert', async () => {
     const row = buildSettingsRow(
@@ -84,6 +124,28 @@ suite('settings escaping', () => {
     assert.ok(!html.includes('<b>bold</b>'));
     assert.ok(html.includes('<code>code span</code>'));
     assert.ok(!html.includes('"><img src=x'));
+  });
+
+  // New render path this package introduces: state.registryFields' title
+  // (radio/checkbox label) and description (tooltip fallback) are now
+  // dynamic, grim-sourced bindings rather than hardcoded literals.
+  test('hostile registry field title/description (grim config registry fields) stay inert', async () => {
+    const state = settingsState({
+      registryFields: [
+        { key: 'index', title: '<script>alert(1)</script>', description: '<img src=x onerror=alert(1)>' },
+      ],
+    });
+    const html = await litHtml(
+      render.renderSettings(state, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: 'index' }),
+    );
+    assert.ok(!html.includes('<script>alert(1)'));
+    assert.ok(html.includes('&lt;script&gt;'));
+    // REGISTRY_HELP_COPY covers 'index', so the hostile description (the
+    // grim-description FALLBACK path) never even reaches the DOM here — this
+    // still pins that IF it ever did (a future kind missing from the
+    // hardcoded map), the binding is a plain lit-html text binding, not
+    // unsafeHTML, so it would render inert too.
+    assert.ok(!html.includes('<img src=x onerror'));
   });
 
   test('hostile registry alias/locator stay inert', async () => {

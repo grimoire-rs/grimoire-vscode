@@ -142,6 +142,7 @@ if [ "$cmd" = "config" ]; then
     done
     case "$action" in
       list) [ -f "${dir}/registry-list.json" ] && { cat "${dir}/registry-list.json"; exit 0; } ;;
+      fields) [ -f "${dir}/registry-fields.json" ] && { cat "${dir}/registry-fields.json"; exit 0; } ;;
       add)
         case "$alias_arg" in
           dup-alias)
@@ -674,6 +675,111 @@ suite('settings host integration', () => {
       assert.strictEqual(posts[2]?.type, 'state');
     } finally {
       watchers.dispose();
+    }
+  });
+
+  // grim's real `config registry fields` shape (verified live against the
+  // binary) — used by the two tests below. Deliberately NOT canned in
+  // suiteSetup: every earlier test in this suite (and the shared
+  // `api.providers.settings` singleton they exercise) must keep working with
+  // NO registry-fields.json present at all, exactly like a grim predating
+  // this subcommand — none of them inspect `state.registryFields`, so the
+  // resulting `[]` fallback is silently harmless there.
+  function registryFieldsDoc(): Record<string, unknown> {
+    return {
+      items: [
+        {
+          key: 'oci',
+          type: 'string',
+          title: 'OCI registry ref',
+          description: 'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.',
+        },
+        {
+          key: 'index',
+          type: 'string',
+          title: 'Package-index locator',
+          description: 'Sets a package-index locator that replaces the `_catalog` registry listing.',
+        },
+        {
+          key: 'default',
+          type: 'boolean',
+          title: 'Default registry flag',
+          description: 'Controls whether this registry is the primary one short identifiers expand against.',
+        },
+      ],
+    };
+  }
+
+  /** A standalone SettingsManager reusing the SAME grim stub (readConfig()
+   *  resolves `grimoire.path.executable`, module-wide, regardless of which
+   *  ScopeService instance calls it — same convention the watcher test above
+   *  uses) but with its OWN registryFieldsPromise cache, so these two tests
+   *  can observe a single panel's fetch-once behavior in isolation from the
+   *  shared `api.providers.settings` instance's own (separately memoized) cache. */
+  function freshManager(): SettingsManager {
+    const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+    const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
+    return new SettingsManager(
+      vscode.Uri.file(stub.dir),
+      scopes,
+      fakeOutput,
+      async () => {},
+      async () => {},
+    );
+  }
+
+  test('registry fields are fetched from grim exactly once per panel and cached across repeated state builds', async () => {
+    canned(stub.dir, 'registry-fields', registryFieldsDoc());
+    try {
+      const manager = freshManager();
+      const { panel, posts } = fakeSettingsPanel();
+      const before = argvLines(stub).filter((l) => l.startsWith('config registry fields')).length;
+
+      await manager.onMessage(panel, { type: 'ready', scope: 'global' });
+      await manager.onMessage(panel, { type: 'switchScope', scope: 'global' });
+      await manager.onMessage(panel, { type: 'switchScope', scope: 'global' });
+
+      const after = argvLines(stub).filter((l) => l.startsWith('config registry fields')).length;
+      assert.strictEqual(
+        after - before,
+        1,
+        'expected exactly one grim spawn for "config registry fields" across 3 state builds on the same panel',
+      );
+
+      const last = posts[posts.length - 1];
+      assert.ok(last);
+      assert.strictEqual(last.type, 'state');
+      if (last.type === 'state') {
+        // Labels/descriptions map straight from grim's title/description —
+        // never re-derived or reordered.
+        assert.deepStrictEqual(
+          [...last.state.registryFields].sort((a, b) => a.key.localeCompare(b.key)),
+          [
+            { key: 'default', title: 'Default registry flag', description: 'Controls whether this registry is the primary one short identifiers expand against.' },
+            { key: 'index', title: 'Package-index locator', description: 'Sets a package-index locator that replaces the `_catalog` registry listing.' },
+            { key: 'oci', title: 'OCI registry ref', description: 'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.' },
+          ],
+        );
+      }
+    } finally {
+      fs.rmSync(path.join(stub.dir, 'registry-fields.json'), { force: true });
+    }
+  });
+
+  test('a failed registry-fields fetch falls back to an empty list — no error surfaced, state still posts normally', async () => {
+    fs.rmSync(path.join(stub.dir, 'registry-fields.json'), { force: true }); // absent: the stub's generic unhandled-call error fires
+    const manager = freshManager();
+    const { panel, posts } = fakeSettingsPanel();
+
+    await manager.onMessage(panel, { type: 'ready', scope: 'global' });
+
+    assert.strictEqual(posts.length, 1, 'no separate writeError/registryFields message — just the one state post');
+    const message = posts[0];
+    assert.ok(message);
+    assert.strictEqual(message.type, 'state');
+    if (message.type === 'state') {
+      assert.strictEqual(message.state.phase, 'ready', 'the failed metadata fetch must not affect the scope phase');
+      assert.deepStrictEqual(message.state.registryFields, []);
     }
   });
 });

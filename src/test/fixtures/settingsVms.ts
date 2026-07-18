@@ -8,7 +8,7 @@ import type {
   WireRegistryEntry,
   SettingsSource,
 } from '../../webview/settings/model';
-import type { ScopesVM, SettingsState } from '../../webview/protocol';
+import type { ScopesVM, SettingsRegistryFieldVM, SettingsState } from '../../webview/protocol';
 
 export function wireConfigEntry(overrides: Partial<WireConfigEntry> = {}): WireConfigEntry {
   return {
@@ -131,6 +131,38 @@ export function scopesVM(overrides: Partial<ScopesVM> = {}): ScopesVM {
   };
 }
 
+/** grim's real `config registry fields` rows (key/title verified live
+ *  against the grim binary; see grim.ts's RegistryFieldEntry). Defaults to
+ *  `[]` in both fixture builders below (the "fetch hasn't happened / failed"
+ *  case) — pass this explicitly for cases exercising grim-sourced labels. */
+export function registryFieldVM(overrides: Partial<SettingsRegistryFieldVM> = {}): SettingsRegistryFieldVM {
+  return {
+    key: 'index',
+    title: 'Package-index locator',
+    description:
+      'Sets a package-index locator that replaces the `_catalog` registry listing. Accepts an `http(s)://` base or a git repository URL. Mutually exclusive with `oci` on the same registry entry.',
+    ...overrides,
+  };
+}
+
+export function registryFieldVMs(): SettingsRegistryFieldVM[] {
+  return [
+    registryFieldVM(),
+    registryFieldVM({
+      key: 'oci',
+      title: 'OCI registry ref',
+      description:
+        'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace. Mutually exclusive with `index` on the same registry entry.',
+    }),
+    registryFieldVM({
+      key: 'default',
+      title: 'Default registry flag',
+      description:
+        'Controls whether this registry is the primary one short identifiers expand against. Only one entry may set this; the first entry wins when none do.',
+    }),
+  ];
+}
+
 export function settingsSource(overrides: Partial<SettingsSource> = {}): SettingsSource {
   return {
     scope: 'project',
@@ -143,6 +175,7 @@ export function settingsSource(overrides: Partial<SettingsSource> = {}): Setting
       wireRegistryEntry(),
       wireRegistryEntry({ alias: 'internal', oci: null, index: 'https://index.acme.io/index.json', default: false }),
     ],
+    registryFields: [],
     ...overrides,
   };
 }
@@ -157,6 +190,7 @@ export function settingsState(overrides: Partial<SettingsState> = {}): SettingsS
     rawConfigPath: '/work/my-app/grimoire.toml',
     groups: [],
     registries: [],
+    registryFields: [],
     ...overrides,
   };
 }

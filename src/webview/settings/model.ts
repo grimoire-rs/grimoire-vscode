@@ -7,6 +7,7 @@ import type {
   SettingsControlType,
   SettingsGroupVM,
   SettingsPhase,
+  SettingsRegistryFieldVM,
   SettingsRegistryVM,
   SettingsRowConstraints,
   SettingsRowVM,
@@ -173,6 +174,10 @@ export interface SettingsSource {
   configExists: boolean;
   entries: WireConfigEntry[];
   registries: WireRegistryEntry[];
+  /** grim's registry-form field metadata, already fetched + mapped host-side
+   *  (see SettingsManager.ensureRegistryFields) — threaded straight through
+   *  to the VM regardless of phase. */
+  registryFields: SettingsRegistryFieldVM[];
 }
 
 /** The four data-driven empty/init phases; 'loading' and 'error' are
@@ -216,6 +221,7 @@ export function buildSettingsVM(source: SettingsSource): SettingsState {
     rawConfigPath: source.configPath,
     groups: ready ? buildGroups(source.entries) : [],
     registries: ready ? source.registries.map(buildRegistryRow) : [],
+    registryFields: source.registryFields,
   };
 }
 

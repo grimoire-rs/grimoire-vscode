@@ -11,6 +11,7 @@ import {
   initArgs,
   isRetryable,
   registryAddArgs,
+  registryFieldsArgs,
   registryListArgs,
   registryRmArgs,
   registryUseArgs,
@@ -20,11 +21,17 @@ import {
   type ContextInfo,
   type ItemsEnvelope,
   type RegistryEntry,
+  type RegistryFieldEntry,
   type Scope,
 } from '../grim';
 import { isProjectNotDiscovered, type ScopeService } from '../scopes';
 import { buildSettingsVM, resolveSettingsPhase, type SettingsSource } from '../webview/settings/model';
-import type { HostToSettings, SettingsState, SettingsToHost } from '../webview/protocol';
+import type {
+  HostToSettings,
+  SettingsRegistryFieldVM,
+  SettingsState,
+  SettingsToHost,
+} from '../webview/protocol';
 import { notifyError } from '../notify';
 import { webviewHtml } from './html';
 
@@ -55,6 +62,12 @@ export class SettingsManager {
   /** One in-flight write per scope, chained so a second edit to the same scope
    *  waits for the first's grim round trip instead of racing it. */
   private writeChains = new Map<Scope, Promise<void>>();
+  /** grim's registry-form field metadata (`config registry fields`) —
+   *  context-free, so fetched ONCE per panel lifetime rather than per scope;
+   *  see ensureRegistryFields. Cached as the in-flight PROMISE (not just its
+   *  resolved value) so a second caller awaiting it while the fetch is still
+   *  running never triggers a second grim spawn. */
+  private registryFieldsPromise: Promise<SettingsRegistryFieldVM[]> | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -80,6 +93,10 @@ export class SettingsManager {
       this.panel.reveal();
       return;
     }
+    // Kicks off the one-shot registry-fields fetch the instant the panel is
+    // created, so it's already in flight (often already resolved) by the
+    // time the webview's 'ready' message asks buildState for it.
+    void this.ensureRegistryFields();
     const panel = vscode.window.createWebviewPanel(
       SETTINGS_VIEW_TYPE,
       'Grimoire Settings',
@@ -192,6 +209,28 @@ export class SettingsManager {
     }
   }
 
+  /** Fetches grim's registry-form field metadata exactly once per panel
+   *  lifetime, memoized on the promise itself (not the resolved value) so a
+   *  concurrent caller awaits the SAME in-flight grim spawn instead of
+   *  starting a second one. Context-free command — 'global' is only a
+   *  scope ScopeService.run requires structurally, it never affects this
+   *  call's output. Any failure (grim missing, older grim predating this
+   *  subcommand, a transient error) falls back to `[]` silently: render.ts's
+   *  hardcoded labels/tooltips cover the whole form on their own, so a failed
+   *  fetch here is never surfaced as an error (spec: no error surfaced). */
+  private ensureRegistryFields(): Promise<SettingsRegistryFieldVM[]> {
+    if (!this.registryFieldsPromise) {
+      this.registryFieldsPromise = this.scopes
+        .run<ItemsEnvelope<RegistryFieldEntry>>(registryFieldsArgs(), 'global')
+        .then((result) =>
+          result.ok
+            ? result.value.items.map((f) => ({ key: f.key, title: f.title, description: f.description }))
+            : [],
+        );
+    }
+    return this.registryFieldsPromise;
+  }
+
   /** One scope's fetch → SettingsState. 'loading' is never constructed here —
    *  the webview shows its own loading UI between switchScope and this post
    *  (same split as SidebarState). 'error'/'no-grim' are host-built literals
@@ -199,6 +238,10 @@ export class SettingsManager {
    *  'project-no-toml'/'global-no-toml' all go through it (model.ts owns that
    *  phase resolution). */
   private async buildState(scope: Scope): Promise<SettingsState> {
+    // Context-free and scope-independent — computed once up front so every
+    // branch below (including the early-return empty/error states) threads
+    // the SAME value through, rather than re-deriving per branch.
+    const registryFields = await this.ensureRegistryFields();
     const folder = this.scopes.projectFolder();
     const projectOpen = folder !== undefined;
     const projectName = folder ? (folder.split(/[\\/]/).pop() ?? null) : null;
@@ -215,6 +258,7 @@ export class SettingsManager {
         configExists: false,
         entries: [],
         registries: [],
+        registryFields,
       });
     }
     const ctx = await this.scopes.run<ContextInfo>(contextArgs(), scope);
@@ -228,6 +272,7 @@ export class SettingsManager {
           configExists: false,
           entries: [],
           registries: [],
+          registryFields,
         });
       }
       // Project scope's `context` FAILS outright (NotDiscovered, code
@@ -246,6 +291,7 @@ export class SettingsManager {
           configExists: false,
           entries: [],
           registries: [],
+          registryFields,
         });
       }
       return {
@@ -257,6 +303,7 @@ export class SettingsManager {
         rawConfigPath: null,
         groups: [],
         registries: [],
+        registryFields,
         error: ctx.message,
       };
     }
@@ -278,6 +325,7 @@ export class SettingsManager {
         configExists,
         entries: [],
         registries: [],
+        registryFields,
       });
     }
     const [list, registries] = await Promise.all([
@@ -293,6 +341,7 @@ export class SettingsManager {
       rawConfigPath: ctx.value.config_path,
       groups: [],
       registries: [],
+      registryFields,
       error: message,
     });
     if (!list.ok) {
@@ -311,6 +360,7 @@ export class SettingsManager {
       configExists,
       entries: list.value.items,
       registries: registries.value.items,
+      registryFields,
     };
     return buildSettingsVM(source);
   }

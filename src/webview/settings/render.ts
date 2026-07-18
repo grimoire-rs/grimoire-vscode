@@ -9,7 +9,13 @@ import { html, nothing, type TemplateResult } from 'lit-html';
 import { repeat } from 'lit-html/directives/repeat.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createMarkdown } from '../markdown';
-import type { SettingsGroupVM, SettingsRegistryVM, SettingsRowVM, SettingsState } from '../protocol';
+import type {
+  SettingsGroupVM,
+  SettingsRegistryFieldVM,
+  SettingsRegistryVM,
+  SettingsRowVM,
+  SettingsState,
+} from '../protocol';
 import {
   addRegistryDraftValid,
   CLOSED_ADD_REGISTRY,
@@ -221,7 +227,7 @@ function renderRegistries(
       ? renderRegistryTable(state.registries)
       : html`<div class="registries-empty">No registries configured</div>`;
   const form = addRegistry.open
-    ? renderAddRegistryForm(addRegistry.draft, addRegistry.helpOpen, addRegistry.error)
+    ? renderAddRegistryForm(state.registryFields, addRegistry.draft, addRegistry.helpOpen, addRegistry.error)
     : nothing;
   // A rejected remove/set-default click is keyed by alias (neither a config
   // row nor the add-registry form), so it surfaces here — the table-level
@@ -242,27 +248,61 @@ function renderRegistries(
 
 /** Per-radio info tooltip copy — verified against
  *  ../grimoire/docs/src/{configuration,concepts,package-index}.md's registries
- *  sections. No dynamic bindings (no new escaping surface). */
+ *  sections. No dynamic bindings (no new escaping surface). STAYS the
+ *  preferred tooltip text over grim's fetched `description` (registryFieldsArgs)
+ *  — grim's copy is terser and would regress this UX; see registryFieldTooltip,
+ *  whose fallback to grim's description only fires for a kind this map doesn't
+ *  (yet) cover. */
 const REGISTRY_HELP_COPY: Record<AddRegistryDraft['kind'], string> = {
   index:
     'Points at a package index — an https:// base or git repository URL — that curates the packages grim can discover. Choose this for curated catalogs like the hosted Grimoire index (the common case).',
   oci: 'Points directly at an OCI registry host or namespace, for example ghcr.io/acme. grim lists and pulls artifacts straight from the registry — choose this for private registries or when you publish artifacts yourself.',
 };
 
-function renderRegistryHelpTooltip(kind: AddRegistryDraft['kind']): TemplateResult {
-  return html`<div class="registry-help-tooltip">${REGISTRY_HELP_COPY[kind]}</div>`;
+/** grim's `title` for a registry-form field (`key` is "oci"/"index"/
+ *  "default"), preferring the fetched metadata over the hardcoded
+ *  `fallback` label — see registryFieldsArgs (grim.ts) and
+ *  SettingsManager.ensureRegistryFields. Falls back when the fetch failed
+ *  (state.registryFields is `[]`) or grim's fields list doesn't (yet)
+ *  include this key (forward-compat with an older grim). */
+function registryFieldLabel(fields: SettingsRegistryFieldVM[], key: string, fallback: string): string {
+  return fields.find((f) => f.key === key)?.title ?? fallback;
 }
 
-function renderRegistryKindOption(draft: AddRegistryDraft, helpOpen: AddRegistryDraft['kind'] | null, kind: AddRegistryDraft['kind'], label: string): TemplateResult {
+/** The registry-kind radio's info tooltip: REGISTRY_HELP_COPY is always the
+ *  preferred text (it reads better than grim's terser `description`); grim's
+ *  description is only a fallback for a kind REGISTRY_HELP_COPY doesn't (yet)
+ *  cover. */
+function registryFieldTooltip(fields: SettingsRegistryFieldVM[], kind: AddRegistryDraft['kind']): string {
+  return REGISTRY_HELP_COPY[kind] ?? fields.find((f) => f.key === kind)?.description ?? '';
+}
+
+function renderRegistryHelpTooltip(fields: SettingsRegistryFieldVM[], kind: AddRegistryDraft['kind']): TemplateResult {
+  return html`<div class="registry-help-tooltip">${registryFieldTooltip(fields, kind)}</div>`;
+}
+
+function renderRegistryKindOption(
+  fields: SettingsRegistryFieldVM[],
+  draft: AddRegistryDraft,
+  helpOpen: AddRegistryDraft['kind'] | null,
+  kind: AddRegistryDraft['kind'],
+  fallbackLabel: string,
+): TemplateResult {
+  const label = registryFieldLabel(fields, kind, fallbackLabel);
   return html`
 <span class="radio-kind-wrap">
   <label class="radio-label"><input type="radio" name="registry-kind" data-field="kind" value="${kind}" ?checked="${draft.kind === kind}" />${label}</label>
   <button class="icon-button form-info-button" data-action="toggle-registry-help" data-kind="${kind}" title="What is this?"><span class="codicon codicon-info"></span></button>
-  ${helpOpen === kind ? renderRegistryHelpTooltip(kind) : nothing}
+  ${helpOpen === kind ? renderRegistryHelpTooltip(fields, kind) : nothing}
 </span>`;
 }
 
-function renderAddRegistryForm(draft: AddRegistryDraft, helpOpen: AddRegistryDraft['kind'] | null, error?: string): TemplateResult {
+function renderAddRegistryForm(
+  fields: SettingsRegistryFieldVM[],
+  draft: AddRegistryDraft,
+  helpOpen: AddRegistryDraft['kind'] | null,
+  error?: string,
+): TemplateResult {
   const errorLine = error
     ? html`<div class="row-error"><span class="codicon codicon-error"></span>${error}</div>`
     : nothing;
@@ -276,15 +316,15 @@ function renderAddRegistryForm(draft: AddRegistryDraft, helpOpen: AddRegistryDra
   <div class="form-field">
     <span class="form-label">Type</span>
     <div class="radio-row">
-      ${renderRegistryKindOption(draft, helpOpen, 'index', 'Index')}
-      ${renderRegistryKindOption(draft, helpOpen, 'oci', 'OCI')}
+      ${renderRegistryKindOption(fields, draft, helpOpen, 'index', 'Index')}
+      ${renderRegistryKindOption(fields, draft, helpOpen, 'oci', 'OCI')}
     </div>
   </div>
   <label class="form-field">
     <span class="form-label">Locator</span>
     <input type="text" class="settings-input form-locator" data-field="locator" placeholder="${LOCATOR_PLACEHOLDER[draft.kind]}" value="${draft.locator}" />
   </label>
-  <label class="checkbox-label"><input type="checkbox" data-field="default" ?checked="${draft.default}" />Set as default registry</label>
+  <label class="checkbox-label"><input type="checkbox" data-field="default" ?checked="${draft.default}" />${registryFieldLabel(fields, 'default', 'Set as default registry')}</label>
   ${errorLine}
   <div class="form-actions">
     <button class="btn primary" data-action="submit-add-registry" ?disabled="${!addRegistryDraftValid(draft)}">Add Registry</button>

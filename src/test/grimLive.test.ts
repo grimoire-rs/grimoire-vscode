@@ -4,11 +4,13 @@ import {
   contextArgs,
   describeArgs,
   fetchArgs,
+  registryFieldsArgs,
   runJson,
   statusArgs,
   type ContextInfo,
   type DigestResult,
   type ItemsEnvelope,
+  type RegistryFieldEntry,
   type StatusItem,
 } from '../grim';
 import { withGlobalFlag } from '../scopes';
@@ -73,6 +75,30 @@ suite('grim live (real binary)', function () {
     );
     assert.ok(result.ok, result.ok ? '' : `status --check not ok: ${JSON.stringify(result)}`);
     assert.ok(Array.isArray(result.value.items), 'status report carries an items array');
+  });
+
+  test('config registry fields is a supported subcommand (release gate), returns oci/index/default rows', async () => {
+    // THE release gate for this surface: a grim predating `config registry
+    // fields` would reject it at clap-parse time (exit 64) — same signal as
+    // the status --check gate above. Context-free (no --offline needed): it
+    // never touches the network.
+    const result = await runJson<ItemsEnvelope<RegistryFieldEntry>>(
+      GRIM,
+      withGlobalFlag(registryFieldsArgs()),
+      { timeoutMs: 15000 },
+    );
+    assert.ok(
+      result.ok,
+      result.ok ? '' : `config registry fields not ok: ${JSON.stringify(result)}`,
+    );
+    if (result.ok) {
+      const keys = result.value.items.map((f) => f.key).sort();
+      assert.deepStrictEqual(keys, ['default', 'index', 'oci']);
+      for (const field of result.value.items) {
+        assert.strictEqual(typeof field.title, 'string');
+        assert.ok(field.title.length > 0);
+      }
+    }
   });
 
   // describe resolves through the registry, so it can touch the network — gated.
