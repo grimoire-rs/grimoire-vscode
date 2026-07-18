@@ -565,6 +565,163 @@ suite('extension integration', () => {
     assert.ok(!argvLines(stub).some((l) => l.startsWith('uninstall')), 'no uninstall was issued');
   });
 
+  // --- switch-to-replacement (package 4) ---
+  const SWITCH_MSG = {
+    type: 'switch' as const,
+    oldKind: 'skill',
+    oldName: 'grim-usage',
+    replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+    scope: 'global' as const,
+  };
+
+  /** Installs a modal-confirm/error-toast stub pair; returns a restore fn plus
+   *  the captured error-toast text (last shown). `confirm` is the modal answer. */
+  function stubSwitchDialogs(confirm: 'Switch' | undefined): {
+    restore: () => void;
+    lastError: () => string;
+  } {
+    const window = vscode.window as unknown as {
+      showWarningMessage: unknown;
+      showErrorMessage: unknown;
+    };
+    const originalWarn = window.showWarningMessage;
+    const originalError = window.showErrorMessage;
+    let error = '';
+    window.showWarningMessage = async () => confirm;
+    window.showErrorMessage = async (message: string) => {
+      error = message;
+      return undefined;
+    };
+    return {
+      restore: () => {
+        window.showWarningMessage = originalWarn;
+        window.showErrorMessage = originalError;
+      },
+      lastError: () => error,
+    };
+  }
+
+  /** Restores the shared add/uninstall stubs to their happy defaults after a
+   *  test canned a failure into one of them. */
+  function restoreAddUninstall(): void {
+    canned(stub, 'add', { kind: 'skill', name: 'demo', pinned: 'x@sha256:1', status: 'added' });
+    fs.rmSync(path.join(stub.dir, 'uninstall.json'), { force: true });
+  }
+
+  test('sidebar switch installs the replacement, then uninstalls the old, in that order', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { kind: 'skill', name: 'new-skill', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'uninstall', { kind: 'skill', name: 'grim-usage', status: 'uninstalled' });
+    const dialogs = stubSwitchDialogs('Switch');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage(SWITCH_MSG);
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    const lines = argvLines(stub);
+    const addIdx = lines.findIndex((l) => l.startsWith('add '));
+    const rmIdx = lines.findIndex((l) => l.startsWith('uninstall '));
+    assert.ok(addIdx >= 0, `add ran: ${lines.join(' | ')}`);
+    assert.ok(rmIdx >= 0, `uninstall ran: ${lines.join(' | ')}`);
+    assert.ok(addIdx < rmIdx, 'add precedes uninstall');
+    assert.ok(lines[addIdx]?.includes('ghcr.io/grimoire-rs/skills/new-skill'));
+    assert.ok(lines[addIdx]?.includes('--global'), 'replacement installed in the same scope');
+    assert.ok(lines[rmIdx]?.includes('skill grim-usage'));
+    assert.ok(lines[rmIdx]?.includes('--global'), 'old removed from the same scope');
+  });
+
+  test('switch aborts (no uninstall) when the replacement install fails', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { error: { code: 'unavailable', exit: 69, message: 'registry down' } });
+    const dialogs = stubSwitchDialogs('Switch');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage(SWITCH_MSG);
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.ok(argvLines(stub).some((l) => l.startsWith('add ')), 'the add was attempted');
+    assert.ok(
+      !argvLines(stub).some((l) => l.startsWith('uninstall ')),
+      'nothing is torn down after an add failure',
+    );
+    assert.ok(dialogs.lastError().includes('registry down'), 'the add error is surfaced');
+  });
+
+  test('switch shows a partial toast when the old artifact cannot be removed', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { kind: 'skill', name: 'new-skill', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'uninstall', { error: { code: 'io', exit: 74, message: 'disk full' } });
+    const dialogs = stubSwitchDialogs('Switch');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage(SWITCH_MSG);
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.ok(argvLines(stub).some((l) => l.startsWith('add ')), 'the replacement was installed');
+    assert.ok(argvLines(stub).some((l) => l.startsWith('uninstall ')), 'the remove was attempted');
+    const error = dialogs.lastError();
+    assert.ok(
+      error.includes('installed ghcr.io/grimoire-rs/skills/new-skill'),
+      `partial toast names the installed replacement: ${error}`,
+    );
+    assert.ok(
+      error.includes('could not remove grim-usage'),
+      `partial toast names the old artifact to remove by hand: ${error}`,
+    );
+  });
+
+  test('switch reports a name-collision (exit 64) distinctly and runs no uninstall', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { error: { code: 'usage', exit: 64, message: 'name conflict' } });
+    const dialogs = stubSwitchDialogs('Switch');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage(SWITCH_MSG);
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.ok(
+      !argvLines(stub).some((l) => l.startsWith('uninstall ')),
+      'a collision tears nothing down',
+    );
+    const error = dialogs.lastError();
+    assert.ok(
+      error.includes('already installed under a different source'),
+      `collision toast is distinct: ${error}`,
+    );
+    assert.ok(error.includes('Resolve it manually'), `collision toast points at manual fix: ${error}`);
+  });
+
+  test('a declined switch modal runs no grim at all', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubSwitchDialogs(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage(SWITCH_MSG);
+    } finally {
+      dialogs.restore();
+    }
+    const lines = argvLines(stub);
+    assert.ok(
+      !lines.some(
+        (l) => l.startsWith('add ') || l.startsWith('uninstall ') || l.startsWith('remove '),
+      ),
+      `declining the modal spawns no mutating grim call: ${lines.join(' | ')}`,
+    );
+  });
+
   test('details uninstall of a bundle-held member notifies without a panel error', async function () {
     this.timeout(20000);
     const api = await activateExtension();

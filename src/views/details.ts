@@ -50,6 +50,7 @@ import { webviewHtml } from './html';
 import { scopeStatuses } from './sidebar';
 import { pickVersion } from './pickVersion';
 import { offerFullUpdate } from './staleLock';
+import { switchToReplacement } from './switchReplacement';
 
 export const DETAILS_VIEW_TYPE = 'grimoire.details';
 
@@ -438,6 +439,26 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
           message.kind === 'bundle' ? 'Removing bundle…' : 'Uninstalling…',
         );
         return;
+      case 'switch': {
+        // Host-authoritative: the single banner button means "all installed
+        // scopes", so derive the scope set + install identity from the snapshot
+        // for repoOf(panel) — never the webview — matching the install posture.
+        // Only `replacedBy` (grim-validated) is taken from the message. Skip
+        // bundle-held rows: their old copy can't be removed here (kept-by-bundle).
+        const snapshot = this.scopes.cachedSnapshot() ?? (await this.scopes.snapshot());
+        const targets = installsFor(repo, scopeStatuses(snapshot))
+          .filter((i) => i.viaBundles.length === 0)
+          .map((i) => ({ scope: i.scope, kind: i.kind, name: i.name }));
+        await switchToReplacement({
+          scopes: this.scopes,
+          targets,
+          replacedBy: message.replacedBy,
+          output: this.output,
+          suspendWhile: this.suspendWhile,
+          onDone: () => this.onDidChange(),
+        });
+        return;
+      }
       case 'openExternal':
         if (/^https?:/.test(message.url)) {
           void vscode.env.openExternal(vscode.Uri.parse(message.url));

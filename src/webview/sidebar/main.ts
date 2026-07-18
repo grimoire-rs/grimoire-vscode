@@ -284,6 +284,15 @@ root.addEventListener('click', (event) => {
         scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
       });
       break;
+    case 'switch':
+      post({
+        type: 'switch',
+        oldKind: target.dataset['kind'] ?? '',
+        oldName: target.dataset['name'] ?? '',
+        replacedBy: target.dataset['replacedBy'] ?? '',
+        scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
+      });
+      break;
     case 'pin':
       post({ type: 'pin', ref: repo });
       break;

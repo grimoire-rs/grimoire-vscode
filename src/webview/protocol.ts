@@ -101,6 +101,10 @@ export type SidebarToHost =
   | { type: 'install'; ref: string; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
   | { type: 'update'; kind: string; name: string; scope: Scope }
+  /** One card-menu "Switch to <replacedBy>" entry: install the deprecated
+   *  artifact's named successor in `scope`, then uninstall the old one. Per
+   *  scope (each installed row has its own entry). */
+  | { type: 'switch'; oldKind: string; oldName: string; replacedBy: string; scope: Scope }
   | { type: 'pin'; ref: string }
   | { type: 'pickVersion'; repo: string }
   | { type: 'openDetails'; repo: string; mode: 'preview' | 'permanent' }
@@ -181,6 +185,12 @@ export type DetailsToHost =
   | { type: 'install'; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
   | { type: 'update'; kind: string; name: string; scope: Scope }
+  /** Deprecation-banner "Switch to replacement": install the named successor in
+   *  every installed scope, then uninstall the old one. The single button
+   *  covers all scopes — the host derives the actual set from its own snapshot
+   *  (installsFor), trusting only `replacedBy` (grim-validated), same
+   *  host-authoritative posture as `install`. */
+  | { type: 'switch'; oldKind: string; oldName: string; replacedBy: string; scope: Scope }
   /** scope preselected by the originating scope row (skips the scope QuickPick). */
   | { type: 'pickVersion'; scope?: Scope }
   | { type: 'openExternal'; url: string }

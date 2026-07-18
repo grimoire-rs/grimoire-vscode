@@ -242,6 +242,23 @@ root.addEventListener('click', (event) => {
         scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
       });
       break;
+    case 'switch': {
+      // The single banner button covers every installed scope; the host derives
+      // the scope set + identity from its own snapshot, so the message carries a
+      // representative install (kind/name/scope, uniform for one artifact) plus
+      // the grim-validated replacement ref from the VM.
+      const install = vm?.installs.find((i) => i.viaBundles.length === 0);
+      if (vm?.replacedBy && install) {
+        vscode.postMessage({
+          type: 'switch',
+          oldKind: install.kind,
+          oldName: install.name,
+          replacedBy: vm.replacedBy,
+          scope: install.scope,
+        });
+      }
+      break;
+    }
     case 'pick-version': {
       // The host derives the target from repoOf(panel); no repo is sent.
       const scope = target.dataset['scope'] as Scope | undefined;

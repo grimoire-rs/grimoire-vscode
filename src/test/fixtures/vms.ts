@@ -268,6 +268,18 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     ),
   );
   add(
+    'card-menu-deprecated-switch',
+    r.renderCardMenu(
+      card({
+        state: 'deprecated',
+        deprecated: 'Renamed.',
+        replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+        installs: [projectInstall],
+      }),
+      true,
+    ),
+  );
+  add(
     'card-context-menu-project-open',
     r.renderCardContextMenu(card({ state: 'installed', installs: [projectInstall] }), true),
   );
@@ -468,6 +480,17 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       detailsVM({
         state: 'installed',
         installs: [bothInstalled('project'), bothInstalled('global')],
+      }),
+    ),
+  );
+  add(
+    'details-deprecated-installed-switch',
+    r.renderDetails(
+      detailsVM({
+        state: 'deprecated',
+        deprecated: 'Renamed.',
+        replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+        installs: [bothInstalled('project')],
       }),
     ),
   );

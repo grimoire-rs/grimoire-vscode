@@ -62,5 +62,7 @@
   "revalidate-checking",
   "revalidate-done",
   "revalidate-failed",
-  "revalidate-null"
+  "revalidate-null",
+  "card-menu-deprecated-switch",
+  "details-deprecated-installed-switch"
 ]

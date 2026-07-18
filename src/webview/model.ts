@@ -521,6 +521,21 @@ export function cardMenuEntries(
         action: 'uninstall',
         data: { kind: install.kind, name: install.name, scope: install.scope },
       });
+      // Deprecated with a named successor → offer a one-click switch next to
+      // Uninstall, per scope (install replacement here, then uninstall this).
+      // Only for direct installs — a via-bundle row's old copy can't be removed.
+      if (card.replacedBy) {
+        entries.push({
+          label: `Switch to ${card.replacedBy} (${label})`,
+          action: 'switch',
+          data: {
+            kind: install.kind,
+            name: install.name,
+            scope: install.scope,
+            replacedBy: card.replacedBy,
+          },
+        });
+      }
     }
   }
   entries.push(

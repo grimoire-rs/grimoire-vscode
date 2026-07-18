@@ -30,6 +30,7 @@ import type { CardVM, HostToSidebar, SidebarState, SidebarToHost } from '../webv
 import { notifyError, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
 import { offerFullUpdate } from './staleLock';
+import { switchToReplacement } from './switchReplacement';
 
 export interface SidebarDelegate {
   openDetails(repo: string, mode: 'preview' | 'permanent'): void;
@@ -160,6 +161,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           `Updating ${message.name}…`,
           message.name,
         );
+        return;
+      case 'switch':
+        // Per-scope menu entry: the card supplied the install identity + the
+        // grim-validated replacement ref (same trust as the install ref above).
+        await switchToReplacement({
+          scopes: this.scopes,
+          targets: [{ scope: message.scope, kind: message.oldKind, name: message.oldName }],
+          replacedBy: message.replacedBy,
+          output: this.output,
+          suspendWhile: (fn) => this.delegate.suspendWhile(fn),
+          onDone: () => this.delegate.refreshAll(),
+        });
         return;
       case 'pin':
         await this.delegate.pin(message.ref);

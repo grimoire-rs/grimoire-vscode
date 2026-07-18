@@ -65,6 +65,36 @@ suite('escaping', () => {
     assert.ok(html.includes(`data-repo="${escaped}"`), 'attribute position stays escaped');
     assert.ok(html.includes(`>${escaped}</a>`), 'text-content position stays escaped');
   });
+
+  test('a hostile replacedBy stays escaped in the card-menu Switch entry (label + data)', async () => {
+    const hostile = '"><script>alert(1)</script>';
+    const html = await litHtml(
+      renderCardMenu(
+        card({
+          state: 'deprecated',
+          deprecated: 'gone',
+          replacedBy: hostile,
+          installs: [
+            {
+              scope: 'global',
+              version: '1',
+              updateAvailable: false,
+              clients: [],
+              state: 'installed',
+              kind: 'skill',
+              name: 'grim-usage',
+              viaBundles: [],
+            },
+          ],
+        }),
+        true,
+      ),
+    );
+    assert.ok(!html.includes('"><script>'));
+    const escaped = '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;';
+    assert.ok(html.includes(`data-replaced-by="${escaped}"`), 'attribute position stays escaped');
+    assert.ok(html.includes(`Switch to ${escaped}`), 'label position stays escaped');
+  });
 });
 
 suite('card rendering', () => {
@@ -459,6 +489,64 @@ suite('card rendering', () => {
     assert.ok(html.includes('Pin Version'));
     assert.ok(html.includes('Copy repo path'));
     assert.ok(!html.includes('Install Globally'));
+    // No replacement → no Switch entry.
+    assert.ok(!html.includes('data-action="switch"'));
+  });
+
+  test('gear menu adds a per-scope Switch entry for a deprecated install with a replacement', async () => {
+    const html = await litHtml(
+      renderCardMenu(
+        card({
+          state: 'deprecated',
+          deprecated: 'Renamed.',
+          replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+          installs: [
+            {
+              scope: 'global',
+              version: '1',
+              updateAvailable: false,
+              clients: [],
+              state: 'installed',
+              kind: 'skill',
+              name: 'grim-usage',
+              viaBundles: [],
+            },
+          ],
+        }),
+        true,
+      ),
+    );
+    assert.ok(html.includes('data-action="switch"'));
+    assert.ok(html.includes('Switch to ghcr.io/grimoire-rs/skills/new-skill (Global)'));
+    assert.ok(html.includes('data-replaced-by="ghcr.io/grimoire-rs/skills/new-skill"'));
+    assert.ok(html.includes('data-name="grim-usage"'));
+    assert.ok(html.includes('data-scope="global"'));
+  });
+
+  test('gear menu omits Switch for a via-bundle install even with a replacement', async () => {
+    const html = await litHtml(
+      renderCardMenu(
+        card({
+          state: 'deprecated',
+          deprecated: 'Renamed.',
+          replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+          installs: [
+            {
+              scope: 'global',
+              version: '1',
+              updateAvailable: false,
+              clients: [],
+              state: 'installed',
+              kind: 'skill',
+              name: 'grim-usage',
+              viaBundles: ['ghcr.io/grimoire-rs/bundles/grim-essentials'],
+            },
+          ],
+        }),
+        true,
+      ),
+    );
+    assert.ok(!html.includes('data-action="switch"'), 'a bundle-held row cannot be torn down');
   });
 
   test('context menu adds Open Details + Copy share link with wired actions', async () => {
@@ -1180,6 +1268,27 @@ suite('details rendering', () => {
     assert.ok(html.includes('deprecation-banner'));
     assert.ok(html.includes('harbor.internal.acme.io/platform/rules/commit-style'));
     assert.ok(html.includes('header-name struck'));
+  });
+
+  test('deprecation banner offers a Switch button only when the artifact is installed', async () => {
+    const base = {
+      state: 'deprecated' as const,
+      deprecated: 'Renamed.',
+      replacedBy: 'ghcr.io/grimoire-rs/skills/new-skill',
+    };
+    const notInstalled = await litHtml(renderDetails(detailsVM(base)));
+    assert.ok(
+      !notInstalled.includes('data-action="switch"'),
+      'no switch affordance when not installed',
+    );
+    const installed = await litHtml(
+      renderDetails(detailsVM({ ...base, installs: [bothInstalled('project')] })),
+    );
+    assert.ok(installed.includes('data-action="switch"'), 'switch button shows once installed');
+    assert.ok(installed.includes('deprecation-switch'));
+    assert.ok(installed.includes('Switch to replacement'));
+    // The read-only preview link stays alongside the button.
+    assert.ok(installed.includes('data-action="open-details"'));
   });
 
   test('bundle contents panel and tab', async () => {

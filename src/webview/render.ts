@@ -163,7 +163,7 @@ function renderMenuEntries(entries: MenuEntry[]): TemplateResult[] {
       return html`<button class="menu-item" disabled title="${ifDefined(entry.title)}">${entry.label}${hint}</button>`;
     }
     const d = entry.data ?? {};
-    return html`<button class="menu-item" data-action="${entry.action}" data-repo="${ifDefined(d.repo)}" data-scope="${ifDefined(d.scope)}" data-kind="${ifDefined(d.kind)}" data-name="${ifDefined(d.name)}">${entry.label}${hint}</button>`;
+    return html`<button class="menu-item" data-action="${entry.action}" data-repo="${ifDefined(d.repo)}" data-scope="${ifDefined(d.scope)}" data-kind="${ifDefined(d.kind)}" data-name="${ifDefined(d.name)}" data-replaced-by="${ifDefined(d.replacedBy)}">${entry.label}${hint}</button>`;
   });
 }
 
@@ -729,10 +729,20 @@ function renderDeprecationBanner(vm: DetailsVM): TemplateResult | typeof nothing
     vm.deprecated !== 'deprecated'
       ? html` <span class="deprecation-msg">${vm.deprecated}</span>`
       : nothing;
+  // Installed + a named successor → a one-click switch (install the replacement
+  // in every installed scope, then uninstall this one). The host derives the
+  // scope set + identity; the read-only preview link above stays. Bundle-held
+  // installs can't be torn down here, so they don't count as switchable.
+  const switchable =
+    vm.replacedBy !== null && vm.installs.some((i) => i.viaBundles.length === 0);
+  const switchButton = switchable
+    ? html`<button class="deprecation-switch" data-action="switch">Switch to replacement</button>`
+    : nothing;
   return html`
 <div class="deprecation-banner">
   <span class="codicon codicon-warning"></span>
   <span>This artifact is deprecated${replacement}. It can still be installed, but will not receive updates.${extra}</span>
+  ${switchButton}
 </div>`;
 }
 

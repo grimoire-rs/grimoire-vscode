@@ -621,6 +621,25 @@ vscode-button.sm {
   text-decoration: underline;
 }
 
+/* One-click switch, pushed to the banner's trailing edge. */
+.deprecation-switch {
+  flex: none;
+  margin-left: auto;
+  align-self: center;
+  white-space: nowrap;
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.deprecation-switch:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
 /* Body: reading column fills, rail fixed at the right edge (design 1c). flex:1
    stretches it to the viewport bottom so the rail divider runs full-height. */
 .details-body {
