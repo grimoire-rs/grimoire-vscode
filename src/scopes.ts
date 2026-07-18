@@ -89,8 +89,11 @@ export function withGlobalFlag(args: string[]): string[] {
  *  never passes `--config`, so this is the only way `context` fails with this
  *  code for project scope; a genuine transient failure (permissions, I/O,
  *  malformed config) always carries a different code. Structural detection
- *  off the error code — never string-matches grim's message text. Pure;
- *  exported for tests. */
+ *  off the error code — never string-matches grim's message text. (grim
+ *  also tags this same failure with `reason: "no-config"`; the `code`
+ *  check below is kept as the discriminator regardless — the two are set
+ *  together for this exact case, so swapping to `reason` would be pure
+ *  churn with no behavior change.) Pure; exported for tests. */
 export function isProjectNotDiscovered(probe: GrimResult<ContextInfo>): boolean {
   return !probe.ok && probe.kind === 'error' && probe.code === 'not-found';
 }

@@ -224,6 +224,12 @@ export type GrimResult<T> =
       // errors). grim tags a stale-lock partial-resolve refusal as
       // reason:"stale-lock"; kept a plain string, never an enum.
       reason?: string;
+      // Additive: grim omits this key unless `reason` is present AND that
+      // reason is retryable (currently only "locked") — never a bare
+      // `false`. See isRetryable, which also treats exit 75 (lock
+      // contention) as retryable regardless of this field, for callers on
+      // older grim builds that predate it.
+      retryable?: boolean;
     };
 
 export interface RunOptions {
@@ -233,7 +239,7 @@ export interface RunOptions {
 }
 
 interface ErrorDoc {
-  error: { code: string; exit: number; message: string; reason?: string };
+  error: { code: string; exit: number; message: string; reason?: string; retryable?: boolean };
 }
 
 function isErrorDoc(doc: unknown): doc is ErrorDoc {
@@ -270,9 +276,24 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
       message: doc.error.message,
       // Additive: surface `reason` verbatim when present, else leave undefined.
       ...(doc.error.reason !== undefined ? { reason: doc.error.reason } : {}),
+      // Additive: surface `retryable` verbatim when present, else leave undefined.
+      ...(doc.error.retryable !== undefined ? { retryable: doc.error.retryable } : {}),
     };
   }
   return { ok: true, value: doc as T };
+}
+
+/** True when a failed grim call is worth retrying once: grim tagged the
+ *  error itself (`retryable: true`, currently only the "locked" reason), or
+ *  the exit code is 75 (lock contention, `sysexits.h` EX_TEMPFAIL) — the
+ *  same signal callers checked directly before grim started emitting
+ *  `retryable`. Checking the exit code too keeps this correct on older grim
+ *  builds that predate the field, and even when `retryable` is present it's
+ *  only ever `true` (grim never sends a bare `false`), so an explicit
+ *  `false` here is treated as "not tagged" and exit 75 still wins. Pure;
+ *  exported for tests. */
+export function isRetryable(result: { exitCode: number; retryable?: boolean }): boolean {
+  return result.retryable === true || result.exitCode === 75;
 }
 
 /** Runs grim with `--format json` appended and parses the report. Builders

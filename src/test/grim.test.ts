@@ -12,6 +12,7 @@ import {
   fetchArgs,
   initArgs,
   installArgs,
+  isRetryable,
   parseReport,
   registryAddArgs,
   registryListArgs,
@@ -242,6 +243,21 @@ suite('grim report parsing', () => {
     assert.strictEqual(result.reason, 'some-future-reason');
   });
 
+  test('retryable is surfaced when present', () => {
+    const doc =
+      '{"error":{"code":"data","exit":65,"message":"partial-resolve refused","reason":"locked","retryable":true}}';
+    const result = parseReport(doc, 65, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.retryable, true);
+  });
+
+  test('absent retryable stays undefined', () => {
+    const doc = '{"error":{"code":"auth","exit":80,"message":"401 from registry"}}';
+    const result = parseReport(doc, 80, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.retryable, undefined);
+  });
+
   test('clap usage error (exit 64, no JSON) maps to usage', () => {
     const result = parseReport('', 64, "error: unrecognized subcommand 'describe'");
     assert.ok(!result.ok && result.kind === 'error');
@@ -412,5 +428,23 @@ suite('grim report parsing', () => {
     } finally {
       fs.rmSync(scriptPath, { force: true });
     }
+  });
+});
+
+suite('isRetryable', () => {
+  test('retryable:true + non-75 exit is retryable', () => {
+    assert.strictEqual(isRetryable({ exitCode: 65, retryable: true }), true);
+  });
+
+  test('retryable absent + exit 75 is retryable', () => {
+    assert.strictEqual(isRetryable({ exitCode: 75 }), true);
+  });
+
+  test('retryable:false + exit 75 is still retryable (exit code wins)', () => {
+    assert.strictEqual(isRetryable({ exitCode: 75, retryable: false }), true);
+  });
+
+  test('retryable absent + other exit is not retryable', () => {
+    assert.strictEqual(isRetryable({ exitCode: 65 }), false);
   });
 });

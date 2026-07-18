@@ -9,6 +9,7 @@ import {
   configUnsetArgs,
   contextArgs,
   initArgs,
+  isRetryable,
   registryAddArgs,
   registryListArgs,
   registryRmArgs,
@@ -317,8 +318,9 @@ export class SettingsManager {
   /** Runs one grim write for `scope`, chained after any write already in
    *  flight for that same scope. Every write is wrapped in suspendWhile (its
    *  own watcher events are redundant with the state repost it ends in), and
-   *  a lock-contention failure (exit 75) gets one retry after a short delay.
-   *  Success re-fetches + reposts state via repostAfterChange (a single
+   *  a retryable failure (see isRetryable — lock contention, exit 75) gets
+   *  one retry after a short delay. Success re-fetches + reposts state via
+   *  repostAfterChange (a single
    *  fetch, see its own doc); failure posts writeError only — nothing was
    *  written, so no state repost follows (protocol contract, stage 2
    *  handoff). */
@@ -345,7 +347,7 @@ export class SettingsManager {
   ): Promise<void> {
     await this.suspendWhile(async () => {
       let result = await this.scopes.run<ConfigWriteResult>(args, scope);
-      if (!result.ok && result.kind === 'error' && result.exitCode === 75) {
+      if (!result.ok && result.kind === 'error' && isRetryable(result)) {
         await sleep(LOCK_RETRY_DELAY_MS);
         result = await this.scopes.run<ConfigWriteResult>(args, scope);
       }
