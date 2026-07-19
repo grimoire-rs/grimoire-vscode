@@ -11,6 +11,7 @@ export default tseslint.config(
       '.vscode-test/**',
       'coverage/**',
       'esbuild.js',
+      'esbuild.tests.js',
     ],
   },
   js.configs.recommended,
@@ -18,11 +19,11 @@ export default tseslint.config(
   prettier,
   {
     rules: {
-      curly: 'warn',
-      eqeqeq: ['warn', 'always'],
-      'no-throw-literal': 'warn',
+      curly: 'error',
+      eqeqeq: ['error', 'always'],
+      'no-throw-literal': 'error',
       '@typescript-eslint/naming-convention': [
-        'warn',
+        'error',
         {
           selector: 'import',
           format: ['camelCase', 'PascalCase'],

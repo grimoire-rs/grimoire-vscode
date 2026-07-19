@@ -929,7 +929,7 @@ export const INTERACTIVE_SELECTOR = '[data-action], a, button, .tab';
 export function isInteractiveTarget(
   el: { closest(selector: string): unknown } | null,
 ): boolean {
-  return el != null && el.closest(INTERACTIVE_SELECTOR) != null;
+  return (el?.closest(INTERACTIVE_SELECTOR) ?? null) !== null;
 }
 
 /** Merges describe/search/fetch sources into the details view model. */

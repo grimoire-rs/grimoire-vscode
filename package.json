@@ -238,7 +238,7 @@
     "build:prod": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src",
+    "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run lint && npm run check-types && npm run build",
