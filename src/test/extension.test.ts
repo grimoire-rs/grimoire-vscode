@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
+  grimOnPath,
   isProjectNotDiscovered,
   parseDeclaredRefs,
   projectSearchable,
@@ -21,6 +22,7 @@ import type {
 } from '../webview/protocol';
 import type { GrimoireApi } from '../extension';
 import type { ContextInfo, GrimResult, Scope } from '../grim';
+import { DEFAULT_EXECUTABLE } from '../config';
 
 const isWindows = process.platform === 'win32';
 
@@ -2474,6 +2476,53 @@ suite('project probe failure (run override)', () => {
       snap.error?.includes("unexpected argument '--check'"),
       `snapshot.error carries the status failure: ${snap.error}`,
     );
+  });
+});
+
+suite('executable resolution', () => {
+  test('grimOnPath: executable file on PATH found; empty/dir-only PATH rejected', function () {
+    if (isWindows) {
+      this.skip(); // exe-bit + PATHEXT semantics; resolution order is covered via the seam below
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-'));
+    fs.writeFileSync(path.join(dir, 'grim'), '#!/bin/sh\n', { mode: 0o755 });
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-empty-'));
+    // A DIRECTORY named grim must not count as an executable (X_OK passes on dirs).
+    const dirTrap = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-trap-'));
+    fs.mkdirSync(path.join(dirTrap, 'grim'));
+    assert.strictEqual(grimOnPath({ PATH: dir }), true);
+    assert.strictEqual(grimOnPath({ PATH: `${empty}${path.delimiter}${dir}` }), true);
+    assert.strictEqual(grimOnPath({ PATH: empty }), false);
+    assert.strictEqual(grimOnPath({ PATH: dirTrap }), false);
+    assert.strictEqual(grimOnPath({}), false);
+  });
+
+  test('resolveExecutable: PATH grim wins over the bundled copy; bundled is the no-PATH fallback', async () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-storage-'));
+    const scopes = new ScopeService(vscode.Uri.file(storage), recordingOutput([]));
+    fs.mkdirSync(path.dirname(scopes.bundledExecutablePath()), { recursive: true });
+    fs.writeFileSync(scopes.bundledExecutablePath(), '#!/bin/sh\n', { mode: 0o755 });
+    // The resolution under test is the default-setting branch — park any
+    // explicit executable another suite left in the global setting.
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    const prev = cfg.inspect<string>('path.executable')?.globalValue;
+    await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
+    try {
+      scopes.pathHasGrim = () => true;
+      assert.strictEqual(
+        scopes.resolveExecutable(),
+        DEFAULT_EXECUTABLE,
+        'a user-managed PATH grim must win over the extension-managed copy',
+      );
+      scopes.pathHasGrim = () => false;
+      assert.strictEqual(
+        scopes.resolveExecutable(),
+        scopes.bundledExecutablePath(),
+        'without a PATH grim the bundled copy is the fallback',
+      );
+    } finally {
+      await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
+    }
   });
 });
 

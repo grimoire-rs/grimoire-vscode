@@ -68,6 +68,37 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
   return declared;
 }
 
+/** True when a `grim` executable exists somewhere on PATH. Used to keep the
+ *  extension-managed copy (globalStorage/bin) a pure FALLBACK: a user-managed
+ *  grim on PATH always wins — preferring the bundled copy shadowed a current
+ *  PATH grim with a stale one (the silent `status --check` failure). Scans
+ *  PATH directly instead of spawning `which`/`where`; early-returns on the
+ *  first hit, so the full scan (slow /mnt/c entries under WSL included) only
+ *  runs in the no-grim-anywhere state. Pure over `env`; exported for tests. */
+export function grimOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
+  const exts =
+    process.platform === 'win32' ? (env['PATHEXT'] ?? '.EXE;.CMD;.BAT;.COM').split(';') : [''];
+  for (const dir of (env['PATH'] ?? '').split(path.delimiter)) {
+    if (!dir) {
+      continue;
+    }
+    for (const ext of exts) {
+      try {
+        const candidate = path.join(dir, `grim${ext}`);
+        fs.accessSync(candidate, fs.constants.X_OK);
+        // X_OK passes on directories too — a dir named `grim` on PATH is not
+        // an executable.
+        if (fs.statSync(candidate).isFile()) {
+          return true;
+        }
+      } catch {
+        // not here — keep scanning
+      }
+    }
+  }
+  return false;
+}
+
 /** Prepends the top-level `--global` flag before the subcommand. grim documents
  *  `--global` as a global option ("Operate on the global scope rather than the
  *  discovered project"); placing it before the subcommand is the canonical
@@ -129,14 +160,24 @@ export class ScopeService {
     return this.lastSnapshot;
   }
 
+  /** Test seam for the PATH probe (see grimOnPath) — instance-overridable the
+   *  same way tests override run(). */
+  pathHasGrim: () => boolean = () => grimOnPath();
+
   /**
    * Resolves the grim executable: explicit setting wins; the default `grim`
-   * falls back to the copy installed into globalStorage/bin when present.
+   * uses PATH when a grim exists there, and only otherwise falls back to the
+   * extension-managed copy in globalStorage/bin. The bundled copy is a
+   * fallback for machines with no grim at all — it must never shadow a
+   * user-managed PATH install (it goes stale independently of it).
    */
   resolveExecutable(): string {
     const configured = readConfig().executable;
     if (configured !== DEFAULT_EXECUTABLE) {
       return configured;
+    }
+    if (this.pathHasGrim()) {
+      return configured; // 'grim' — the spawn resolves it via PATH
     }
     const bundled = this.bundledExecutablePath();
     if (bundled && fs.existsSync(bundled)) {
