@@ -6,7 +6,7 @@ All notable changes to the Grimoire VS Code extension.
 
 ### Added
 
-- **Settings editor tab** — the $(settings-gear) icon on the marketplace view
+- **Settings editor tab** — _Open Settings_ in the marketplace view's `…` menu
   (or `Grimoire: Open Settings`) opens a Project / Global peer-tab editor for
   every `grim config` key (registry, clients, TUI defaults, …) plus registry
   add/remove/set-default, read/written directly through `grim config` /
@@ -17,6 +17,15 @@ All notable changes to the Grimoire VS Code extension.
   grim gets a link to the release page instead. Configurable via
   `grimoire.checkForUpdates` (default on); "Skip This Version" suppresses that
   version. (#34)
+
+### Changed
+
+- **Slimmer sidebar toolbar** — the six title-bar icons are reduced to a
+  $(feedback) menu (Report Bug / Request Feature) plus an _Update All_ icon
+  that appears only while updates are pending; _Refresh Catalog_,
+  _Check for Updates_, _Update All_, and _Open Settings_ moved into the
+  native `…` overflow menu. Catalog refresh and the update check also run
+  automatically, so the toolbar icons were redundant for everyday use.
 
 ### Removed
 

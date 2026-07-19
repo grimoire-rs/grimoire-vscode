@@ -17,7 +17,9 @@ AI artifacts your tools rely on.
   MCP / Bundle).
 - **Stay current** — the **Updates** tab lists every installed artifact with a
   newer version available (the tab and the activity-bar icon carry the count).
-  **Update All** in the sidebar's title bar updates them in one click.
+  An **Update All** icon appears in the sidebar's title bar whenever updates
+  are pending and updates them in one click (also always available in the
+  title bar's `…` menu).
 - **See what you have** — the **Installed** tab lists your installed artifacts,
   with a **Project / Global** toggle to switch which scope's list you're looking
   at. A status line pinned below the list shows when the catalog was last

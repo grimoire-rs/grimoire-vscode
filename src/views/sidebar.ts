@@ -345,8 +345,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   /** Native view badge (outdated count): it rolls up into the activity-bar
    *  icon's number, which must mean "updates available", not "artifacts
-   *  installed". Cleared at zero. */
+   *  installed". Cleared at zero. Also drives the `grimoire.updatesAvailable`
+   *  context key that shows/hides the conditional Update All toolbar icon —
+   *  kept in this single choke point so badge and icon can never disagree. */
   private setBadge(count: number): void {
+    void vscode.commands.executeCommand('setContext', 'grimoire.updatesAvailable', count > 0);
     if (!this.view) {
       return;
     }

@@ -2122,6 +2122,43 @@ suite('extension integration', () => {
   });
 });
 
+// Static contributes-shape check (no extension host needed): keeps the
+// sidebar toolbar down to the feedback submenu + conditional Update All
+// icon, with refresh/check-updates/update-all/settings overflowing into
+// VS Code's native "..." menu.
+suite('view/title toolbar contributions (package.json)', () => {
+  interface MenuEntry {
+    command?: string;
+    submenu?: string;
+    group?: string;
+  }
+  interface PackageJson {
+    contributes: {
+      menus: {
+        'view/title': MenuEntry[];
+        'grimoire.feedback': MenuEntry[];
+      };
+    };
+  }
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'),
+  ) as PackageJson;
+
+  test('only the feedback submenu + conditional Update All stay in navigation; feedback submenu lists both commands', () => {
+    const navEntries = pkg.contributes.menus['view/title'].filter((entry) =>
+      (entry.group ?? '').startsWith('navigation'),
+    );
+    assert.deepStrictEqual(
+      navEntries.map((entry) => entry.submenu ?? entry.command),
+      ['grimoire.feedback', 'grimoire.updateAll'],
+    );
+    assert.deepStrictEqual(
+      pkg.contributes.menus['grimoire.feedback'].map((entry) => entry.command),
+      ['grimoire.reportBug', 'grimoire.requestFeature'],
+    );
+  });
+});
+
 suite('parseDeclaredRefs', () => {
   test('reads artifact tables only', () => {
     const toml = `

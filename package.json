@@ -130,37 +130,54 @@
         "icon": "$(feedback)"
       }
     ],
+    "submenus": [
+      {
+        "id": "grimoire.feedback",
+        "label": "Feedback",
+        "icon": "$(feedback)"
+      }
+    ],
     "menus": {
       "view/title": [
         {
-          "command": "grimoire.reportBug",
+          "submenu": "grimoire.feedback",
           "when": "view == grimoire.marketplace",
           "group": "navigation@1"
         },
         {
-          "command": "grimoire.requestFeature",
-          "when": "view == grimoire.marketplace",
+          "command": "grimoire.updateAll",
+          "when": "view == grimoire.marketplace && grimoire.updatesAvailable",
           "group": "navigation@2"
         },
         {
           "command": "grimoire.refresh",
           "when": "view == grimoire.marketplace",
-          "group": "navigation@3"
+          "group": "1_sync@1"
         },
         {
           "command": "grimoire.checkArtifactUpdates",
           "when": "view == grimoire.marketplace",
-          "group": "navigation@4"
+          "group": "1_sync@2"
         },
         {
           "command": "grimoire.updateAll",
           "when": "view == grimoire.marketplace",
-          "group": "navigation@5"
+          "group": "1_sync@3"
         },
         {
           "command": "grimoire.openSettings",
           "when": "view == grimoire.marketplace",
-          "group": "navigation@6"
+          "group": "9_settings@1"
+        }
+      ],
+      "grimoire.feedback": [
+        {
+          "command": "grimoire.reportBug",
+          "group": "1_feedback@1"
+        },
+        {
+          "command": "grimoire.requestFeature",
+          "group": "1_feedback@2"
         }
       ],
       "commandPalette": [
