@@ -233,7 +233,15 @@ export class ScopeService {
   private async scopeSnapshot(
     scope: Scope,
     options: { check?: boolean } = {},
-  ): Promise<{ probe: GrimResult<ContextInfo>; snapshot: ScopeSnapshot | undefined }> {
+  ): Promise<{
+    probe: GrimResult<ContextInfo>;
+    snapshot: ScopeSnapshot | undefined;
+    /** Set when the status call ran and failed — install state is UNKNOWN, not
+     *  empty. Callers must surface it: rendering the empty `status` as "nothing
+     *  installed" flips every card to Install (e.g. a stale binary rejecting
+     *  `status --check` with exit 64). */
+    statusError?: string;
+  }> {
     const ctx = await this.run<ContextInfo>(contextArgs(), scope);
     if (!ctx.ok) {
       return { probe: ctx, snapshot: undefined };
@@ -252,6 +260,12 @@ export class ScopeService {
     return {
       probe: ctx,
       snapshot: { context: ctx.value, status: status?.ok ? status.value.items : [], declared },
+      ...(status && !status.ok
+        ? {
+            statusError:
+              status.kind === 'not-found' ? 'grim executable not found' : status.message,
+          }
+        : {}),
     };
   }
 
@@ -277,6 +291,12 @@ export class ScopeService {
       snapshot.global = global.snapshot;
     } else if (!global.probe.ok && global.probe.kind === 'error') {
       snapshot.error = global.probe.message;
+    }
+    // A failed status call means install state is unknown, not empty — surface
+    // it so the sidebar shows an error instead of "Install" on installed cards.
+    const statusError = global.statusError ?? project?.statusError;
+    if (snapshot.error === undefined && statusError !== undefined) {
+      snapshot.error = statusError;
     }
     if (project?.snapshot) {
       snapshot.project = project.snapshot;

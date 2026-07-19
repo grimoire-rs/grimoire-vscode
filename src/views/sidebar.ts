@@ -321,24 +321,37 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (gen !== this.refreshGen) {
       return; // superseded during logo enrichment — don't clobber newer state
     }
-    this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
-    this.setBadge(installed.filter((c) => c.state === 'outdated').length);
-    if (catalogState.error !== undefined) {
+    // A failed status call (snap.error) means install state is unknown — the
+    // cards were built from an EMPTY status list and would lie "Install" on
+    // installed artifacts, so it surfaces as the same error phase a catalog
+    // failure does. Those lying cards also must not become lastReady (a late
+    // logo repost would repaint them as 'ready' over the error state); the
+    // badge stays untouched too — clearing it off empty data is the same lie
+    // in miniature. Catalog errors keep updating lastReady as before: their
+    // cards are built from a GOOD status plus the cached catalog.
+    if (snap.error === undefined) {
+      this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
+    }
+    const error = catalogState.error ?? snap.error;
+    if (snap.error === undefined) {
+      this.setBadge(installed.filter((c) => c.state === 'outdated').length);
+    }
+    if (error !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
-      // catalog error; notifyError's dedupe collapses them to one popup.
-      notifyError(`Grimoire: ${catalogState.error}`, { dedupe: true });
+      // error; notifyError's dedupe collapses them to one popup.
+      notifyError(`Grimoire: ${error}`, { dedupe: true });
     }
     this.postState({
-      phase: catalogState.error !== undefined ? 'error' : 'ready',
+      phase: error !== undefined ? 'error' : 'ready',
       items: cards,
       installed,
-      ...(catalogState.error !== undefined ? { error: catalogState.error } : {}),
+      ...(error !== undefined ? { error } : {}),
       syncedAt: catalogState.syncedAt,
       snapshot: snap,
     });
     // Browse results drive the prefetch (top-K handled by the prefetcher).
     // Skip on error results.
-    if (catalogState.error === undefined) {
+    if (error === undefined) {
       this.delegate.prefetch(cards.map((c) => c.repo));
     }
   }

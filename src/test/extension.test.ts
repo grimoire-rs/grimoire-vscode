@@ -448,6 +448,52 @@ suite('extension integration', () => {
     }
   });
 
+  test('a failed status surfaces as an error state, never as "Install" on installed cards', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // The reported bug: Check for Updates against a grim without `status
+    // --check` (exit 64) silently emptied the status list, flipping every
+    // installed card to "Install" and clearing the badge. The failure must
+    // surface as the error phase instead (same surface as a catalog error).
+    const originalRun = api.scopes.run;
+    try {
+      api.scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
+        if (args[0] === 'context') {
+          return { ok: true, value: contextDoc({ config_exists: true }) } as GrimResult<T>;
+        }
+        if (args[0] === 'status') {
+          return {
+            ok: false,
+            kind: 'error',
+            code: 'usage',
+            exitCode: 64,
+            message: "unexpected argument '--check' found",
+          } as GrimResult<T>;
+        }
+        return {
+          ok: true,
+          value: { items: [searchItem('ghcr.io/grimoire-rs/skills/installed-one')] },
+        } as GrimResult<T>;
+      }) as typeof api.scopes.run;
+      await api.providers.sidebar.refresh({ check: true });
+      const last = states.at(-1);
+      assert.ok(last, 'no state was posted');
+      assert.strictEqual(
+        last.phase,
+        'error',
+        'a failed status must surface as an error, not render cards off an empty status list',
+      );
+      assert.ok(
+        last.error?.includes('unexpected argument'),
+        `the status failure message rides the state: ${last.error}`,
+      );
+    } finally {
+      api.scopes.run = originalRun;
+    }
+  });
+
   test('details buildVM threads {check} into its own snapshot (checked refresh path)', async function () {
     this.timeout(15000);
     const api = await activateExtension();
@@ -2402,6 +2448,32 @@ suite('project probe failure (run override)', () => {
     const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
     scopes.run = scopedRun(notDiscovered);
     assert.strictEqual(await scopes.projectNeedsInit(), true);
+  });
+
+  test('snapshot() surfaces a failed status as snapshot.error instead of silently emptying installs', async () => {
+    const scopes = new ScopeService(vscode.Uri.file(os.tmpdir()), recordingOutput([]));
+    // The real-world shape: a stale grim binary rejecting `status --check`
+    // (clap usage error, exit 64). The old behavior mapped this to status: []
+    // — every card then lied "Install" for artifacts that are installed.
+    scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
+      if (args[0] === 'context') {
+        return { ok: true, value: probeContext(true) } as GrimResult<T>;
+      }
+      return {
+        ok: false,
+        kind: 'error',
+        code: 'usage',
+        exitCode: 64,
+        message: "unexpected argument '--check' found",
+      } as GrimResult<T>;
+    }) as typeof scopes.run;
+    const snap = await scopes.snapshot({ check: true });
+    assert.ok(snap.global, 'the scope snapshot itself survives a status failure');
+    assert.deepStrictEqual(snap.global.status, [], 'status stays empty (unknown), never fabricated');
+    assert.ok(
+      snap.error?.includes("unexpected argument '--check'"),
+      `snapshot.error carries the status failure: ${snap.error}`,
+    );
   });
 });
 
