@@ -15,7 +15,7 @@ tasks:
     desc: Full quality gate (lint + type-check + build + tests)
     cmds:
       - npm run check
-      - npm test
+      - npm run test:headless
 
   checkpoint:
     desc: Create or amend the rolling `Checkpoint` WIP commit

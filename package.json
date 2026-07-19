@@ -2,7 +2,7 @@
   "name": "grimoire-vscode",
   "displayName": "Grimoire Marketplace",
   "description": "Marketplace for AI artifacts — search, install, and manage grim skills, rules, agents, MCP servers, and bundles.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "grimoire-rs",
   "license": "Apache-2.0",
   "engines": {
@@ -245,6 +245,7 @@
     "compile-tests": "node esbuild.tests.js",
     "pretest": "npm run compile-tests && npm run build && npm run lint",
     "test": "vscode-test --coverage --coverage-reporter=text --coverage-reporter=lcov",
+    "test:headless": "xvfb-run -a npm test",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
