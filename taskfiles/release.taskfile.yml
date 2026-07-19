@@ -14,14 +14,14 @@ tasks:
   # reviews and commits.
   #
   # Version selection:
-  #   task release:prepare BUMP=auto                 # git-cliff picks the bump from commits
-  #   task release:prepare BUMP=minor                # force a bump level
+  #   task release:prepare                 # interactive menu: auto | patch | minor | major
+  #   task release:prepare BUMP=minor      # skip the menu, force a bump level
   #   task release:prepare BUMP=auto VERSION=1.4.0   # pin an exact version (v prefix optional)
   #
-  # BUMP is a required enum. This repo has no .taskrc.yml, so there is no
-  # interactive menu — pass BUMP on the CLI.
+  # BUMP is a required enum: with interactive mode on (.taskrc.yml) and a TTY it
+  # renders a selection menu; on CI / no TTY it must be passed on the CLI.
   prepare:
-    desc: 'Prepare a release (BUMP=auto|patch|minor|major, or VERSION=x.y.z)'
+    desc: 'Prepare a release (interactive: pick auto|patch|minor|major; or BUMP=<level> / VERSION=x.y.z)'
     requires:
       vars:
         - name: BUMP
