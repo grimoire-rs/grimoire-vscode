@@ -2,82 +2,60 @@
 
 All notable changes to the Grimoire VS Code extension.
 
-## [Unreleased]
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0] - 2026-07-19
 
 ### Added
 
-- **Settings editor tab** — _Open Settings_ in the marketplace view's `…` menu
-  (or `Grimoire: Open Settings`) opens a Project / Global peer-tab editor for
-  every `grim config` key (registry, clients, TUI defaults, …) plus registry
-  add/remove/set-default, read/written directly through `grim config` /
-  `grim config registry` — no separate copy of the config to fall out of sync.
-- **Daily grim update check** — checks GitHub once a day for a newer `grim`
-  release. When Grimoire manages the binary (auto-installed into extension
-  storage) the toast offers a one-click update; a PATH- or manually-installed
-  grim gets a link to the release page instead. Configurable via
-  `grimoire.checkForUpdates` (default on); "Skip This Version" suppresses that
-  version. (#34)
+- Init banner becomes a notification, floating top-right in browse *(sidebar)*
+- Daily grim update check with managed-binary update offer *(installer)*
+- Render header description as inline markdown *(details)*
+- Add config/registry argv builders and wire types *(grim)*
+- Add Settings panel, retire grimoire.showDeprecated *(views)* **BREAKING**
+- **Migration:** the grimoire.showDeprecated setting is removed. Set options.show_deprecated via the new Settings panel (or `grim config set options.show_deprecated <true|false>`) instead.
+- Parse retryable on error envelope; add isRetryable *(grim)*
+- Adopt status --check with honest update_available *(status)*
+- Replaced-by link and client-drift badge on cards *(sidebar)*
+- Typed update report with reap surfacing *(update)*
+- Constraints-driven chip validation *(settings)*
+- Registry field labels from grim metadata *(settings)*
+- One-click switch to replacement artifact *(views)*
+- Adopt config set --dry-run marker *(settings)*
+- Slim sidebar toolbar to overflow menus *(views)*
 
 ### Changed
 
-- **Slimmer sidebar toolbar** — the six title-bar icons are reduced to a
-  $(feedback) menu (Report Bug / Request Feature) plus an _Update All_ icon
-  that appears only while updates are pending; _Refresh Catalog_,
-  _Check for Updates_, _Update All_, and _Open Settings_ moved into the
-  native `…` overflow menu. Catalog refresh and the update check also run
-  automatically, so the toolbar icons were redundant for everyday use.
+- Drop builder-level --global; run() owns scope flags *(grim)*
 
-### Removed
+### Documentation
 
-- **`grimoire.showDeprecated` setting** — superseded by the Settings tab's
-  `options.show_deprecated` (a `grim config` key, the same value the CLI and
-  TUI honor). `grim search` now honors your grim config directly instead of
-  the VS Code-side override the extension used to pass on every search.
+- Record resolutions for the three open items *(todo)*
+- Correct item-1 resolution (scrollbar, not banner border) *(todo)*
+- Correct exit-75 comment framing; note replacedBy menu key *(grim)*
 
 ### Fixed
 
-- **Refresh Catalog now bypasses grim's catalog cache** — the command forces
-  `grim search --refresh`, so newly published artifacts appear immediately
-  instead of waiting out grim's 1-hour on-disk cache. Watcher- and config-driven
-  refreshes stay on the cheap cached path. The "Refreshing…" footer now shows
-  reliably and can't be cancelled by a background logo repost, and an older
-  in-flight refresh can no longer overwrite a newer one's results. (#38)
+- Pass the query as one positional and lead with --global *(search)*
+- Browse searches global scope when the project is unconfigured *(catalog)*
+- Notice above the tab bar + workbench-style results scrollbar *(sidebar)*
+- Results scroll inside vscode-scrollable (workbench scrollbar) *(sidebar)*
+- Position menus fixed on root so the scroll viewport can't clip them *(sidebar)*
+- Close menus on every results scroll via the shadow scroller *(sidebar)*
+- Failed project probe must not read as unconfigured *(scopes)*
+- Force --refresh on explicit refresh; footer shows reliably *(sidebar)*
+- Protect config/registry argv from leading-hyphen values *(grim)*
+- Stop treating grim's NotDiscovered as a probe failure *(scopes)*
+- Pin loading status to footer, match init-offer design *(sidebar)*
 
-## [0.1.0]
+## [0.1.0] - 2026-07-16
 
-First release.
+### Fixed
 
-### Requires
+- Rename extension to grimoire-vscode
+- Display name 'Grimoire Marketplace'
 
-- grim newer than the 0.8.4 release — the first grim with the v2
-  description-companion interface (`grim describe` reporting `has_description`,
-  and `grim fetch --description` / `--digest-only`).
-  <!-- TODO(release): pin the exact minimum grim version once that release is cut. -->
-  The extension can auto-install grim from GitHub. Binaries predating the v2
-  surface show in-tree content only and surface their real errors (no compat shims).
+[0.2.0]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.1.0..v0.2.0
+[0.1.0]: https://github.com/grimoire-rs/grimoire-vscode/tree/v0.1.0
 
-### Added
-
-- **Browse & Installed marketplace UI** — search the artifact catalog across all
-  configured registries; filter by kind (skill / rule / agent / mcp / bundle) with
-  badge chips, by registry, or by installed state. The Installed view groups your
-  artifacts by scope with pending updates, _Update All_, and deprecation flags.
-- **Details editor tab** — README, CONTENTS (bundle members / source / manifest),
-  and CHANGELOG tabs, plus a right rail of package metadata (registry, repository,
-  tags, published date, revision), resources, and keywords. Single-click opens a
-  reusable preview tab; double-click pins it, and links between artifacts navigate
-  in place.
-- **Install / update / uninstall per scope** — project (`grimoire.toml`) and global
-  (`~/.grimoire`) at the same time; the project copy shadows the global one.
-  Members installed by a bundle are flagged and removed via their bundle. A version
-  picker installs, downgrades, or pins a specific tag.
-- **Description-companion content, cached** — README, CHANGELOG, and logo published
-  alongside an artifact are fetched inline; a reopened details panel paints instantly
-  from an on-disk cache (stale-while-revalidate) with a top-right refresh indicator,
-  and top browse results are prefetched so opens paint immediately and card logos
-  pop in.
-- **grim auto-install** — offers to download a checksum-verified grim release from
-  GitHub when none is on your PATH.
-- **Live refresh** — watches project + global `grimoire.toml` / `grimoire.lock` and
-  refreshes the views when grim state changes (CLI or TUI operations).
-- **Shareable `vscode://` deep links** to any artifact's details panel.
