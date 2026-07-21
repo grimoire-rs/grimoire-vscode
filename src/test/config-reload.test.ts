@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GrimoireApi } from '../extension';
+import { MINIMUM_GRIM_VERSION } from '../installer';
 
 const isWindows = process.platform === 'win32';
 
@@ -14,7 +15,7 @@ function contextStub(dir: string, argvLog?: string): string {
   const executable = path.join(dir, 'grim');
   const log = argvLog ? `echo "$@" >> "${argvLog}"\n` : '';
   const doc = {
-    version: '0.9.0',
+    version: MINIMUM_GRIM_VERSION,
     scope: 'global',
     workspace: null,
     config_path: '/nonexistent/grimoire.toml',

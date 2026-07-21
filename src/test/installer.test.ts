@@ -4,17 +4,21 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  MINIMUM_GRIM_VERSION,
+  RELEASE_PAGE,
   SKIP_VERSION,
   UPDATE_GRIM,
   VIEW_RELEASE,
   extract,
   findBinary,
+  grimTooOld,
   isNewerVersion,
   latestVersion,
   parseSha256,
   selectAsset,
   sha256Hex,
   targetTriple,
+  tooOldMessage,
   updateDecision,
   type DistManifest,
 } from '../installer';
@@ -140,6 +144,25 @@ suite('installer update check', () => {
     // Suffixes don't crash; the numeric core decides.
     assert.strictEqual(isNewerVersion('0.10.0-rc.1', '0.9.0'), true);
     assert.strictEqual(isNewerVersion('0.9.0-rc.1', '0.9.0'), false);
+  });
+
+  test('grimTooOld gates on MINIMUM_GRIM_VERSION and treats an unparseable version as too old', () => {
+    assert.strictEqual(grimTooOld(MINIMUM_GRIM_VERSION), false, 'the floor itself is supported');
+    assert.strictEqual(grimTooOld('0.9.0'), true);
+    assert.strictEqual(grimTooOld('0.9.1'), true);
+    assert.strictEqual(grimTooOld('99.0.0'), false);
+    // A grim that can't state a version can't be trusted to speak the contract.
+    assert.strictEqual(grimTooOld(''), true);
+    assert.strictEqual(grimTooOld('garbage'), true);
+  });
+
+  test('tooOldMessage names the binary that ran, both versions, and a way out', () => {
+    const message = tooOldMessage('/usr/local/bin/grim', '0.9.1');
+    assert.ok(message.includes('/usr/local/bin/grim'), `names the resolved binary: ${message}`);
+    assert.ok(message.includes('0.9.1'), 'names the version that ran');
+    assert.ok(message.includes(MINIMUM_GRIM_VERSION), 'names the required version');
+    assert.ok(message.includes(RELEASE_PAGE), 'links the releases page');
+    assert.ok(message.includes('grimoire.path.executable'), 'names the override setting');
   });
 
   test('updateDecision offers an in-place update for a managed binary', () => {

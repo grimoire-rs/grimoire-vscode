@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import {
   grimOnPath,
   isProjectNotDiscovered,
+  whichGrim,
   parseDeclaredRefs,
   projectSearchable,
   ScopeService,
@@ -23,6 +24,7 @@ import type {
 import type { GrimoireApi } from '../extension';
 import type { ContextInfo, GrimResult, Scope } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
+import { MINIMUM_GRIM_VERSION } from '../installer';
 
 const isWindows = process.platform === 'win32';
 
@@ -133,7 +135,10 @@ function argvLines(stub: Stub): string[] {
 
 function contextDoc(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    version: '0.9.0',
+    // At or above MINIMUM_GRIM_VERSION — a fixture below the floor makes every
+    // snapshot fail the version gate (see the "grim version floor" suite, which
+    // pins an old version deliberately).
+    version: MINIMUM_GRIM_VERSION,
     scope: 'project',
     workspace: null,
     config_path: '/nonexistent/grimoire.toml',
@@ -2371,7 +2376,9 @@ suite('isProjectNotDiscovered', () => {
 suite('project probe failure (run override)', () => {
   function probeContext(configExists: boolean): ContextInfo {
     return {
-      version: '0.9.0',
+      // At the floor — a pre-floor version short-circuits the snapshot before
+      // status ever runs (see the "grim version floor" suite).
+      version: MINIMUM_GRIM_VERSION,
       scope: 'project',
       workspace: '/ws',
       config_path: '/nonexistent/grimoire.toml',
@@ -2490,6 +2497,9 @@ suite('executable resolution', () => {
     // A DIRECTORY named grim must not count as an executable (X_OK passes on dirs).
     const dirTrap = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-trap-'));
     fs.mkdirSync(path.join(dirTrap, 'grim'));
+    // whichGrim names the exact hit — the too-old message prints it, so "which
+    // grim ran?" is answerable from the toast alone.
+    assert.strictEqual(whichGrim({ PATH: dir }), path.join(dir, 'grim'));
     assert.strictEqual(grimOnPath({ PATH: dir }), true);
     assert.strictEqual(grimOnPath({ PATH: `${empty}${path.delimiter}${dir}` }), true);
     assert.strictEqual(grimOnPath({ PATH: empty }), false);
@@ -2522,6 +2532,232 @@ suite('executable resolution', () => {
       );
     } finally {
       await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('resolveExecutable: an explicit path.executable wins even when PATH has a grim', async () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-storage-'));
+    const scopes = new ScopeService(vscode.Uri.file(storage), recordingOutput([]));
+    fs.mkdirSync(path.dirname(scopes.bundledExecutablePath()), { recursive: true });
+    fs.writeFileSync(scopes.bundledExecutablePath(), '#!/bin/sh\n', { mode: 0o755 });
+    const explicit = path.join(storage, 'explicit-grim');
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    const prev = cfg.inspect<string>('path.executable')?.globalValue;
+    await cfg.update('path.executable', explicit, vscode.ConfigurationTarget.Global);
+    try {
+      // The setting is the top of the chain: neither a PATH grim nor the
+      // bundled copy may override what the user pointed at explicitly.
+      scopes.pathHasGrim = () => true;
+      assert.strictEqual(scopes.resolveExecutable(), explicit);
+      scopes.pathHasGrim = () => false;
+      assert.strictEqual(scopes.resolveExecutable(), explicit);
+    } finally {
+      await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
+    }
+  });
+
+  test('managedExecutable: true only for the bundled copy at the default setting', async () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-storage-'));
+    const scopes = new ScopeService(vscode.Uri.file(storage), recordingOutput([]));
+    fs.mkdirSync(path.dirname(scopes.bundledExecutablePath()), { recursive: true });
+    fs.writeFileSync(scopes.bundledExecutablePath(), '#!/bin/sh\n', { mode: 0o755 });
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    const prev = cfg.inspect<string>('path.executable')?.globalValue;
+    await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
+    try {
+      scopes.pathHasGrim = () => false;
+      assert.strictEqual(scopes.managedExecutable(), true, 'bundled fallback is ours to replace');
+      scopes.pathHasGrim = () => true;
+      assert.strictEqual(scopes.managedExecutable(), false, 'a PATH grim is user-managed');
+      // Pointing the setting AT the bundled path is still a user's explicit
+      // choice — the update toast must not offer to overwrite it.
+      await cfg.update(
+        'path.executable',
+        scopes.bundledExecutablePath(),
+        vscode.ConfigurationTarget.Global,
+      );
+      scopes.pathHasGrim = () => false;
+      assert.strictEqual(scopes.managedExecutable(), false, 'an explicit setting is user-managed');
+    } finally {
+      await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
+    }
+  });
+});
+
+/** The version floor, end to end through the REAL resolveExecutable + execFile
+ *  chain (not a scopes.run override), because that chain is what decides which
+ *  binary answers — a stale grim on PATH is the case that regressed. */
+suite('grim version floor', () => {
+  let stub: Stub;
+  let previous: string | undefined;
+
+  suiteSetup(async function () {
+    if (isWindows) {
+      this.skip();
+    }
+    stub = writeStub();
+    canned(stub, 'search', { items: [] });
+    canned(stub, 'status', { items: [] });
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    previous = cfg.inspect<string>('path.executable')?.globalValue;
+    await cfg.update('path.executable', stub.executable, vscode.ConfigurationTarget.Global);
+  });
+
+  suiteTeardown(async () => {
+    if (isWindows) {
+      return;
+    }
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('path.executable', previous, vscode.ConfigurationTarget.Global);
+  });
+
+  test('a grim below the floor fails the snapshot with an actionable message and never runs status', async function () {
+    this.timeout(15000);
+    canned(stub, 'context', contextDoc({ version: '0.9.1', config_exists: true }));
+    const scopes = new ScopeService(
+      vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'grim-floor-'))),
+      recordingOutput([]),
+    );
+    fs.rmSync(stub.argvLog, { force: true });
+    const snapshot = await scopes.snapshot({ check: true });
+    assert.strictEqual(snapshot.grimMissing, false, 'the binary exists — it is merely too old');
+    assert.ok(snapshot.error, 'a pre-floor grim must fail the snapshot');
+    assert.ok(snapshot.error.includes('0.9.1'), `names the version that ran: ${snapshot.error}`);
+    assert.ok(
+      snapshot.error.includes(stub.executable),
+      `names the binary that ran, so "which grim is this?" is answerable: ${snapshot.error}`,
+    );
+    assert.ok(snapshot.error.includes(MINIMUM_GRIM_VERSION), 'names the required version');
+    // The whole point of gating on `context`: a pre-floor grim never sees a
+    // flag it would reject with an opaque clap usage error (exit 64).
+    assert.deepStrictEqual(
+      argvLines(stub).filter((l) => l.startsWith('status')),
+      [],
+      'status must not run against a grim below the floor',
+    );
+  });
+
+  test('a grim at the floor passes and runs status normally', async function () {
+    this.timeout(15000);
+    canned(stub, 'context', contextDoc({ version: MINIMUM_GRIM_VERSION, config_exists: true }));
+    const scopes = new ScopeService(
+      vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'grim-floor-ok-'))),
+      recordingOutput([]),
+    );
+    fs.rmSync(stub.argvLog, { force: true });
+    const snapshot = await scopes.snapshot();
+    assert.strictEqual(snapshot.error, undefined, 'the floor version itself is supported');
+    assert.ok(
+      argvLines(stub).some((l) => l.startsWith('status')),
+      'status runs once the floor is met',
+    );
+  });
+});
+
+/** The activity-bar badge (outdated count). It rolls up into the icon number,
+ *  so a stale count reads as "you still have updates" after a successful one. */
+suite('update badge', () => {
+  const badgeOf = (view: vscode.WebviewView): vscode.ViewBadge | undefined => view.badge;
+
+  /** A run override serving one installed artifact whose status `state` the
+   *  caller picks — the field the badge count ultimately derives from on a
+   *  plain (no --check) refresh. */
+  function statusRun(state: string) {
+    return (async <T>(args: string[]): Promise<GrimResult<T>> => {
+      if (args[0] === 'context') {
+        return { ok: true, value: contextDoc({ config_exists: true }) } as GrimResult<T>;
+      }
+      if (args[0] === 'status') {
+        return {
+          ok: true,
+          value: {
+            items: [
+              {
+                kind: 'skill',
+                name: 'badged',
+                source: 'direct',
+                pinned: 'ghcr.io/grimoire-rs/skills/badged:1.0.0',
+                state,
+                outputs: [],
+                clients_missing: [],
+                clients_extra: [],
+                deprecated: null,
+                replaced_by: null,
+                update_available: null,
+              },
+            ],
+          },
+        } as GrimResult<T>;
+      }
+      return {
+        ok: true,
+        value: { items: [searchItem('ghcr.io/grimoire-rs/skills/badged')] },
+      } as GrimResult<T>;
+    }) as ScopeService['run'];
+  }
+
+  test('the badge tracks the outdated count and clears once the update lands', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    const originalRun = api.scopes.run;
+    try {
+      api.scopes.run = statusRun('outdated');
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(badgeOf(view)?.value, 1, 'an outdated install badges the activity bar');
+      // What `grim update` leaves behind: the same artifact, no longer outdated.
+      api.scopes.run = statusRun('installed');
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(
+        badgeOf(view),
+        undefined,
+        'the badge must clear after the update — a stale count reads as "still outdated"',
+      );
+    } finally {
+      api.scopes.run = originalRun;
+    }
+  });
+
+  test('a failed status freezes the badge AND the posted cards together, never one without the other', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    const originalRun = api.scopes.run;
+    try {
+      api.scopes.run = statusRun('outdated');
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(badgeOf(view)?.value, 1);
+      // Install state is now UNKNOWN, not empty. The badge deliberately holds
+      // its last value; the posted cards must hold theirs too. Posting the
+      // empty-status set instead would empty the Updates tab's pill while the
+      // badge still showed 1 — the exact "badge won't clear" report.
+      api.scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
+        if (args[0] === 'status') {
+          return {
+            ok: false,
+            kind: 'error',
+            code: 'usage',
+            exitCode: 64,
+            message: 'stale binary',
+          } as GrimResult<T>;
+        }
+        return statusRun('outdated')(args, 'global') as Promise<GrimResult<T>>;
+      }) as typeof api.scopes.run;
+      await api.providers.sidebar.refresh();
+      const last = states.at(-1);
+      assert.ok(last);
+      assert.strictEqual(last.phase, 'error');
+      assert.strictEqual(badgeOf(view)?.value, 1, 'the badge holds its last known count');
+      assert.strictEqual(
+        last.installedItems.filter((c) => c.state === 'outdated').length,
+        badgeOf(view)?.value,
+        'the Updates pill and the badge must never show different numbers',
+      );
+    } finally {
+      api.scopes.run = originalRun;
     }
   });
 });

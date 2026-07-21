@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { readConfig, DEFAULT_EXECUTABLE } from './config';
+import { grimTooOld, tooOldMessage } from './installer';
 import {
   contextArgs,
   statusArgs,
@@ -68,14 +69,17 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
   return declared;
 }
 
-/** True when a `grim` executable exists somewhere on PATH. Used to keep the
- *  extension-managed copy (globalStorage/bin) a pure FALLBACK: a user-managed
- *  grim on PATH always wins — preferring the bundled copy shadowed a current
- *  PATH grim with a stale one (the silent `status --check` failure). Scans
- *  PATH directly instead of spawning `which`/`where`; early-returns on the
- *  first hit, so the full scan (slow /mnt/c entries under WSL included) only
- *  runs in the no-grim-anywhere state. Pure over `env`; exported for tests. */
-export function grimOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
+/** Absolute path of the first `grim` executable on PATH, or undefined. Used to
+ *  keep the extension-managed copy (globalStorage/bin) a pure FALLBACK: a
+ *  user-managed grim on PATH always wins — preferring the bundled copy
+ *  shadowed a current PATH grim with a stale one (the silent `status --check`
+ *  failure). The path (not just a boolean) also names the actual binary in the
+ *  version-floor message: "grim 0.9.1 at grim is too old" answers nothing when
+ *  the whole question is WHICH grim the host's PATH resolved. Scans PATH
+ *  directly instead of spawning `which`/`where`; early-returns on the first
+ *  hit, so the full scan (slow /mnt/c entries under WSL included) only runs in
+ *  the no-grim-anywhere state. Pure over `env`; exported for tests. */
+export function whichGrim(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const exts =
     process.platform === 'win32' ? (env['PATHEXT'] ?? '.EXE;.CMD;.BAT;.COM').split(';') : [''];
   for (const dir of (env['PATH'] ?? '').split(path.delimiter)) {
@@ -89,14 +93,19 @@ export function grimOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
         // X_OK passes on directories too — a dir named `grim` on PATH is not
         // an executable.
         if (fs.statSync(candidate).isFile()) {
-          return true;
+          return candidate;
         }
       } catch {
         // not here — keep scanning
       }
     }
   }
-  return false;
+  return undefined;
+}
+
+/** Boolean face of {@link whichGrim}. */
+export function grimOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
+  return whichGrim(env) !== undefined;
 }
 
 /** Prepends the top-level `--global` flag before the subcommand. grim documents
@@ -161,8 +170,11 @@ export class ScopeService {
   }
 
   /** Test seam for the PATH probe (see grimOnPath) — instance-overridable the
-   *  same way tests override run(). */
-  pathHasGrim: () => boolean = () => grimOnPath();
+   *  same way tests override run(). Probes the SAME env the spawn will use
+   *  (`process.env` merged with grimoire.extraEnv, see runJson): an extraEnv
+   *  that sets PATH would otherwise make the probe and the spawn disagree about
+   *  whether a PATH grim exists. */
+  pathHasGrim: () => boolean = () => grimOnPath({ ...process.env, ...readConfig().extraEnv });
 
   /**
    * Resolves the grim executable: explicit setting wins; the default `grim`
@@ -189,6 +201,22 @@ export class ScopeService {
   bundledExecutablePath(): string {
     const bin = process.platform === 'win32' ? 'grim.exe' : 'grim';
     return path.join(this.storageUri.fsPath, 'bin', bin);
+  }
+
+  /**
+   * True when the grim that would actually be spawned is the extension-managed
+   * copy — the only case where the update toast may offer to overwrite it in
+   * place. Derived from resolveExecutable() itself rather than re-deriving the
+   * branch logic at the call site, so the two can never disagree about which
+   * binary is in play. The default-setting gate matters: a user who points
+   * path.executable AT the bundled path is user-managed, and we must not
+   * overwrite their explicit choice.
+   */
+  managedExecutable(): boolean {
+    return (
+      readConfig().executable === DEFAULT_EXECUTABLE &&
+      this.resolveExecutable() === this.bundledExecutablePath()
+    );
   }
 
   projectFolder(): string | undefined {
@@ -286,6 +314,26 @@ export class ScopeService {
     const ctx = await this.run<ContextInfo>(contextArgs(), scope);
     if (!ctx.ok) {
       return { probe: ctx, snapshot: undefined };
+    }
+    // Version floor, checked on the ONE call that reports it (`grim context`)
+    // and before any flag a pre-floor grim would reject. Reported through
+    // statusError so it lands in snapshot.error like any other unusable-state
+    // signal: install state is unknown, not empty. Without this, an old grim
+    // fails later on `status --check` with a bare clap usage error and the
+    // views blame the wrong thing.
+    if (grimTooOld(ctx.value.version)) {
+      // Name the ABSOLUTE binary: the default 'grim' spawns whatever the host
+      // process's PATH resolves (a WSL vscode-server can hold a days-old PATH
+      // snapshot), and "at grim" answers nothing when which-grim-ran is the
+      // whole question.
+      const executable = this.resolveExecutable();
+      const resolved =
+        executable === DEFAULT_EXECUTABLE
+          ? (whichGrim({ ...process.env, ...readConfig().extraEnv }) ?? executable)
+          : executable;
+      const message = tooOldMessage(resolved, ctx.value.version);
+      this.output.appendLine(`  ${message}`);
+      return { probe: ctx, snapshot: undefined, statusError: message };
     }
     const status = ctx.value.config_exists
       ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(options), scope)

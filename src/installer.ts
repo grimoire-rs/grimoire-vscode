@@ -15,6 +15,34 @@ export const RELEASE_BASE = 'https://github.com/grimoire-rs/grimoire/releases/la
  *  installed) grim so the "update available" toast still has an action. */
 export const RELEASE_PAGE = 'https://github.com/grimoire-rs/grimoire/releases/latest';
 
+/** Oldest grim whose CLI surface this extension is built against. The floor is
+ *  hard, not a compat shim: older builds reject flags the extension always
+ *  sends (`status --check`, `config set --dry-run`) with a clap usage error
+ *  (exit 64), which surfaces as an opaque "unexpected argument" toast and — via
+ *  the failed-status path — freezes the update badge. One constant, one check
+ *  (`grimTooOld`), so "which grim version is acceptable" is decided in exactly
+ *  one place. */
+export const MINIMUM_GRIM_VERSION = '0.10.0';
+
+/** True when a resolved grim is older than {@link MINIMUM_GRIM_VERSION}.
+ *  Unparseable versions compare as 0.0.0 and therefore read as too old — a grim
+ *  that can't state its version can't be trusted to speak the current contract.
+ *  Pure; exported for tests. */
+export function grimTooOld(version: string): boolean {
+  return isNewerVersion(MINIMUM_GRIM_VERSION, version);
+}
+
+/** The one message shown when the resolved grim is too old. Names the binary
+ *  that actually ran, because "which grim is this?" is the whole question a
+ *  stale PATH copy raises (the extension-managed copy is only a fallback, so a
+ *  stale user-managed grim on PATH is what usually trips this). */
+export function tooOldMessage(executable: string, version: string): string {
+  return (
+    `grim ${version} at ${executable} is too old — Grimoire needs ${MINIMUM_GRIM_VERSION} ` +
+    `or newer. Update grim (${RELEASE_PAGE}), or point grimoire.path.executable at a current build.`
+  );
+}
+
 /** cargo-dist `releases[].app_name` for grim (the manifest ships the whole
  *  `grimoire` workspace under one app today). */
 const GRIM_APP_NAME = 'grimoire';

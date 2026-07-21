@@ -14,6 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GrimoireApi } from '../extension';
+import { MINIMUM_GRIM_VERSION } from '../installer';
 import { ScopeService } from '../scopes';
 import { SettingsManager } from '../views/settings';
 import { Watchers } from '../watchers';
@@ -178,7 +179,7 @@ echo '{"error":{"code":"usage","exit":64,"message":"unhandled stub call"}}'
 
 function contextDoc(): Record<string, unknown> {
   return {
-    version: '0.9.0',
+    version: MINIMUM_GRIM_VERSION,
     scope: 'global',
     workspace: null,
     config_path: '/nonexistent/global-grimoire.toml',
@@ -200,7 +201,7 @@ function contextDoc(): Record<string, unknown> {
  *  (config_exists: true) exactly as before. */
 function contextGlobalDoc(configExists: boolean): Record<string, unknown> {
   return {
-    version: '0.9.0',
+    version: MINIMUM_GRIM_VERSION,
     scope: 'global',
     workspace: null,
     config_path: '/nonexistent/global-grimoire.toml',
@@ -222,7 +223,7 @@ function contextGlobalDoc(configExists: boolean): Record<string, unknown> {
  *  config_exists:false for project scope (see notDiscoveredDoc below). */
 function contextProjectDoc(): Record<string, unknown> {
   return {
-    version: '0.9.0',
+    version: MINIMUM_GRIM_VERSION,
     scope: 'project',
     workspace: '/fixture-workspace',
     config_path: '/fixture-workspace/grimoire.toml',

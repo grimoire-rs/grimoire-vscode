@@ -336,6 +336,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (snap.error === undefined) {
       this.setBadge(installed.filter((c) => c.state === 'outdated').length);
     }
+    // The badge freezes on a failed status (above), so the cards must freeze
+    // with it: posting the empty-status set while the badge keeps its old count
+    // makes the Updates tab's pill (same formula, same field — render.ts) and
+    // the activity-bar badge state different numbers at the same time. That
+    // disagreement IS the "badge won't clear after an update" report: the update
+    // succeeded, the tab emptied, the frozen badge stayed. Last known-good for
+    // both, or nothing at all when there is no known-good yet.
+    const shown = snap.error !== undefined ? this.lastReady : undefined;
     if (error !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
       // error; notifyError's dedupe collapses them to one popup.
@@ -343,8 +351,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     this.postState({
       phase: error !== undefined ? 'error' : 'ready',
-      items: cards,
-      installed,
+      items: shown?.cards ?? cards,
+      installed: shown?.installed ?? installed,
       ...(error !== undefined ? { error } : {}),
       syncedAt: catalogState.syncedAt,
       snapshot: snap,

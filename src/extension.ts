@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CatalogService } from './catalog';
-import { DEFAULT_EXECUTABLE, readConfig } from './config';
+import { readConfig } from './config';
 import {
   addArgs,
   contextArgs,
@@ -271,17 +271,14 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       if (!ctx.ok) {
         return;
       }
-      // Managed = the extension's own copy AND the setting left at default. The
-      // default gate matters: a user who points path.executable AT the bundled
-      // path is user-managed — we must not offer to overwrite their choice.
-      const managed =
-        readConfig().executable === DEFAULT_EXECUTABLE &&
-        scopes.resolveExecutable() === scopes.bundledExecutablePath();
       const prompt = updateDecision({
         latest,
         current: ctx.value.version,
         skipped: context.globalState.get<string>('updateCheck.skippedVersion'),
-        managed,
+        // Read off the resolution itself (ScopeService.managedExecutable), never
+        // re-derived here — the toast must not offer to overwrite a grim the
+        // extension does not own.
+        managed: scopes.managedExecutable(),
       });
       if (!prompt) {
         return;
