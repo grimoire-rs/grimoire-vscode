@@ -38,6 +38,11 @@ AI artifacts your tools rely on.
   bundle point back to their bundle instead of offering a direct uninstall.
 - **Pick a version** — install, downgrade, or pin an exact tag from the details
   header or a card's menu.
+- **Recover from a blocked install** — when `grim` refuses to overwrite local
+  changes, Grimoire offers an **Overwrite** confirm instead of a bare error. A
+  refusal it can never safely force — a recorded path resolving outside its
+  anchor root — points you at **Show Output** and the uninstall-then-reinstall
+  fix instead.
 - **Share a link** — copy a `vscode://` deep link to any artifact; opening it
   reveals that artifact's details.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to
@@ -94,11 +99,11 @@ doesn't reimplement it. If `grim` isn't found on your `PATH`, Grimoire offers to
 install the latest release for you; you can also point `grimoire.path.executable`
 at an existing build.
 
-Grimoire requires `grim` 0.9.0 or newer — the release that ships the full
-details interface (`describe`, description companions, digest probes). An older
-build still browses and installs, but an artifact's README, changelog, and logo
-may not appear. If you're on an older `grim`, point `grimoire.path.executable`
-at a current one.
+Grimoire requires `grim` 0.11.0 or newer — the release that ships the
+`forceable`/`anchor-escape` error contract behind the overwrite-confirm and
+anchor-escape recovery dialogs. An older `grim` fails every call with a
+version-floor error rather than running in a degraded mode; point
+`grimoire.path.executable` at a current build if you're behind.
 
 ## Contributing
 

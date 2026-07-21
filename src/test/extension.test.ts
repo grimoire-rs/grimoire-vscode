@@ -25,6 +25,7 @@ import type { GrimoireApi } from '../extension';
 import type { ContextInfo, GrimResult, Scope } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION } from '../installer';
+import { offerForcedRetry } from '../views/forceRetry';
 
 const isWindows = process.platform === 'win32';
 
@@ -92,6 +93,18 @@ if [ "$cmd" = "fetch" ]; then
       [ -f "${dir}/fetch-changelog.json" ] && { cat "${dir}/fetch-changelog.json"; exit 0; } ;;
   esac
 fi
+# A --force retry (e.g. after a confirmed force-confirm dialog) can be canned
+# apart from the original refusal via <cmd>-force.json — checked before any
+# other per-argv special-case below so a forced retry never re-triggers them.
+# Inert unless <cmd>-force.json exists.
+case "$*" in
+  *--force*)
+    if [ -f "${dir}/$cmd-force.json" ]; then
+      cat "${dir}/$cmd-force.json"
+      exit 0
+    fi
+    ;;
+esac
 # A per-name update (a name in $2, not a flag) can be canned apart from the bare
 # full update, so stale-lock recovery tests fail the partial resolve while the
 # recovery full-resolve succeeds via update.json. Inert unless update-name.json exists.
@@ -865,6 +878,108 @@ suite('extension integration', () => {
     assert.ok(add.includes('--global'), `expected global scope: ${add}`);
   });
 
+  test('pickVersion wiring: a forceable refusal offers Overwrite and retries with --force (third funnel)', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'describe', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      title: null,
+      description: null,
+      summary: null,
+      version: '1.5.0',
+      license: null,
+      repository: null,
+      revision: null,
+      created: null,
+      keywords: null,
+      deprecated: null,
+      replaced_by: null,
+      tags: ['1.5.0', '1.4.2'],
+      annotations: {},
+    });
+    canned(stub, 'add', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'installed artifact was modified locally',
+        reason: 'modified',
+        forceable: true,
+      },
+    });
+    canned(stub, 'add-force', { kind: 'skill', name: 'grim-usage', pinned: 'y@sha256:2', status: 'added' });
+    const window = vscode.window as unknown as { showQuickPick: unknown };
+    const originalQuickPick = window.showQuickPick;
+    window.showQuickPick = async () => '1.4.2';
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'pickVersion',
+        repo: 'ghcr.io/grimoire-rs/skills/grim-usage',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
+    } finally {
+      window.showQuickPick = originalQuickPick;
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'add-force.json'), { force: true });
+      restoreAddUninstall();
+    }
+    const adds = argvLines(stub).filter((l) => l.startsWith('add'));
+    assert.ok(adds.some((l) => l.includes('--force')), `a forced retry ran: ${adds.join(' | ')}`);
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
+  });
+
+  test('pickVersion wiring: a plain refusal falls through to the normal error toast', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'describe', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      title: null,
+      description: null,
+      summary: null,
+      version: '1.5.0',
+      license: null,
+      repository: null,
+      revision: null,
+      created: null,
+      keywords: null,
+      deprecated: null,
+      replaced_by: null,
+      tags: ['1.5.0', '1.4.2'],
+      annotations: {},
+    });
+    canned(stub, 'add', { error: { code: 'data', exit: 65, message: 'registry unreachable' } });
+    const window = vscode.window as unknown as { showQuickPick: unknown };
+    const originalQuickPick = window.showQuickPick;
+    window.showQuickPick = async () => '1.4.2';
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'pickVersion',
+        repo: 'ghcr.io/grimoire-rs/skills/grim-usage',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('add')));
+    } finally {
+      window.showQuickPick = originalQuickPick;
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no dialog for a plain refusal');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'the plain error toast was shown');
+    assert.ok(
+      dialogs.errorCalls[0]?.message.includes('registry unreachable'),
+      `the toast names the failure: ${dialogs.errorCalls[0]?.message}`,
+    );
+  });
+
   test('updateAll runs update in project and global scope when the project is configured', async () => {
     // A configured project (grimoire.toml present) → the command updates both scopes.
     canned(stub, 'context', contextDoc({ config_exists: true }));
@@ -1102,6 +1217,842 @@ suite('extension integration', () => {
     assert.ok(
       posted.some((m) => m.type === 'artifact'),
       'the panel re-rendered (busy cleared) after the recovery',
+    );
+  });
+
+  // --- force-confirm / anchor-escape dialogs (offerForcedRetry) ---
+  //
+  // These exercise offerForcedRetry directly against the activated
+  // extension's real ScopeService (backed by the stub binary) instead of
+  // routing through handleMessage/onMessage — the same shape as the
+  // stale-lock suite above, minus the host plumbing. The wiring into
+  // sidebar.ts's runActionInner and details.ts's actionInner is covered
+  // separately, in the host-wiring suite below.
+
+  interface DialogCall {
+    message: string;
+    options?: vscode.MessageOptions;
+    items: string[];
+  }
+
+  /** Captures showWarningMessage/showErrorMessage calls in full — message,
+   *  MessageOptions (when passed), and the offered action items — unlike
+   *  stubSwitchDialogs above, which returns a canned answer without
+   *  inspecting its arguments (so a regression that silently dropped
+   *  `modal: true` would pass there today). `answer` is returned from both
+   *  dialogs; a real caller only ever triggers one of the two per call. */
+  function stubForceDialogs(answer: string | undefined): {
+    restore: () => void;
+    warningCalls: DialogCall[];
+    errorCalls: DialogCall[];
+  } {
+    const window = vscode.window as unknown as {
+      showWarningMessage: (...args: unknown[]) => Promise<string | undefined>;
+      showErrorMessage: (...args: unknown[]) => Promise<string | undefined>;
+    };
+    const originalWarn = window.showWarningMessage;
+    const originalError = window.showErrorMessage;
+    const warningCalls: DialogCall[] = [];
+    const errorCalls: DialogCall[] = [];
+    const record =
+      (calls: DialogCall[]) =>
+      async (...args: unknown[]): Promise<string | undefined> => {
+        const [message, second, ...rest] = args;
+        const hasOptions = typeof second === 'object' && second !== null;
+        calls.push({
+          message: message as string,
+          // exactOptionalPropertyTypes: omit the key entirely for a non-modal
+          // call instead of assigning `options: undefined`.
+          ...(hasOptions ? { options: second as vscode.MessageOptions } : {}),
+          items: (hasOptions ? rest : [second, ...rest].filter((x) => x !== undefined)) as string[],
+        });
+        return answer;
+      };
+    window.showWarningMessage = record(warningCalls);
+    window.showErrorMessage = record(errorCalls);
+    return {
+      restore: () => {
+        window.showWarningMessage = originalWarn;
+        window.showErrorMessage = originalError;
+      },
+      warningCalls,
+      errorCalls,
+    };
+  }
+
+  type FailedGrimResult = Extract<GrimResult<unknown>, { ok: false; kind: 'error' }>;
+
+  /** `grim add`/`update`'s "modified" refusal — forceable, with grim's
+   *  message left exactly as documented in the plan (install_error.rs:74-77),
+   *  since the confirm dialog's detail must display it verbatim. */
+  function forceableRefusal(): FailedGrimResult {
+    return {
+      ok: false,
+      kind: 'error',
+      code: 'data',
+      exitCode: 65,
+      reason: 'modified',
+      forceable: true,
+      message:
+        'installed artifact was modified locally: recorded sha256:aaa…, found sha256:bbb…; ' +
+        'rerun with --force to overwrite',
+    };
+  }
+
+  /** An anchor-escape refusal. Never forceable — per the contract the key is
+   *  omitted entirely rather than sent as a bare `false`. */
+  function anchorEscapeRefusal(): FailedGrimResult {
+    return {
+      ok: false,
+      kind: 'error',
+      code: 'data',
+      exitCode: 65,
+      reason: 'anchor-escape',
+      message: 'resolved path escapes its anchor root (anchor: claude-root)',
+    };
+  }
+
+  test('force-confirm: confirming re-issues the original argv with --force appended, modal, Overwrite only', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const refusal = forceableRefusal();
+    let handled: boolean;
+    let onDoneCalled = false;
+    try {
+      handled = await offerForcedRetry(
+        refusal,
+        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {
+          onDoneCalled = true;
+        },
+      );
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.strictEqual(handled, true, 'a confirmed retry is handled');
+    const lines = argvLines(stub);
+    assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
+    assert.strictEqual(
+      lines[0],
+      'add ghcr.io/grimoire-rs/code-review --force --format json --global',
+      'the same argv is reissued with --force appended, in the same scope',
+    );
+    assert.ok(onDoneCalled, 'onDone refreshes after a successful forced retry');
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.strictEqual(call.options?.modal, true, 'the force-confirm dialog is modal');
+    assert.deepStrictEqual(call.items, ['Overwrite'], 'Overwrite is the only offered action');
+    const detail = call.options?.detail ?? '';
+    assert.ok(
+      detail.includes(refusal.message),
+      `the detail carries grim's message byte-identical, never parsed or truncated: ${detail}`,
+    );
+    assert.ok(
+      detail.startsWith('Reinstalling discards your local changes'),
+      `the consequence sentence leads, since that's what the user is deciding on: ${detail}`,
+    );
+  });
+
+  test('force-confirm: retrying preserves project scope (no --global)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await offerForcedRetry(
+        forceableRefusal(),
+        ['update', 'demo'],
+        'project',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    const lines = argvLines(stub);
+    assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
+    assert.strictEqual(
+      lines[0],
+      'update demo --force --format json',
+      'project scope carries no --global prefix',
+    );
+  });
+
+  test('force-confirm: declining runs no second grim call and shows no error toast', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs(undefined); // Cancel / dismiss
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    let onDoneCalled = false;
+    try {
+      handled = await offerForcedRetry(
+        forceableRefusal(),
+        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {
+          onDoneCalled = true;
+        },
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(
+      handled,
+      true,
+      'a declined confirm is still "handled" — the refusal is expected, not an error',
+    );
+    assert.strictEqual(argvLines(stub).length, 0, 'declining issues no second grim call');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'declining shows no error toast');
+    assert.strictEqual(onDoneCalled, false, 'nothing changed, so no refresh is triggered');
+  });
+
+  test('force-confirm dialog names the artifact by the ref\'s last path segment, not the full path', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await offerForcedRetry(
+        forceableRefusal(),
+        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.ok(call.message.includes('code-review'), `dialog names the artifact: ${call.message}`);
+    assert.ok(
+      !call.message.includes('ghcr.io/grimoire-rs/code-review'),
+      `dialog uses the last path segment, not the full ref: ${call.message}`,
+    );
+  });
+
+  test('force-confirm dialog names the artifact directly for a bare-name ref (grim update)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await offerForcedRetry(
+        forceableRefusal(),
+        ['update', 'demo'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.ok(call.message.includes('demo'), `dialog names the artifact: ${call.message}`);
+  });
+
+  test('force-confirm dialog strips a trailing tag from the ref, matching grim\'s id.name() rule', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await offerForcedRetry(
+        forceableRefusal(),
+        ['add', 'ghcr.io/grimoire-rs/code-review:1.2.3'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.ok(call.message.includes('`code-review`'), `dialog names the artifact: ${call.message}`);
+    assert.ok(
+      !call.message.includes('code-review:1.2.3'),
+      `the tag is stripped, exactly like grim's own id.name() binding rule: ${call.message}`,
+    );
+  });
+
+  test('force-confirm: --force is appended only for add/update, never for another subcommand', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'uninstall', { kind: 'skill', name: 'demo', status: 'uninstalled' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    try {
+      // Uninstall never actually produces a forceable refusal in practice
+      // (grim uninstall has no --force flag at all) — this pins the argv
+      // builder's own defensiveness, not a real-world scenario. A dialog
+      // offering to overwrite when the subcommand can't carry --force would
+      // just fail again identically, so eligibility is gated on args[0] too:
+      // no dialog, no retry, fall through to the caller's plain error toast.
+      handled = await offerForcedRetry(
+        forceableRefusal(),
+        ['uninstall', 'skill', 'demo'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'uninstall.json'), { force: true });
+    }
+    assert.strictEqual(handled, false, 'a forceable refusal on a non-add/update subcommand falls through');
+    assert.strictEqual(dialogs.warningCalls.length, 0, '--force is only ever appended for add/update');
+    assert.strictEqual(argvLines(stub).length, 0, 'no retry is issued for an unhandled refusal');
+  });
+
+  test('anchor-escape: shows a non-modal notice with only Show Output, never offers --force', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Show Output');
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    try {
+      handled = await offerForcedRetry(
+        anchorEscapeRefusal(),
+        ['update', 'code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, true, 'an anchor-escape refusal is handled, not a fall-through');
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm — this is a security refusal');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'a non-modal error notice was shown');
+    const call = dialogs.errorCalls[0];
+    assert.ok(call, 'the notice was shown');
+    assert.strictEqual(call.options, undefined, 'non-modal: no MessageOptions object is passed');
+    assert.deepStrictEqual(
+      call.items,
+      ['Show Output'],
+      'no override control of any kind is ever offered on a security refusal',
+    );
+    assert.ok(
+      !argvLines(stub).some((l) => l.includes('--force')),
+      'a security refusal must never be retried with --force',
+    );
+  });
+
+  test('a plain refusal (neither forceable nor anchor-escape) falls through untouched', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const plain: FailedGrimResult = {
+      ok: false,
+      kind: 'error',
+      code: 'data',
+      exitCode: 65,
+      message: 'some other refusal',
+    };
+    let handled: boolean;
+    try {
+      handled = await offerForcedRetry(
+        plain,
+        ['add', 'demo'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, false, 'the caller must fall through to its own error toast');
+    assert.strictEqual(dialogs.warningCalls.length, 0);
+    assert.strictEqual(dialogs.errorCalls.length, 0);
+    assert.strictEqual(argvLines(stub).length, 0, 'no retry is issued for an unhandled refusal');
+  });
+
+  test('offerForcedRetry falls through untouched for a not-found result (no error kind)', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const notFound: Extract<GrimResult<unknown>, { ok: false }> = { ok: false, kind: 'not-found' };
+    let handled: boolean;
+    try {
+      handled = await offerForcedRetry(
+        notFound,
+        ['add', 'demo'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, false, 'a not-found result is never a refusal offerForcedRetry can act on');
+    assert.strictEqual(dialogs.warningCalls.length, 0);
+    assert.strictEqual(dialogs.errorCalls.length, 0);
+    assert.strictEqual(argvLines(stub).length, 0);
+  });
+
+  test('force-confirm: a failed forced retry falls through to the normal error path', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'add', { error: { code: 'data', exit: 65, message: 'still refused' } });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const lines: string[] = [];
+    let handled: boolean;
+    let onDoneCalled = false;
+    try {
+      handled = await offerForcedRetry(
+        forceableRefusal(),
+        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        'global',
+        api.scopes,
+        recordingOutput(lines),
+        async () => {
+          onDoneCalled = true;
+        },
+      );
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.strictEqual(handled, true, 'a confirmed retry is handled even when it fails again');
+    assert.ok(lines.some((l) => l.includes('still refused')), `the retry failure is logged: ${lines.join(' | ')}`);
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'the retry failure surfaces the normal error toast');
+    assert.ok(
+      dialogs.errorCalls[0]?.message.includes('still refused'),
+      `the toast names the failure: ${dialogs.errorCalls[0]?.message}`,
+    );
+    assert.strictEqual(onDoneCalled, true, 'onDone still refreshes after a failed retry');
+  });
+
+  test('anchor-escape: Show Output dispatches the real grimoire.showOutput command', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Show Output');
+    const commands = vscode.commands as unknown as {
+      executeCommand: (command: string, ...rest: unknown[]) => Thenable<unknown>;
+    };
+    const original = commands.executeCommand;
+    const dispatched: string[] = [];
+    commands.executeCommand = (command: string, ...rest: unknown[]) => {
+      dispatched.push(command);
+      return original.call(vscode.commands, command, ...rest);
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await offerForcedRetry(
+        anchorEscapeRefusal(),
+        ['update', 'code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      commands.executeCommand = original;
+      dialogs.restore();
+    }
+    // A typo'd command id would reject (VS Code has no such command) and throw
+    // out of offerForcedRetry — reaching this assertion at all is part of the
+    // proof, alongside naming the exact id dispatched.
+    assert.deepStrictEqual(dispatched, ['grimoire.showOutput'], 'the real command id is dispatched, not a typo');
+  });
+
+  test('precedence: a refusal carrying both forceable AND anchor-escape takes the security branch', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // If the modal ever showed, answering 'Overwrite' would wrongly confirm it —
+    // the assertions below are what actually prove it never showed.
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const both: FailedGrimResult = {
+      ok: false,
+      kind: 'error',
+      code: 'data',
+      exitCode: 65,
+      reason: 'anchor-escape',
+      forceable: true,
+      message: 'resolved path escapes its anchor root (anchor: claude-root)',
+    };
+    let handled: boolean;
+    try {
+      handled = await offerForcedRetry(
+        both,
+        ['update', 'code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, true);
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm — anchor-escape wins over forceable');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'the security notice was shown instead');
+    assert.strictEqual(
+      argvLines(stub).length,
+      0,
+      'a refusal tagged anchor-escape is never retried with --force, forceable or not',
+    );
+  });
+
+  test('a case/whitespace variant of the anchor-escape reason still takes the security branch, never the override', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // Regression test for the byte-exact `===` comparison this pins against:
+    // a spelling variant paired with forceable:true must not fall through to
+    // the Overwrite modal. If it ever did, answering 'Overwrite' below would
+    // wrongly confirm it — the assertions are what actually prove it never showed.
+    for (const variant of ['Anchor-Escape', ' anchor-escape ']) {
+      const dialogs = stubForceDialogs('Overwrite');
+      fs.rmSync(stub.argvLog, { force: true });
+      const spelledDifferently: FailedGrimResult = {
+        ok: false,
+        kind: 'error',
+        code: 'data',
+        exitCode: 65,
+        reason: variant,
+        forceable: true,
+        message: 'resolved path escapes its anchor root (anchor: claude-root)',
+      };
+      let handled: boolean;
+      try {
+        handled = await offerForcedRetry(
+          spelledDifferently,
+          ['update', 'code-review'],
+          'global',
+          api.scopes,
+          recordingOutput([]),
+          async () => {},
+        );
+      } finally {
+        dialogs.restore();
+      }
+      assert.strictEqual(handled, true, `variant ${JSON.stringify(variant)} is still handled`);
+      assert.strictEqual(
+        dialogs.warningCalls.length,
+        0,
+        `no modal confirm for reason ${JSON.stringify(variant)} — spelling must not bypass the security branch`,
+      );
+      assert.strictEqual(dialogs.errorCalls.length, 1, `the security notice was shown for ${JSON.stringify(variant)}`);
+      assert.strictEqual(
+        argvLines(stub).length,
+        0,
+        `reason ${JSON.stringify(variant)} must never be retried with --force`,
+      );
+    }
+  });
+
+  test('an unknown forceable reason still gets the Overwrite modal — the client gatekeeps on `forceable`, not on a reason allow-list', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // Pins the design decision (declined alternative: hardcoding grim's
+    // reason taxonomy into an allow-list). `forceable` is the single derived
+    // signal from grim; a reason this client has never heard of must still
+    // reach the confirm dialog as long as forceable:true is set and the
+    // reason isn't anchor-escape. Do not "harden" this into an allow-list —
+    // that would silently drop the dialog for any future forceable reason
+    // until the extension ships a matching update.
+    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    const futureReason: FailedGrimResult = {
+      ok: false,
+      kind: 'error',
+      code: 'data',
+      exitCode: 65,
+      reason: 'some-future-reason',
+      forceable: true,
+      message: 'a refusal grim added after this client shipped',
+    };
+    let handled: boolean;
+    try {
+      handled = await offerForcedRetry(
+        futureReason,
+        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+      restoreAddUninstall();
+    }
+    assert.strictEqual(handled, true, 'an unrecognized-but-forceable refusal is still handled');
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite modal is shown for an unknown reason');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'this is not the security branch');
+    const lines = argvLines(stub);
+    assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
+    assert.ok(lines[0]?.includes('--force'), `the confirmed retry appends --force: ${lines[0]}`);
+  });
+
+  // --- force-confirm / anchor-escape host wiring (sidebar.ts / details.ts) ---
+  //
+  // The suite above exercises offerForcedRetry directly; these route through
+  // handleMessage/onMessage instead, covering the actual call sites
+  // (sidebar.ts's runActionInner, details.ts's actionInner) the way a real
+  // webview message would.
+
+  test('sidebar update wiring: a forceable refusal offers Overwrite and retries with --force', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'installed artifact was modified locally',
+        reason: 'modified',
+        forceable: true,
+      },
+    });
+    canned(stub, 'update-force', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+      fs.rmSync(path.join(stub.dir, 'update-force.json'), { force: true });
+    }
+    const updates = argvLines(stub).filter((l) => l.startsWith('update'));
+    assert.ok(
+      updates.some((l) => l.startsWith('update demo') && !l.includes('--force')),
+      `the per-name update ran first: ${updates.join(' | ')}`,
+    );
+    assert.ok(updates.some((l) => l.includes('--force')), `a forced retry ran: ${updates.join(' | ')}`);
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
+  });
+
+  test('sidebar update wiring: an anchor-escape refusal shows a non-modal notice, no retry', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'resolved path escapes its anchor root (anchor: claude-root)',
+        reason: 'anchor-escape',
+      },
+    });
+    const dialogs = stubForceDialogs('Show Output');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update demo')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm for a security refusal');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'a non-modal notice was shown');
+    assert.ok(
+      !argvLines(stub).some((l) => l.includes('--force')),
+      'an anchor-escape refusal is never retried with --force',
+    );
+  });
+
+  test('details update wiring: a forceable refusal offers Overwrite and retries with --force', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'fetch', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      vendor: 'canonical',
+      content: '# Grim Usage',
+      files: [],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'update-name', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'installed artifact was modified locally',
+        reason: 'modified',
+        forceable: true,
+      },
+    });
+    canned(stub, 'update-force', { kind: 'skill', name: 'grim-usage', pinned: 'y@sha256:2', status: 'updated' });
+    const dialogs = stubForceDialogs('Overwrite');
+    const posted: { type: string }[] = [];
+    const panel = {
+      title: '',
+      iconPath: undefined,
+      webview: {
+        postMessage: (message: { type: string }) => {
+          posted.push(message);
+          return Promise.resolve(true);
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.details.onMessage('ghcr.io/grimoire-rs/skills/grim-usage', panel, {
+        type: 'update',
+        kind: 'skill',
+        name: 'grim-usage',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+      fs.rmSync(path.join(stub.dir, 'update-force.json'), { force: true });
+    }
+    const updates = argvLines(stub).filter((l) => l.startsWith('update'));
+    assert.ok(updates.some((l) => l.includes('--force')), `a forced retry ran: ${updates.join(' | ')}`);
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
+    assert.ok(
+      posted.some((m) => m.type === 'artifact'),
+      'the panel re-rendered (busy cleared) after the recovery',
+    );
+  });
+
+  test('details update wiring: an anchor-escape refusal shows a non-modal notice, no retry', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'fetch', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      vendor: 'canonical',
+      content: '# Grim Usage',
+      files: [],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'update-name', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'resolved path escapes its anchor root (anchor: claude-root)',
+        reason: 'anchor-escape',
+      },
+    });
+    const dialogs = stubForceDialogs('Show Output');
+    const posted: { type: string }[] = [];
+    const panel = {
+      title: '',
+      iconPath: undefined,
+      webview: {
+        postMessage: (message: { type: string }) => {
+          posted.push(message);
+          return Promise.resolve(true);
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.details.onMessage('ghcr.io/grimoire-rs/skills/grim-usage', panel, {
+        type: 'update',
+        kind: 'skill',
+        name: 'grim-usage',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update grim-usage')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm for a security refusal');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'a non-modal notice was shown');
+    assert.ok(
+      !argvLines(stub).some((l) => l.includes('--force')),
+      'an anchor-escape refusal is never retried with --force',
+    );
+    assert.ok(
+      posted.some((m) => m.type === 'artifact'),
+      'the panel re-rendered (busy cleared) after the notice',
+    );
+  });
+
+  test('details update wiring: a plain refusal (neither stale-lock, forceable, nor anchor-escape) keeps the panel error toast', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'fetch', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      vendor: 'canonical',
+      content: '# Grim Usage',
+      files: [],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'update-name', {
+      error: { code: 'data', exit: 65, message: 'some other update failure' },
+    });
+    const dialogs = stubForceDialogs('Overwrite');
+    const posted: { type: string }[] = [];
+    const panel = {
+      title: '',
+      iconPath: undefined,
+      webview: {
+        postMessage: (message: { type: string }) => {
+          posted.push(message);
+          return Promise.resolve(true);
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.details.onMessage('ghcr.io/grimoire-rs/skills/grim-usage', panel, {
+        type: 'update',
+        kind: 'skill',
+        name: 'grim-usage',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update grim-usage')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no dialog for a plain refusal');
+    assert.strictEqual(dialogs.errorCalls.length, 1, 'the plain error toast was shown');
+    assert.ok(
+      dialogs.errorCalls[0]?.message.includes('some other update failure'),
+      `the toast names the failure: ${dialogs.errorCalls[0]?.message}`,
+    );
+    assert.ok(
+      posted.some((m) => m.type === 'artifact'),
+      'the panel re-rendered (busy cleared) after the failure',
     );
   });
 

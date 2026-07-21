@@ -295,6 +295,10 @@ export type GrimResult<T> =
       // as retryable regardless of this field, for callers on older grim
       // builds that predate it.
       retryable?: boolean;
+      // Additive: grim omits this key unless `reason` is present AND that
+      // reason is forceable (currently "modified" and "untracked-destination")
+      // — never a bare `false`. See isForceable.
+      forceable?: boolean;
     };
 
 export interface RunOptions {
@@ -304,7 +308,14 @@ export interface RunOptions {
 }
 
 interface ErrorDoc {
-  error: { code: string; exit: number; message: string; reason?: string; retryable?: boolean };
+  error: {
+    code: string;
+    exit: number;
+    message: string;
+    reason?: string;
+    retryable?: boolean;
+    forceable?: boolean;
+  };
 }
 
 function isErrorDoc(doc: unknown): doc is ErrorDoc {
@@ -343,6 +354,8 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
       ...(doc.error.reason !== undefined ? { reason: doc.error.reason } : {}),
       // Additive: surface `retryable` verbatim when present, else leave undefined.
       ...(doc.error.retryable !== undefined ? { retryable: doc.error.retryable } : {}),
+      // Additive: surface `forceable` verbatim when present, else leave undefined.
+      ...(doc.error.forceable !== undefined ? { forceable: doc.error.forceable } : {}),
     };
   }
   return { ok: true, value: doc as T };
@@ -361,6 +374,16 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
  *  still wins. Pure; exported for tests. */
 export function isRetryable(result: { exitCode: number; retryable?: boolean }): boolean {
   return result.retryable === true || result.exitCode === 75;
+}
+
+/** True when a failed grim call names a refusal that a retry with `--force`
+ *  can resolve (currently the "modified" and "untracked-destination"
+ *  reasons). Unlike isRetryable, there is no exit-code fallback: exit 65
+ *  covers many non-forceable failures too (e.g. anchor-escape), and
+ *  MINIMUM_GRIM_VERSION guarantees this key is present whenever `forceable`
+ *  is true. Pure; exported for tests. */
+export function isForceable(result: { forceable?: boolean }): boolean {
+  return result.forceable === true;
 }
 
 /** Runs grim with `--format json` appended and parses the report. Builders

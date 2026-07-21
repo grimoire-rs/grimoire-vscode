@@ -11,9 +11,10 @@ import {
   type DescribeResult,
   type Scope,
 } from '../grim';
-import { notifyError, runWithStatusProgress } from '../notify';
+import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
 import { artifactName, refRepo } from '../webview/model';
+import { offerForcedRetry } from './forceRetry';
 
 export async function pickVersion(
   repo: string,
@@ -39,29 +40,36 @@ export async function pickVersion(
   if (!scope) {
     return;
   }
-  await runWithStatusProgress(`Installing ${artifactName(repo)}:${tag}`, async () => {
-    // A preselected project scope may still lack grimoire.toml; `grim add`
-    // there errors before any network, so create the config first (item 1).
-    // projectNeedsInit (not !projectConfigured): a FAILED probe must not
-    // trigger init — see the method's doc.
-    if (scope === 'project' && (await scopes.projectNeedsInit())) {
-      const init = await scopes.run<ActionReport>(initArgs(), 'project');
-      if (!init.ok) {
-        const message = init.kind === 'not-found' ? 'grim executable not found' : init.message;
-        output.appendLine(`error: ${message}`);
-        notifyError(`Grimoire: ${message}`);
-        return;
+  // refRepo strips any tag on the incoming repo (deep links can arrive
+  // tagged) so we pin a single tag, never repo:1.5.0:1.4.2.
+  const addStep = addArgs(`${refRepo(repo)}:${tag}`);
+  const { args, result } = await runWithStatusProgress(
+    `Installing ${artifactName(repo)}:${tag}`,
+    async () => {
+      // A preselected project scope may still lack grimoire.toml; `grim add`
+      // there errors before any network, so create the config first (item 1).
+      // projectNeedsInit (not !projectConfigured): a FAILED probe must not
+      // trigger init — see the method's doc.
+      if (scope === 'project' && (await scopes.projectNeedsInit())) {
+        const init = await scopes.run<ActionReport>(initArgs(), 'project');
+        if (!init.ok) {
+          return { args: initArgs(), result: init };
+        }
       }
+      return { args: addStep, result: await scopes.run<ActionReport>(addStep, scope) };
+    },
+  );
+  if (!result.ok) {
+    // A forceable drift refusal offers an Overwrite confirm; an anchor-escape
+    // refusal gets a non-modal notice with no override — both handled instead
+    // of the plain error toast below (the third funnel this offers alongside
+    // sidebar.ts and details.ts — a tagged pin can hit the same refusals a
+    // plain install does).
+    if (await offerForcedRetry(result, args, scope, scopes, output, onDone)) {
+      return;
     }
-    // refRepo strips any tag on the incoming repo (deep links can arrive
-    // tagged) so we pin a single tag, never repo:1.5.0:1.4.2.
-    const result = await scopes.run<ActionReport>(addArgs(`${refRepo(repo)}:${tag}`), scope);
-    if (!result.ok) {
-      const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
-      output.appendLine(`error: ${message}`);
-      notifyError(`Grimoire: ${message}`);
-    }
-  });
+    reportGrimFailure(result, output);
+  }
   await onDone();
 }
 

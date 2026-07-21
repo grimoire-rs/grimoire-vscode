@@ -42,13 +42,14 @@ import type {
   RevalidateState,
   ScopesVM,
 } from '../webview/protocol';
-import { notifyError, runWithStatusProgress } from '../notify';
+import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { esc, renderDetails } from '../webview/render';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 import { webviewHtml } from './html';
 import { scopeStatuses } from './sidebar';
 import { pickVersion } from './pickVersion';
+import { offerForcedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 
@@ -549,11 +550,21 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
             await this.postVM(repo, panel);
             return;
           }
-          const message =
-            result.kind === 'not-found' ? 'grim executable not found' : result.message;
-          this.output.appendLine(`error: ${message}`);
+          // A forceable drift refusal offers an Overwrite confirm; an anchor-escape
+          // refusal gets a non-modal notice with no override — both handled instead
+          // of the plain error toast below. The modal opens over the active
+          // progress notification (this runs inside runWithStatusProgress), same
+          // as offerFullUpdate above.
+          if (
+            await offerForcedRetry(result, args, scope, this.scopes, this.output, () =>
+              this.onDidChange(),
+            )
+          ) {
+            await this.postVM(repo, panel);
+            return;
+          }
           // Name the failing step — an init→add sequence can fail halfway.
-          notifyError(`Grimoire: grim ${args[0]}: ${message}`);
+          reportGrimFailure(result, this.output, `grim ${args[0]}`);
           // An earlier step may have changed state (init created grimoire.toml),
           // so refresh the views even on failure, then clear the busy state.
           if (last !== undefined) {

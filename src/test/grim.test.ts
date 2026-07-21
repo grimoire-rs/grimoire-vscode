@@ -11,6 +11,7 @@ import {
   describeArgs,
   fetchArgs,
   initArgs,
+  isForceable,
   isRetryable,
   parseReport,
   registryAddArgs,
@@ -282,6 +283,21 @@ suite('grim report parsing', () => {
     const result = parseReport(doc, 80, '');
     assert.ok(!result.ok && result.kind === 'error');
     assert.strictEqual(result.retryable, undefined);
+  });
+
+  test('forceable is surfaced when present', () => {
+    const doc =
+      '{"error":{"code":"data","exit":65,"message":"installed artifact was modified locally","reason":"modified","forceable":true}}';
+    const result = parseReport(doc, 65, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.forceable, true);
+  });
+
+  test('absent forceable stays undefined', () => {
+    const doc = '{"error":{"code":"auth","exit":80,"message":"401 from registry"}}';
+    const result = parseReport(doc, 80, '');
+    assert.ok(!result.ok && result.kind === 'error');
+    assert.strictEqual(result.forceable, undefined);
   });
 
   test('clap usage error (exit 64, no JSON) maps to usage', () => {
@@ -567,5 +583,36 @@ suite('isRetryable', () => {
 
   test('retryable absent + other exit is not retryable', () => {
     assert.strictEqual(isRetryable({ exitCode: 65 }), false);
+  });
+});
+
+suite('isForceable', () => {
+  test('forceable:true is forceable', () => {
+    assert.strictEqual(isForceable({ forceable: true }), true);
+  });
+
+  test('forceable:false is not forceable', () => {
+    assert.strictEqual(isForceable({ forceable: false }), false);
+  });
+
+  test('absent forceable is not forceable', () => {
+    assert.strictEqual(isForceable({}), false);
+  });
+
+  test('a bare exit 65 with no forceable tag is not forceable — unlike isRetryable, there is no exit-code fallback', () => {
+    // exit 65 also covers non-forceable failures (e.g. anchor-escape), so it
+    // must never be read as a forceable signal on its own.
+    const bareRefusal: { exitCode: number; forceable?: boolean } = { exitCode: 65 };
+    assert.strictEqual(isForceable(bareRefusal), false);
+  });
+
+  test('a non-boolean truthy forceable value is rejected — `=== true` only, no truthiness coercion', () => {
+    // grim's contract promises a bare boolean, but the value crosses a
+    // subprocess/JSON boundary untrusted — pin that a string or number
+    // impersonating "true" is not read as forceable.
+    const stringTrue = { forceable: 'true' } as unknown as { forceable?: boolean };
+    const numberOne = { forceable: 1 } as unknown as { forceable?: boolean };
+    assert.strictEqual(isForceable(stringTrue), false);
+    assert.strictEqual(isForceable(numberOne), false);
   });
 });

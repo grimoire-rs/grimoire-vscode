@@ -156,6 +156,18 @@ suite('installer update check', () => {
     assert.strictEqual(grimTooOld('garbage'), true);
   });
 
+  // B6: the `forceable`/`anchor-escape` contract ships in the release that
+  // moves MINIMUM_GRIM_VERSION past 0.10.0 — pinned as a literal (not the
+  // symbolic constant) because the whole point is that this specific,
+  // previously-supported floor must stop being supported.
+  test('grimTooOld: the prior 0.10.0 floor now reads as too old (B6 version bump)', () => {
+    assert.strictEqual(
+      grimTooOld('0.10.0'),
+      true,
+      'MINIMUM_GRIM_VERSION must move past 0.10.0 for the forceable/anchor-escape contract',
+    );
+  });
+
   test('tooOldMessage names the binary that ran, both versions, and a way out', () => {
     const message = tooOldMessage('/usr/local/bin/grim', '0.9.1');
     assert.ok(message.includes('/usr/local/bin/grim'), `names the resolved binary: ${message}`);

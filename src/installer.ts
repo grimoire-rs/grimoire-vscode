@@ -21,8 +21,9 @@ export const RELEASE_PAGE = 'https://github.com/grimoire-rs/grimoire/releases/la
  *  (exit 64), which surfaces as an opaque "unexpected argument" toast and — via
  *  the failed-status path — freezes the update badge. One constant, one check
  *  (`grimTooOld`), so "which grim version is acceptable" is decided in exactly
- *  one place. */
-export const MINIMUM_GRIM_VERSION = '0.10.0';
+ *  one place. 0.11.0 is the release that ships the `forceable`/`anchor-escape`
+ *  error contract offerForcedRetry depends on. */
+export const MINIMUM_GRIM_VERSION = '0.11.0';
 
 /** True when a resolved grim is older than {@link MINIMUM_GRIM_VERSION}.
  *  Unparseable versions compare as 0.0.0 and therefore read as too old — a grim

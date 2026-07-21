@@ -5,7 +5,7 @@
 // legitimately bump other floating-tag artifacts, so we ask first.
 import * as vscode from 'vscode';
 import { updateArgs, type ActionReport, type GrimResult, type Scope } from '../grim';
-import { notifyError, runWithStatusProgress } from '../notify';
+import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
 
 type FailedResult = Extract<GrimResult<unknown>, { ok: false }>;
@@ -43,9 +43,7 @@ export async function offerFullUpdate(
   await runWithStatusProgress('Updating all artifacts', async () => {
     const full = await scopes.run<ActionReport>(updateArgs(), scope);
     if (!full.ok) {
-      const message = full.kind === 'not-found' ? 'grim executable not found' : full.message;
-      output.appendLine(`error: ${message}`);
-      notifyError(`Grimoire: ${message}`);
+      reportGrimFailure(full, output);
     }
   });
   await onDone();

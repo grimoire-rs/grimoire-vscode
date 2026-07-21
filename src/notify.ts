@@ -3,6 +3,7 @@
 // banner on top of the details panel shifts the whole UI) — progress lives in
 // the status bar, warnings/errors in the VS Code notification popup.
 import * as vscode from 'vscode';
+import type { GrimResult } from './grim';
 
 let item: vscode.StatusBarItem | undefined;
 let refs = 0;
@@ -73,6 +74,22 @@ export function notifyError(
   lastAt = now;
   void vscode.window.showErrorMessage(message);
   return true;
+}
+
+/** Shared failure-report tail for every action host + recovery helper: turns
+ *  a failed GrimResult into the "grim executable not found" fallback, logs it
+ *  to the output channel, and shows the error toast. `context` (e.g. `grim
+ *  add`) is named in the toast when the caller wants to say which command
+ *  failed; omitted for a bare message (the stale-lock recovery's full update
+ *  has no single command to name). */
+export function reportGrimFailure(
+  result: Extract<GrimResult<unknown>, { ok: false }>,
+  output: vscode.OutputChannel,
+  context?: string,
+): void {
+  const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
+  output.appendLine(`error: ${message}`);
+  notifyError(`Grimoire: ${context ? `${context}: ` : ''}${message}`);
 }
 
 /** Test seam: observable status-bar state (StatusBarItem exposes no `visible`). */

@@ -27,8 +27,9 @@ import {
   type ScopeStatus,
 } from '../webview/model';
 import type { CardVM, HostToSidebar, SidebarState, SidebarToHost } from '../webview/protocol';
-import { notifyError, runWithStatusProgress } from '../notify';
+import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
+import { offerForcedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 
@@ -244,10 +245,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ) {
         return;
       }
-      const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
-      this.output.appendLine(`error: ${message}`);
+      // A forceable drift refusal offers an Overwrite confirm; an anchor-escape
+      // refusal gets a non-modal notice with no override — both handled instead
+      // of the plain error toast below.
+      if (
+        await offerForcedRetry(result, args, scope, this.scopes, this.output, () =>
+          this.delegate.refreshAll(),
+        )
+      ) {
+        return;
+      }
       // Name the failing step — an init→add sequence can fail halfway.
-      notifyError(`Grimoire: grim ${args[0]}: ${message}`);
+      reportGrimFailure(result, this.output, `grim ${args[0]}`);
     } else {
       const notice = uninstallNotice(result.value);
       if (notice) {
