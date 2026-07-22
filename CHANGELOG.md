@@ -5,6 +5,12 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `grimoire.path.executable` and `grimoire.extraEnv` set in user settings are now honored in remote windows (WSL, SSH, dev containers). They were machine-scoped, which makes VS Code drop them from local user settings whenever a remote is connected — the value was silently ignored until a window reload happened to hide it *(config)*
+
 ## [0.2.2] - 2026-07-21
 
 ### Fixed
@@ -69,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[Unreleased]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.2..HEAD
 [0.2.2]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.1..v0.2.2
 [0.2.1]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.1.0..v0.2.0

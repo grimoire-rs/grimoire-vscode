@@ -193,7 +193,6 @@
         "grimoire.path.executable": {
           "type": "string",
           "default": "grim",
-          "scope": "machine-overridable",
           "markdownDescription": "Path to (or name of) the `grim` executable. Resolved against `PATH` when not absolute. When left at the default and `grim` is not on `PATH`, a copy installed by this extension (if any) is used."
         },
         "grimoire.defaultScope": {
@@ -223,7 +222,6 @@
         "grimoire.extraEnv": {
           "type": "object",
           "default": {},
-          "scope": "machine-overridable",
           "additionalProperties": {
             "type": "string"
           },

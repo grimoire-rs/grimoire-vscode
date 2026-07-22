@@ -32,6 +32,35 @@ function contextStub(dir: string, argvLog?: string): string {
   return executable;
 }
 
+// Manifest-level guard, deliberately outside the stub-driven suite below (it
+// needs no shell stub, so it runs on Windows too). A machine/machine-overridable
+// scope makes VS Code drop the key from the LOCAL user settings of any remote
+// (WSL/SSH/container) window: LOCAL_MACHINE_SCOPES is
+// [APPLICATION, WINDOW, RESOURCE, LANGUAGE_OVERRIDABLE] — no MACHINE_OVERRIDABLE
+// — so the value never reaches the remote extension host and the setting reads
+// as unset. Worse, it LOOKS like it works after a window reload: local settings
+// are parsed before the extension registers its configuration schema, so the
+// then-unknown key has no scope and survives that one parse. Untrusted-workspace
+// protection comes from `capabilities.untrustedWorkspaces.restrictedConfigurations`,
+// not from the scope, so dropping it costs nothing.
+suite('config manifest', () => {
+  test('path.executable and extraEnv are not machine-scoped (remote windows drop those)', () => {
+    const extension = vscode.extensions.getExtension('grimoire-rs.grimoire-vscode');
+    assert.ok(extension);
+    const properties = extension.packageJSON.contributes.configuration.properties as Record<
+      string,
+      { scope?: string }
+    >;
+    for (const key of ['grimoire.path.executable', 'grimoire.extraEnv']) {
+      const scope = properties[key]?.scope ?? 'window';
+      assert.ok(
+        !scope.startsWith('machine'),
+        `${key} must not be machine-scoped (is "${scope}") — remote windows ignore it in user settings`,
+      );
+    }
+  });
+});
+
 suite('config reload: grimoire.path.executable', () => {
   let dir: string;
 
