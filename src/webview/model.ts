@@ -182,7 +182,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
       scope: scope.scope,
       version,
       updateAvailable: computeUpdateAvailable(item),
-      clients: item.outputs.map((o) => o.client),
+      clients: (item.outputs ?? []).map((o) => o.client),
       state: item.state,
       kind: item.kind,
       name: item.name,

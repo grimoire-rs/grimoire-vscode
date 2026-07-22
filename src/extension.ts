@@ -360,10 +360,15 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
             };
             for (const item of items) {
               counts[item.action]++;
-              if (item.reaped_clients.length > 0) {
+              // `?? []` for the same reason the sibling arrays get it in
+              // buildInstalled (webview/model.ts): nullable means null, and the
+              // version floor is not an interlock — it only flags a too-old grim
+              // in the snapshot, so `grim update` can still reach a binary that
+              // predates these fields and an unguarded `.length` would throw.
+              if ((item.reaped_clients ?? []).length > 0) {
                 reaped.push(item.name);
               }
-              if (item.kept_modified_clients.length > 0) {
+              if ((item.kept_modified_clients ?? []).length > 0) {
                 keptModified.push(item.name);
               }
             }
