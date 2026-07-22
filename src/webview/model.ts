@@ -330,7 +330,6 @@ export function buildInstalledCards(
 export interface CardFilter {
   /** Selected kinds; EMPTY MEANS ALL (the "All" chip). */
   kinds: string[];
-  showDeprecated: boolean;
   /** Installed view only: which scope's list to show. undefined = the heuristic
    *  default (see {@link resolveInstalledScope}); set by the SCOPE toggle. */
   scope?: Scope;
@@ -338,7 +337,6 @@ export interface CardFilter {
 
 export const DEFAULT_FILTER: CardFilter = {
   kinds: [],
-  showDeprecated: true,
 };
 
 /** Default install scope: project when a configured workspace is open (installs
@@ -380,9 +378,6 @@ export function toggleKinds(current: string[], clicked: string): string[] {
 export function filterCards(cards: CardVM[], filter: CardFilter): CardVM[] {
   return cards.filter((card) => {
     if (filter.kinds.length > 0 && !(card.kind !== null && filter.kinds.includes(card.kind))) {
-      return false;
-    }
-    if (!filter.showDeprecated && card.deprecated) {
       return false;
     }
     return true;

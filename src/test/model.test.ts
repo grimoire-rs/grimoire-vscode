@@ -470,9 +470,12 @@ suite('filters', () => {
     assert.deepStrictEqual(DEFAULT_FILTER.kinds, [], 'empty kinds means All');
   });
 
-  test('showDeprecated=false hides deprecated', () => {
-    const filtered = filterCards(cards, { ...DEFAULT_FILTER, showDeprecated: false });
-    assert.strictEqual(filtered.length, 2);
+  test('deprecated cards are never filtered client-side', () => {
+    // grim's own `options.show_deprecated` decides which deprecated rows are
+    // returned at all (see catalog.ts) — a second, client-side visibility
+    // filter would only ever hide rows the user asked grim to show.
+    assert.ok(cards.some((c) => c.deprecated));
+    assert.strictEqual(filterCards(cards, DEFAULT_FILTER).length, cards.length);
   });
 
   test('registriesOf is sorted and unique', () => {
