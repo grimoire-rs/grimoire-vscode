@@ -34,7 +34,7 @@ import { Watchers } from './watchers';
 import { artifactName, isValidRepo, parseShareLink, refRepo } from './webview/model';
 
 export interface GrimoireApi {
-  refresh(): Promise<void>;
+  refresh(options?: RefreshOptions): Promise<void>;
   scopes: ScopeService;
   /** Test seams — not part of the public surface. */
   providers: {
@@ -46,6 +46,26 @@ export interface GrimoireApi {
   handleUri(uri: vscode.Uri): Promise<void>;
 }
 
+/** `refresh` busts grim's own catalog cache (`--refresh`); `check` opts into
+ *  the network-verified `grim status --check`. Both are off by default. */
+export interface RefreshOptions {
+  refresh?: boolean;
+  check?: boolean;
+}
+
+/** Union of two queued requests: a flag asked for by ANY coalesced caller must
+ *  survive, or the explicit refresh a user clicked could be served by a cheap
+ *  watcher-driven one that happened to be queued alongside it. */
+function mergeRefreshOptions(
+  a: RefreshOptions | undefined,
+  b: RefreshOptions,
+): RefreshOptions {
+  return {
+    ...(a?.refresh === true || b.refresh === true ? { refresh: true } : {}),
+    ...(a?.check === true || b.check === true ? { check: true } : {}),
+  };
+}
+
 export function activate(context: vscode.ExtensionContext): GrimoireApi {
   const output = vscode.window.createOutputChannel('Grimoire', { log: true });
   context.subscriptions.push(output);
@@ -55,7 +75,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   scopes.logExecutable();
   const catalog = new CatalogService(scopes);
 
-  const refreshAll = async (options: { refresh?: boolean; check?: boolean } = {}): Promise<void> => {
+  const runRefresh = async (options: RefreshOptions): Promise<void> => {
     // sidebar.refresh posts its loading state BEFORE taking the snapshot (the
     // slow part), so the webview's refreshing-footer timer starts at t=0; the
     // details panels take their own snapshots inside buildVM regardless.
@@ -76,6 +96,31 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     if (grimHome !== undefined) {
       watchers.rebuild(grimHome);
     }
+  };
+
+  // Refreshes coalesce instead of piling up. A watcher event, a command, a
+  // config change and an action's completion refresh can all land at once, and
+  // each used to spawn its own full round of grim calls concurrently. Callers
+  // queue their options (never downgraded — a `refresh: true` request stays
+  // one) and await the drain, so an awaited refreshAll still means "state is
+  // fresh" while only one round runs at a time.
+  let draining: Promise<void> | undefined;
+  let queued: RefreshOptions | undefined;
+
+  const refreshAll = (options: RefreshOptions = {}): Promise<void> => {
+    queued = mergeRefreshOptions(queued, options);
+    draining ??= (async () => {
+      try {
+        while (queued !== undefined) {
+          const next = queued;
+          queued = undefined;
+          await runRefresh(next);
+        }
+      } finally {
+        draining = undefined;
+      }
+    })();
+    return draining;
   };
 
   // Sidebar + details only, NOT settings — SettingsManager's own write/init

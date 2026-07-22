@@ -430,6 +430,27 @@ suite('extension integration', () => {
     assert.ok(search.includes('--refresh'), `explicit refresh carries --refresh: ${search}`);
   });
 
+  test('concurrent refreshes coalesce into one round, keeping the strongest flags', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    fs.rmSync(stub.argvLog, { force: true });
+    // A watcher event, a command and an action's completion refresh can all
+    // land at once; each used to spawn its own full round of grim calls.
+    await Promise.all([api.refresh(), api.refresh({ refresh: true }), api.refresh()]);
+    const searches = argvLines(stub).filter((l) => l.startsWith('search'));
+    assert.ok(searches.length > 0, 'search ran');
+    assert.ok(
+      searches.length <= 2,
+      `three overlapping refreshes must not mean three search rounds: ${searches.join(' | ')}`,
+    );
+    // The explicit refresh must not be downgraded by the cheap ones it merged
+    // with — otherwise clicking Refresh could silently serve grim's cache.
+    assert.ok(
+      searches.some((l) => l.includes('--refresh')),
+      `the coalesced round keeps --refresh: ${searches.join(' | ')}`,
+    );
+  });
+
   test('a plain refresh runs grim status without --check (stays offline)', async function () {
     this.timeout(15000);
     const api = await activateExtension();
