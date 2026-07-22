@@ -14,6 +14,12 @@ export interface CatalogState {
 export class CatalogService {
   private items: SearchItem[] = [];
   private syncedAt: number | null = null;
+  /** Monotonic search generation, so a slow response can't overwrite a newer
+   *  one's results. Same pattern as SidebarProvider.refreshGen — but that one
+   *  only gates POSTING to its own webview; this shared cache is written by
+   *  every caller (the sidebar's search box, watcher and command refreshes,
+   *  the details panels' catalog lookups) and had no ordering guard at all. */
+  private generation = 0;
 
   constructor(private readonly scopes: ScopeService) {}
 
@@ -39,6 +45,7 @@ export class CatalogService {
     // probe error would silently fall back to global too, instead of searching
     // project scope and surfacing the failure as a search error.
     const scope = this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
+    const generation = ++this.generation;
     const result: GrimResult<ItemsEnvelope<SearchItem>> = await this.scopes.run(args, scope);
     if (!result.ok) {
       if (result.kind === 'not-found') {
@@ -50,7 +57,14 @@ export class CatalogService {
     // or not an array (contract violation, but observed from misbehaving stubs
     // and possible on a version-skewed grim) must not poison the cache — the
     // card builders iterate it.
-    this.items = Array.isArray(result.value.items) ? result.value.items : [];
+    const items = Array.isArray(result.value.items) ? result.value.items : [];
+    if (generation !== this.generation) {
+      // A newer search started while this one was in flight and its results
+      // are what the cache should hold. Return this caller's own results —
+      // they are real, just superseded — without clobbering the cache.
+      return { items, syncedAt: this.syncedAt };
+    }
+    this.items = items;
     this.syncedAt = Date.now();
     return this.state();
   }
