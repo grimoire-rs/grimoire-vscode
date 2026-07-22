@@ -3604,6 +3604,30 @@ suite('grim version floor', () => {
       'status runs once the floor is met',
     );
   });
+
+  test('a too-old grim still reports config_exists, so browse keeps its scope', async function () {
+    this.timeout(15000);
+    if (!vscode.workspace.workspaceFolders?.length) {
+      this.skip(); // project scope is only probed when a folder is open
+    }
+    canned(stub, 'context', contextDoc({ version: '0.9.1', config_exists: true }));
+    const scopes = new ScopeService(
+      vscode.Uri.file(fs.mkdtempSync(path.join(os.tmpdir(), 'grim-floor-scope-'))),
+      recordingOutput([]),
+    );
+    const snapshot = await scopes.snapshot();
+    // The floor gates STATUS data (install state stays unknown, not empty), but
+    // `config_exists` comes off `grim context`, which any version reports.
+    // Dropping the whole scope snapshot used to leave projectSearchable false
+    // and silently pin browse to global on a stale binary.
+    assert.strictEqual(snapshot.project?.context.config_exists, true);
+    assert.deepStrictEqual(snapshot.project?.status, [], 'install state stays unknown, not faked');
+    assert.strictEqual(
+      projectSearchable(snapshot),
+      true,
+      'a configured project stays searchable even below the floor',
+    );
+  });
 });
 
 /** The activity-bar badge (outdated count). It rolls up into the icon number,

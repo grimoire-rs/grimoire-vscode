@@ -333,22 +333,30 @@ export class ScopeService {
           : executable;
       const message = tooOldMessage(resolved, ctx.value.version);
       this.output.appendLine(`  ${message}`);
-      return { probe: ctx, snapshot: undefined, statusError: message };
+      // Keep the context. `grim status` is skipped (a pre-floor binary rejects
+      // its flags with exit 64) so install state stays UNKNOWN — the same
+      // `status: []` + statusError shape a failed status call produces below.
+      // Dropping the whole snapshot instead would discard `config_exists`,
+      // which `grim context` reports on ANY version: with `project` undefined
+      // and `projectProbeFailed` unset (the probe SUCCEEDED — only the floor
+      // failed), projectSearchable reads false and pins browse to global scope
+      // regardless of the project's real state.
+      return {
+        probe: ctx,
+        snapshot: { context: ctx.value, status: [], declared: this.readDeclared(ctx.value) },
+        statusError: message,
+      };
     }
     const status = ctx.value.config_exists
       ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(options), scope)
       : undefined;
-    let declared: Record<string, string> = {};
-    try {
-      if (ctx.value.config_exists) {
-        declared = parseDeclaredRefs(fs.readFileSync(ctx.value.config_path, 'utf8'));
-      }
-    } catch {
-      // unreadable config: leave declared empty
-    }
     return {
       probe: ctx,
-      snapshot: { context: ctx.value, status: status?.ok ? status.value.items : [], declared },
+      snapshot: {
+        context: ctx.value,
+        status: status?.ok ? status.value.items : [],
+        declared: this.readDeclared(ctx.value),
+      },
       ...(status && !status.ok
         ? {
             statusError:
@@ -356,6 +364,20 @@ export class ScopeService {
           }
         : {}),
     };
+  }
+
+  /** The scope's declared refs, read off grimoire.toml. Empty when there is no
+   *  config or it can't be read — a malformed config is not worth failing the
+   *  whole snapshot over. */
+  private readDeclared(context: ContextInfo): Record<string, string> {
+    if (!context.config_exists) {
+      return {};
+    }
+    try {
+      return parseDeclaredRefs(fs.readFileSync(context.config_path, 'utf8'));
+    } catch {
+      return {};
+    }
   }
 
   /** Gathers both scopes. `grimMissing` is set when the binary is absent. The
