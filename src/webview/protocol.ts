@@ -92,6 +92,13 @@ export interface SidebarState {
   syncedAt: number | null;
   now: number;
   error?: string;
+  /** Set when the catalog loaded but `grim status` did not, so install state is
+   *  UNKNOWN — not empty. Carries the reason (a too-old binary, a failed status
+   *  call). Browse still renders its catalog cards, but every install/update
+   *  affordance is suppressed rather than claiming "Install" on an artifact
+   *  that may well be installed, and Updates/Installed say so instead of
+   *  reading as empty. */
+  installStateUnknown?: string;
 }
 
 export type SidebarToHost =

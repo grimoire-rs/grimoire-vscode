@@ -468,15 +468,16 @@ suite('extension integration', () => {
     }
   });
 
-  test('a failed status surfaces as an error state, never as "Install" on installed cards', async function () {
+  test('a failed status keeps browsing but marks install state unknown', async function () {
     this.timeout(15000);
     const api = await activateExtension();
     const { view, states } = fakeView();
     api.providers.sidebar.resolveWebviewView(view);
     // The reported bug: Check for Updates against a grim without `status
     // --check` (exit 64) silently emptied the status list, flipping every
-    // installed card to "Install" and clearing the badge. The failure must
-    // surface as the error phase instead (same surface as a catalog error).
+    // installed card to "Install" and clearing the badge. The catalog is still
+    // good, so browsing stays available — but the state must say install
+    // state is unknown, which drops every install affordance and the badge.
     const originalRun = api.scopes.run;
     try {
       api.scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
@@ -500,15 +501,17 @@ suite('extension integration', () => {
       await api.providers.sidebar.refresh({ check: true });
       const last = states.at(-1);
       assert.ok(last, 'no state was posted');
-      assert.strictEqual(
-        last.phase,
-        'error',
-        'a failed status must surface as an error, not render cards off an empty status list',
-      );
+      assert.strictEqual(last.phase, 'ready', 'the catalog loaded — browsing stays available');
       assert.ok(
-        last.error?.includes('unexpected argument'),
-        `the status failure message rides the state: ${last.error}`,
+        last.installStateUnknown?.includes('unexpected argument'),
+        `the status failure message rides the state: ${last.installStateUnknown}`,
       );
+      assert.strictEqual(
+        last.error,
+        undefined,
+        'a status failure is not a catalog failure — the error phase stays for the latter',
+      );
+      assert.ok(last.items.length > 0, 'catalog cards still reach the webview');
     } finally {
       api.scopes.run = originalRun;
     }
@@ -3706,9 +3709,10 @@ suite('update badge', () => {
       await api.providers.sidebar.refresh();
       assert.strictEqual(badgeOf(view)?.value, 1);
       // Install state is now UNKNOWN, not empty. The badge deliberately holds
-      // its last value; the posted cards must hold theirs too. Posting the
-      // empty-status set instead would empty the Updates tab's pill while the
-      // badge still showed 1 — the exact "badge won't clear" report.
+      // its last value rather than clearing to a "no updates" claim it cannot
+      // make. The Updates tab must not contradict it with a bare 0 either —
+      // it renders "Install state is unavailable" off installStateUnknown, and
+      // the banner explains the frozen count.
       api.scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
         if (args[0] === 'status') {
           return {
@@ -3724,12 +3728,11 @@ suite('update badge', () => {
       await api.providers.sidebar.refresh();
       const last = states.at(-1);
       assert.ok(last);
-      assert.strictEqual(last.phase, 'error');
+      assert.strictEqual(last.phase, 'ready', 'the catalog is fine — browsing stays available');
       assert.strictEqual(badgeOf(view)?.value, 1, 'the badge holds its last known count');
-      assert.strictEqual(
-        last.installedItems.filter((c) => c.state === 'outdated').length,
-        badgeOf(view)?.value,
-        'the Updates pill and the badge must never show different numbers',
+      assert.ok(
+        last.installStateUnknown?.includes('stale binary'),
+        'the tabs render the reason instead of a count that would contradict the badge',
       );
     } finally {
       api.scopes.run = originalRun;

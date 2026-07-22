@@ -332,43 +332,42 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     // A failed status call (snap.error) means install state is unknown — the
     // cards were built from an EMPTY status list and would lie "Install" on
-    // installed artifacts, so it surfaces as the same error phase a catalog
-    // failure does. Those lying cards also must not become lastReady (a late
-    // logo repost would repaint them as 'ready' over the error state); the
-    // badge stays untouched too — clearing it off empty data is the same lie
-    // in miniature. Catalog errors keep updating lastReady as before: their
-    // cards are built from a GOOD status plus the cached catalog.
+    // installed artifacts. The catalog itself is fine, though, so browsing
+    // stays available: the state posts `installStateUnknown` and the webview
+    // renders a persistent banner, drops every install/update affordance, and
+    // says so on the Updates/Installed tabs instead of reading as empty.
+    // Blanking the whole view (the old behavior) made one stale binary look
+    // like a broken extension.
+    //
+    // Those cards still must not become lastReady (a late logo repost would
+    // repaint them as a clean 'ready' state), and the badge stays untouched —
+    // clearing it off empty data is the same lie in miniature.
     if (snap.error === undefined) {
       this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
-    }
-    const error = catalogState.error ?? snap.error;
-    if (snap.error === undefined) {
       this.setBadge(installed.filter((c) => c.state === 'outdated').length);
     }
-    // The badge freezes on a failed status (above), so the cards must freeze
-    // with it: posting the empty-status set while the badge keeps its old count
-    // makes the Updates tab's pill (same formula, same field — render.ts) and
-    // the activity-bar badge state different numbers at the same time. That
-    // disagreement IS the "badge won't clear after an update" report: the update
-    // succeeded, the tab emptied, the frozen badge stayed. Last known-good for
-    // both, or nothing at all when there is no known-good yet.
-    const shown = snap.error !== undefined ? this.lastReady : undefined;
-    if (error !== undefined) {
+    // A catalog failure is the one that still has nothing to show: its cards
+    // come from a possibly-empty result set, so it keeps the error phase.
+    const catalogError = catalogState.error;
+    if (catalogError !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
       // error; notifyError's dedupe collapses them to one popup.
-      notifyError(`Grimoire: ${error}`, { dedupe: true });
+      notifyError(`Grimoire: ${catalogError}`, { dedupe: true });
     }
     this.postState({
-      phase: error !== undefined ? 'error' : 'ready',
-      items: shown?.cards ?? cards,
-      installed: shown?.installed ?? installed,
-      ...(error !== undefined ? { error } : {}),
+      phase: catalogError !== undefined ? 'error' : 'ready',
+      items: cards,
+      installed,
+      ...(catalogError !== undefined ? { error: catalogError } : {}),
+      // The banner is persistent, so the status failure needs no toast of its
+      // own — it would re-fire on every refresh for as long as it persists.
+      ...(snap.error !== undefined ? { installStateUnknown: snap.error } : {}),
       syncedAt: catalogState.syncedAt,
       snapshot: snap,
     });
     // Browse results drive the prefetch (top-K handled by the prefetcher).
     // Skip on error results.
-    if (error === undefined) {
+    if (catalogError === undefined) {
       this.delegate.prefetch(cards.map((c) => c.repo));
     }
   }
@@ -429,6 +428,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     items: SidebarState['items'];
     installed: SidebarState['installedItems'];
     error?: string;
+    installStateUnknown?: string;
     syncedAt?: number | null;
     snapshot?: Snapshot;
   }): void {
@@ -456,6 +456,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
+      ...(partial.installStateUnknown !== undefined
+        ? { installStateUnknown: partial.installStateUnknown }
+        : {}),
     };
     this.post({ type: 'state', state });
   }

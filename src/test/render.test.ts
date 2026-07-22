@@ -730,6 +730,46 @@ suite('sidebar rendering', () => {
     assert.strictEqual(await litString(renderSidebarNotice(sidebarState())), '');
   });
 
+  test('unknown install state banners the reason and keeps browsing, minus every install affordance', async () => {
+    const degraded = sidebarState({
+      items: buildCards([searchItem()], []),
+      installStateUnknown: 'grim 0.9.1 at /usr/bin/grim is too old.',
+    });
+    const html = await litHtml(renderSidebar(degraded, DEFAULT_FILTER));
+    // The banner rides the same notice slot as the init offer, above the tabs.
+    assert.ok(html.includes('grim 0.9.1 at /usr/bin/grim is too old.'), html);
+    assert.ok(html.includes('Install state is unavailable'));
+    assert.ok(html.indexOf('init-notification') < html.indexOf('sidebar-tabs'));
+    // Catalog cards still render — the catalog loaded fine.
+    assert.ok(html.includes('class="card'), 'browse cards still render');
+    // ...but nothing claims to know whether any of them is installed.
+    assert.ok(!html.includes('data-action="install"'), 'no Install button');
+    assert.ok(!html.includes('data-action="update"'), 'no Update button');
+    assert.ok(!html.includes('installed-check'), 'no installed checkmark');
+  });
+
+  test('unknown install state stops the installed-side tabs claiming "nothing installed"', async () => {
+    for (const mode of ['updates', 'installed'] as const) {
+      const html = await litHtml(
+        renderSidebarResults(
+          sidebarState({ mode, installStateUnknown: 'stale binary' }),
+          DEFAULT_FILTER,
+        ),
+      );
+      assert.ok(html.includes('Install state is unavailable'), `${mode}: ${html}`);
+      assert.ok(!html.toLowerCase().includes('nothing installed'), mode);
+      assert.ok(!html.includes('up to date'), mode);
+    }
+  });
+
+  test('the unknown-install-state banner escapes its message', async () => {
+    const html = await litHtml(
+      renderSidebarNotice(sidebarState({ installStateUnknown: '<img src=x onerror=alert(1)>' })),
+    );
+    assert.ok(!html.includes('<img'), html);
+    assert.ok(html.includes('&lt;img'), html);
+  });
+
   test('updates view renders outdated cards as update rows, no section chrome or Update-All button', async () => {
     const scope: ScopeStatus = {
       scope: 'project',

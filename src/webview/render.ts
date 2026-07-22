@@ -181,6 +181,9 @@ export interface CardVariant {
   /** 'updates' = version-delta row (1e UPDATES); 'scope' = client-chip row (1e sections). */
   variant?: 'browse' | 'updates' | 'scope';
   scope?: 'project' | 'global';
+  /** Status did not load: drop the row's install/update affordance rather than
+   *  render "Install" off an empty install list (see SidebarState). */
+  installStateUnknown?: boolean;
 }
 
 /** "→ use <replacedBy>" link on a card's deprecated line — mirrors the details
@@ -254,7 +257,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     body = html`${title}${description}
     <div class="card-meta">
       <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
-      <span class="card-actions">${cardAction(card)}</span>
+      <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card)}</span>
     </div>`;
   }
   return html`
@@ -403,6 +406,19 @@ export function renderRefreshingFooter(defaultRegistry: string | null): Template
  *  stays this compact banner rather than displacing real results — button
  *  copy/emphasis still matches 3c ("Initialize Project Config", primary). */
 export function renderSidebarNotice(state: SidebarState): TemplateResult | typeof nothing {
+  // Install state unknown outranks the init offer: browsing still works, but
+  // nothing on screen can be trusted to say what is installed, and the offer to
+  // create a grimoire.toml would be answering the wrong question.
+  if (state.installStateUnknown !== undefined) {
+    return html`
+<div class="init-notification">
+  <span class="codicon codicon-warning init-icon"></span>
+  <div class="init-body">
+    <span>${state.installStateUnknown} Install state is unavailable until this is resolved.</span>
+    <vscode-button class="sm" data-action="install-grim">Install grim</vscode-button>
+  </div>
+</div>`;
+  }
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
     return nothing;
   }
@@ -491,6 +507,12 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     return html`<div class="error-state"><span class="codicon codicon-error"></span> ${state.error ?? 'Unknown error'}</div>`;
   }
   if (state.mode !== 'browse') {
+    // Both installed-side tabs derive from status; with status unknown their
+    // lists are empty for want of data, and "Nothing installed" would be a
+    // claim we cannot make.
+    if (state.installStateUnknown !== undefined) {
+      return installedEmpty('Install state is unavailable.');
+    }
     return renderInstalledResults(state, filter);
   }
   const filtered = filterCards(state.items, filter);
@@ -502,7 +524,11 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
   const body =
     filtered.length === 0
       ? renderEmpty(state)
-      : html`${repeat(filtered, (c) => c.repo, (c) => renderCard(c))}`;
+      : html`${repeat(
+          filtered,
+          (c) => c.repo,
+          (c) => renderCard(c, { installStateUnknown: state.installStateUnknown !== undefined }),
+        )}`;
   return html`${summary}<div class="cards">${body}</div>`;
 }
 
