@@ -26,6 +26,7 @@ import { initNotify, notifyError, runWithStatusProgress } from './notify';
 import { Prefetcher } from './prefetch';
 import { ScopeService } from './scopes';
 import { DetailsManager, DETAILS_VIEW_TYPE } from './views/details';
+import { showGrimInfo } from './views/grimInfo';
 import { pickVersion } from './views/pickVersion';
 import { SettingsManager } from './views/settings';
 import { SidebarProvider } from './views/sidebar';
@@ -417,6 +418,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     vscode.commands.registerCommand('grimoire.installGrim', () => runInstallGrim()),
     vscode.commands.registerCommand('grimoire.openSettings', () => settings.open()),
     vscode.commands.registerCommand('grimoire.showOutput', () => output.show()),
+    vscode.commands.registerCommand('grimoire.showGrimInfo', () => showGrimInfo(scopes)),
     vscode.commands.registerCommand('grimoire.openDetails', (repo: unknown) => {
       if (typeof repo === 'string' && repo.length > 0) {
         details.open(repo);

@@ -113,6 +113,12 @@
         "category": "Grimoire"
       },
       {
+        "command": "grimoire.showGrimInfo",
+        "title": "Show grim Info",
+        "category": "Grimoire",
+        "icon": "$(info)"
+      },
+      {
         "command": "grimoire.openDetails",
         "title": "Open Artifact Details",
         "category": "Grimoire"
@@ -168,6 +174,11 @@
           "command": "grimoire.openSettings",
           "when": "view == grimoire.marketplace",
           "group": "9_settings@1"
+        },
+        {
+          "command": "grimoire.showGrimInfo",
+          "when": "view == grimoire.marketplace",
+          "group": "9_settings@2"
         }
       ],
       "grimoire.feedback": [
