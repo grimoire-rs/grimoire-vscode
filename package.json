@@ -213,7 +213,7 @@
             "global"
           ],
           "default": "project",
-          "description": "Preferred install scope when both are available."
+          "markdownDescription": "Scope used by install actions that do not ask, such as **Pin to version**, when both scopes are available. Does not affect which scope Browse searches or which scope the Installed view shows — those follow the open workspace."
         },
         "grimoire.watchForChanges": {
           "type": "boolean",
