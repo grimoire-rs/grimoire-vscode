@@ -195,6 +195,63 @@ suite('watchers', () => {
     }
   });
 
+  // rebuildWatchers arms once at activation off a single `grim context
+  // --global` probe. That probe failing left the global watchers unarmed for
+  // the whole session, so refreshAll now re-arms from the snapshot it already
+  // has — which only works if a later rebuild can still arm what an earlier
+  // rebuild(undefined) skipped.
+  test('a later rebuild arms the global watchers a failed probe skipped', async function () {
+    this.timeout(15000);
+    const grimHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-home-heal-'));
+    fs.mkdirSync(path.join(grimHome, 'state'), { recursive: true });
+    let fired = 0;
+    const watchers = new Watchers(() => {
+      fired += 1;
+    }, 40);
+    try {
+      watchers.rebuild(undefined); // the probe failed: no grim home to watch
+      watchers.rebuild(grimHome); // a later refresh knows the home
+      // The memo must not mistake this for a no-op: an undefined home and a
+      // real one are different arming states, and only the second watches the
+      // grim home at all.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      fired = 0;
+      fs.writeFileSync(path.join(grimHome, 'grimoire.lock'), 'lock_version = 3\n');
+      await waitFor(() => fired > 0);
+    } finally {
+      watchers.dispose();
+      fs.rmSync(grimHome, { recursive: true, force: true });
+    }
+  });
+
+  // refreshAll re-arms on every refresh now; a rebuild that tore down and
+  // recreated its watchers each time would drop events landing in the gap.
+  // Uses the workspace watcher (the reliable one — the grim-home watchers need
+  // suite warm-up before they fire) since the memo is shared by both.
+  test('re-arming with unchanged inputs keeps the existing watchers live', async function () {
+    this.timeout(15000);
+    let fired = 0;
+    const watchers = new Watchers(() => {
+      fired += 1;
+    }, 40);
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    assert.ok(folder);
+    const file = path.join(folder.uri.fsPath, 'grimoire.toml');
+    const original = fs.readFileSync(file, 'utf8');
+    try {
+      watchers.rebuild(undefined);
+      for (let i = 0; i < 5; i++) {
+        watchers.rebuild(undefined);
+      }
+      fired = 0;
+      fs.writeFileSync(file, original + `\n# touched ${Date.now()}\n`);
+      await waitFor(() => fired > 0);
+    } finally {
+      fs.writeFileSync(file, original);
+      watchers.dispose();
+    }
+  });
+
   test('dispose stops events', async () => {
     let fired = 0;
     const watchers = new Watchers(() => {

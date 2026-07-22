@@ -66,6 +66,16 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       details.refreshOpenPanels(options),
       settings.refreshOpenPanel(),
     ]);
+    // Self-heal the watchers. rebuildWatchers runs once at activation off a
+    // single `grim context --global` probe with no retry; one transient
+    // failure there leaves the global watchers unarmed for the whole session,
+    // and every global-scope change made outside this extension then goes
+    // unnoticed. The refresh above already snapshotted global scope, so the
+    // grim home is in hand — re-arm from it rather than probing again.
+    const grimHome = scopes.cachedSnapshot()?.global?.context.grim_home;
+    if (grimHome !== undefined) {
+      watchers.rebuild(grimHome);
+    }
   };
 
   // Sidebar + details only, NOT settings — SettingsManager's own write/init
@@ -235,6 +245,13 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
 
   const rebuildWatchers = async (): Promise<void> => {
     const ctx = await scopes.run<ContextInfo>(contextArgs(), 'global');
+    if (!ctx.ok) {
+      // Silent until now, and the consequence is invisible: rebuild(undefined)
+      // skips the whole global block, so the global grimoire.toml/lock and
+      // state/global.json go unwatched for the rest of the session.
+      const message = ctx.kind === 'not-found' ? 'grim executable not found' : ctx.message;
+      output.appendLine(`watchers: global context probe failed (${message})`);
+    }
     watchers.rebuild(ctx.ok ? ctx.value.grim_home : undefined);
   };
   void rebuildWatchers();

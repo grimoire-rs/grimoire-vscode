@@ -16,6 +16,8 @@ export class Watchers implements vscode.Disposable {
   private disposables: vscode.Disposable[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private suspendDepth = 0;
+  /** What the currently-armed watcher set was built from — see rebuild(). */
+  private armedKey: string | undefined;
 
   // debounceMs is injectable so tests don't sleep real seconds.
   constructor(
@@ -41,10 +43,24 @@ export class Watchers implements vscode.Disposable {
     }
   }
 
-  /** (Re)builds watchers for the given grim home + workspace folders. */
+  /** (Re)builds watchers for the given grim home + workspace folders.
+   *  Idempotent: an unchanged input is a no-op, so callers may re-arm freely
+   *  (refreshAll does, to self-heal a probe that failed at activation) without
+   *  churning FileSystemWatchers or opening a window where events fall between
+   *  a dispose and its replacement. */
   rebuild(grimHome: string | undefined): void {
+    const watchForChanges = readConfig().watchForChanges;
+    const key = JSON.stringify([
+      grimHome ?? null,
+      watchForChanges,
+      (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.toString()),
+    ]);
+    if (key === this.armedKey) {
+      return;
+    }
+    this.armedKey = key;
     this.disposeWatchers();
-    if (!readConfig().watchForChanges) {
+    if (!watchForChanges) {
       return;
     }
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -105,6 +121,7 @@ export class Watchers implements vscode.Disposable {
     if (this.timer) {
       clearTimeout(this.timer);
     }
+    this.armedKey = undefined; // disposed: the next rebuild must actually arm
     this.disposeWatchers();
   }
 }
