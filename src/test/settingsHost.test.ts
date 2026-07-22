@@ -783,4 +783,49 @@ suite('settings host integration', () => {
       assert.deepStrictEqual(message.state.registryFields, []);
     }
   });
+
+  // The panel edits whichever tab is open; Browse derives its search scope
+  // independently and grim never merges scope config, so a write can silently
+  // land in a file Browse is not reading. The state carries the fact so the
+  // webview can say so.
+  test('the posted state carries the scope Browse is searching, once one is known', async () => {
+    canned(stub.dir, 'registry-fields', registryFieldsDoc());
+    const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+    const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
+    const manager = new SettingsManager(
+      vscode.Uri.file(stub.dir),
+      scopes,
+      fakeOutput,
+      async () => {},
+      async () => {},
+    );
+    const { panel, posts } = fakeSettingsPanel();
+
+    // No snapshot has been taken yet: claim nothing rather than guess.
+    await manager.onMessage(panel, { type: 'ready', scope: 'global' });
+    const first = posts.at(-1);
+    assert.ok(first?.type === 'state');
+    assert.strictEqual(first.state.searchScope, undefined);
+
+    // Once the sidebar has snapshotted, the panel reads the answer off it
+    // rather than spawning a probe of its own.
+    await scopes.snapshot();
+    const before = argvLines(stub).length;
+    await manager.onMessage(panel, { type: 'switchScope', scope: 'global' });
+    const second = posts.at(-1);
+    assert.ok(second?.type === 'state');
+    assert.ok(
+      second.state.searchScope === 'project' || second.state.searchScope === 'global',
+      `expected a resolved search scope, got ${String(second.state.searchScope)}`,
+    );
+    // buildState already probes context for the scope it renders; the notice
+    // reads the cached snapshot, so it must not add a second one.
+    assert.strictEqual(
+      argvLines(stub)
+        .slice(before)
+        .filter((line) => line.startsWith('context')).length,
+      1,
+      'the notice must not cost an extra `grim context` spawn',
+    );
+  });
 });

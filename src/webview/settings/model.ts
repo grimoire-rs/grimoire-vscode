@@ -172,6 +172,9 @@ export interface SettingsSource {
   grimMissing: boolean;
   configPath: string | null;
   configExists: boolean;
+  /** See SettingsState.searchScope — the scope Browse is actually searching,
+   *  undefined when it isn't known yet. */
+  searchScope?: Scope;
   entries: WireConfigEntry[];
   registries: WireRegistryEntry[];
   /** grim's registry-form field metadata, already fetched + mapped host-side
@@ -219,6 +222,7 @@ export function buildSettingsVM(source: SettingsSource): SettingsState {
     projectName: source.scopes.projectName,
     configPath: source.configExists ? source.configPath : null,
     rawConfigPath: source.configPath,
+    ...(source.searchScope !== undefined ? { searchScope: source.searchScope } : {}),
     groups: ready ? buildGroups(source.entries) : [],
     registries: ready ? source.registries.map(buildRegistryRow) : [],
     registryFields: source.registryFields,

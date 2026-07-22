@@ -64,6 +64,25 @@ suite('settings controls', () => {
   });
 });
 
+suite('scope mismatch notice', () => {
+  test('names both scopes when Browse searches the one this panel is not editing', async () => {
+    const html = await litHtml(
+      render.renderSettings(settingsState({ scope: 'project', searchScope: 'global' })),
+    );
+    assert.ok(html.includes('Browse is searching Global scope'), html);
+    assert.ok(html.includes('these settings apply to Project'), html);
+  });
+
+  test('stays silent when the scopes agree, or when the search scope is unknown', async () => {
+    const agreeing = settingsState({ scope: 'global', searchScope: 'global' });
+    assert.strictEqual(await litString(render.renderScopeMismatch(agreeing)), '');
+    // No snapshot taken yet: claim nothing rather than guess a mismatch.
+    const unknown = settingsState({ scope: 'global' });
+    assert.strictEqual(unknown.searchScope, undefined);
+    assert.strictEqual(await litString(render.renderScopeMismatch(unknown)), '');
+  });
+});
+
 suite('settings registry field labels (grim config registry fields)', () => {
   test('radio/checkbox labels source from grim title when the fetch succeeded', async () => {
     const state = settingsState({ registryFields: registryFieldVMs() });

@@ -677,3 +677,28 @@ body {
   margin: 0 auto;
   padding: 10px var(--settings-col-padding-x);
 }
+
+/* --- Scope mismatch notice --- */
+/* Stated, not enforced: editing the other scope on purpose is legitimate, so
+ * this is an info strip rather than a warning or a forced tab switch. Shares
+ * the body column's geometry so it lines up with the form below it. */
+.scope-mismatch {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: var(--settings-col-max-width);
+  margin: 12px auto 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-notifications-foreground, var(--vscode-foreground));
+  border: 1px solid
+    var(--vscode-notifications-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+}
+
+.scope-mismatch .codicon {
+  flex: none;
+  font-size: 14px;
+  color: var(--vscode-notificationsInfoIcon-foreground, var(--vscode-textLink-foreground));
+}

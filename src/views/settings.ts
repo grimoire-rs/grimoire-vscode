@@ -24,7 +24,7 @@ import {
   type RegistryFieldEntry,
   type Scope,
 } from '../grim';
-import { isProjectNotDiscovered, type ScopeService } from '../scopes';
+import { isProjectNotDiscovered, projectSearchable, type ScopeService } from '../scopes';
 import { buildSettingsVM, resolveSettingsPhase, type SettingsSource } from '../webview/settings/model';
 import type {
   HostToSettings,
@@ -246,6 +246,12 @@ export class SettingsManager {
     const projectOpen = folder !== undefined;
     const projectName = folder ? (folder.split(/[\\/]/).pop() ?? null) : null;
     const scopesVM = { projectOpen, projectConfigured: false, projectName };
+    // Which scope Browse is searching, so the panel can flag an edit that
+    // lands in a file Browse is not reading (grim never merges scope config).
+    // Read off the last snapshot the sidebar took rather than probing again —
+    // undefined until one exists, and then nothing is claimed.
+    const searchScope = this.browseSearchScope();
+    const shared = { registryFields, ...(searchScope ? { searchScope } : {}) };
     if (scope === 'project' && !projectOpen) {
       // No workspace folder: `grim context` has no project cwd to discover
       // from — skip the round trip entirely rather than run it against the
@@ -258,7 +264,7 @@ export class SettingsManager {
         configExists: false,
         entries: [],
         registries: [],
-        registryFields,
+        ...shared,
       });
     }
     const ctx = await this.scopes.run<ContextInfo>(contextArgs(), scope);
@@ -272,7 +278,7 @@ export class SettingsManager {
           configExists: false,
           entries: [],
           registries: [],
-          registryFields,
+          ...shared,
         });
       }
       // Project scope's `context` FAILS outright (NotDiscovered, code
@@ -291,7 +297,7 @@ export class SettingsManager {
           configExists: false,
           entries: [],
           registries: [],
-          registryFields,
+          ...shared,
         });
       }
       return {
@@ -303,7 +309,7 @@ export class SettingsManager {
         rawConfigPath: null,
         groups: [],
         registries: [],
-        registryFields,
+        ...shared,
         error: ctx.message,
       };
     }
@@ -325,7 +331,7 @@ export class SettingsManager {
         configExists,
         entries: [],
         registries: [],
-        registryFields,
+        ...shared,
       });
     }
     const [list, registries] = await Promise.all([
@@ -341,7 +347,7 @@ export class SettingsManager {
       rawConfigPath: ctx.value.config_path,
       groups: [],
       registries: [],
-      registryFields,
+      ...shared,
       error: message,
     });
     if (!list.ok) {
@@ -360,9 +366,21 @@ export class SettingsManager {
       configExists,
       entries: list.value.items,
       registries: registries.value.items,
-      registryFields,
+      ...shared,
     };
     return buildSettingsVM(source);
+  }
+
+  /** The scope `CatalogService.search` would target, mirroring its own rule
+   *  (a project folder that is searchable, else global). Read off the last
+   *  snapshot the sidebar took — this panel must not spawn a probe of its own
+   *  just to draw a notice. Undefined before any snapshot exists. */
+  private browseSearchScope(): Scope | undefined {
+    const snapshot = this.scopes.cachedSnapshot();
+    if (!snapshot) {
+      return undefined;
+    }
+    return this.scopes.projectFolder() && projectSearchable(snapshot) ? 'project' : 'global';
   }
 
   /** Runs one grim write for `scope`, chained after any write already in

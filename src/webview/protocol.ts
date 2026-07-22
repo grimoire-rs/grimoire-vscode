@@ -338,6 +338,12 @@ export interface SettingsState {
    *  overridable — contrast with project's fixed `grimoire.toml`
    *  copy). Null whenever the path itself isn't known (no-folder/no-grim/error). */
   rawConfigPath: string | null;
+  /** The scope Browse is actually searching. The two scope choices are
+   *  independent — this panel edits whichever tab is open, Browse picks its own
+   *  from live project state — and grim never merges scope config, so an edit
+   *  made in the other scope has no effect on what Browse shows. Undefined when
+   *  no snapshot has been taken yet (nothing is claimed rather than guessed). */
+  searchScope?: Scope;
   groups: SettingsGroupVM[];
   registries: SettingsRegistryVM[];
   /** See {@link SettingsRegistryFieldVM} — always present (possibly `[]`),

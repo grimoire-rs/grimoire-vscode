@@ -433,6 +433,25 @@ export function renderSettingsTabs(state: SettingsState): TemplateResult {
 </div>`;
 }
 
+/** Flags an edit that lands in a scope Browse is not reading. The two scope
+ *  choices are independent (this panel edits its open tab; Browse derives its
+ *  own from live project state) and grim never merges scope config, so the
+ *  write silently has no effect on what Browse shows. Editing the other scope
+ *  deliberately is legitimate — this states the fact, it does not override the
+ *  tab. */
+export function renderScopeMismatch(state: SettingsState): TemplateResult | typeof nothing {
+  if (state.searchScope === undefined || state.searchScope === state.scope) {
+    return nothing;
+  }
+  const label = (scope: SettingsState['scope']): string =>
+    scope === 'project' ? 'Project' : 'Global';
+  return html`
+<div class="scope-mismatch">
+  <span class="codicon codicon-info"></span>
+  <span>Browse is searching ${label(state.searchScope)} scope — these settings apply to ${label(state.scope)}.</span>
+</div>`;
+}
+
 export function renderSettingsFooter(): TemplateResult {
   return html`
 <div class="settings-footer">
@@ -454,7 +473,7 @@ export function renderSettingsContent(
    *  form in place instead of swapping it out. */
   refreshing = false,
 ): TemplateResult {
-  return html`<div class="settings-content${refreshing ? ' refreshing' : ''}">${renderSettingsBody(state, addRegistry, registryError)}</div>`;
+  return html`<div class="settings-content${refreshing ? ' refreshing' : ''}">${renderScopeMismatch(state)}${renderSettingsBody(state, addRegistry, registryError)}</div>`;
 }
 
 export function renderSettings(
