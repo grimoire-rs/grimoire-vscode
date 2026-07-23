@@ -49,6 +49,12 @@ for the swarm/finalize skills (`task verify`, `task checkpoint`, `task git:merge
 
 - Conventional Commits. Never commit to `main`; work on a branch. Never push
   without being asked.
+- **Never hand-write `CHANGELOG.md`.** Its content is derived from Conventional
+  Commit subjects and bodies through `cliff.toml` — put the user-facing wording
+  in the commit message, not in the file. Regenerate with
+  `git-cliff -o CHANGELOG.md` when a refresh is wanted; CI builds the GitHub
+  Release notes from the same config (`release.yml`, `--latest --strip all`).
+  A changelog edit in a diff is a bug, not a courtesy.
 - Tests live in `src/test/`; integration tests stub grim with a POSIX shell
   script (skipped on Windows) — see `writeStub` in `extension.test.ts`.
 - Match the design mockups (claude.ai/design "Grimoire Skill Marketplace"):
