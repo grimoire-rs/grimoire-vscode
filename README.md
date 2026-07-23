@@ -75,6 +75,7 @@ Run from the Command Palette (all under the **Grimoire** category).
 | `Grimoire: Install grim CLI`                   | Download the latest `grim` release from GitHub                                   |
 | `Grimoire: Open Settings`                      | Open the Settings editor tab (`grim config` UI)                                  |
 | `Grimoire: Show Output`                        | Open the Grimoire output channel                                                 |
+| `Grimoire: Show grim Info`                     | Which `grim` would be spawned, how it was resolved, and its version              |
 | `Grimoire: Report Bug`                         | Open a prefilled GitHub bug report                                               |
 | `Grimoire: Request Feature`                    | Open a prefilled GitHub feature request                                          |
 
@@ -86,7 +87,7 @@ the `vscode://` deep link, not run from the Command Palette.
 | Setting                    | Default   | Does                                                                                                                                                                                   |
 | -------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `grimoire.path.executable` | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                  |
-| `grimoire.defaultScope`    | `project` | Install scope (`project` or `global`) for the **Pin to a tag** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
+| `grimoire.defaultScope`    | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
 | `grimoire.watchForChanges` | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                            |
 | `grimoire.prefetchDetails` | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                            |
 | `grimoire.checkForUpdates` | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                     |
@@ -101,9 +102,14 @@ at an existing build.
 
 Grimoire requires `grim` 0.11.0 or newer — the release that ships the
 `forceable`/`anchor-escape` error contract behind the overwrite-confirm and
-anchor-escape recovery dialogs. An older `grim` fails every call with a
-version-floor error rather than running in a degraded mode; point
-`grimoire.path.executable` at a current build if you're behind.
+anchor-escape recovery dialogs.
+
+An older `grim` does not blank the view: browsing keeps working off the catalog,
+behind a banner naming the reason. What it cannot do is report install state, so
+every install and update affordance is suppressed rather than claiming "Install"
+on an artifact that may already be installed. Point `grimoire.path.executable`
+at a current build, or run **Grimoire: Show grim Info** to see which binary is
+actually being spawned.
 
 ## Contributing
 
