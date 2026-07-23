@@ -445,10 +445,19 @@ export function renderScopeMismatch(state: SettingsState): TemplateResult | type
   }
   const label = (scope: SettingsState['scope']): string =>
     scope === 'project' ? 'Project' : 'Global';
+  // Split the fact from the remedy into separate lines, mirroring the sidebar's
+  // `.init-hint` two-line notice: the second line names the action (switch this
+  // panel to the tab Browse reads, so an edit here affects what Browse shows)
+  // rather than leaving the mismatch stated with no way out. Wrapped in a block
+  // text column so the two lines stack beside the icon — `.scope-mismatch` is a
+  // flex row, so bare sibling spans would sit side by side instead.
   return html`
 <div class="scope-mismatch">
   <span class="codicon codicon-info"></span>
-  <span>Browse is searching ${label(state.searchScope)} scope — these settings apply to ${label(state.scope)}.</span>
+  <div class="scope-mismatch-text">
+    <div class="scope-mismatch-fact">Browse is searching ${label(state.searchScope)} scope — these settings apply to ${label(state.scope)}.</div>
+    <div class="scope-mismatch-remedy">Switch to the ${label(state.searchScope)} tab to change what Browse sees.</div>
+  </div>
 </div>`;
 }
 

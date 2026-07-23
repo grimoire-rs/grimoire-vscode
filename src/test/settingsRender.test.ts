@@ -71,6 +71,9 @@ suite('scope mismatch notice', () => {
     );
     assert.ok(html.includes('Browse is searching Global scope'), html);
     assert.ok(html.includes('these settings apply to Project'), html);
+    // The notice names a remedy, not just the fact: switching this panel to the
+    // tab Browse reads (Global here) is how an edit reaches what Browse shows.
+    assert.ok(html.includes('Switch to the Global tab to change what Browse sees'), html);
   });
 
   test('stays silent when the scopes agree, or when the search scope is unknown', async () => {
