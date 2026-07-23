@@ -26,7 +26,13 @@ import {
   registryUrlHost,
   type ScopeStatus,
 } from '../webview/model';
-import type { CardVM, HostToSidebar, SidebarState, SidebarToHost } from '../webview/protocol';
+import type {
+  CardVM,
+  GrimOrigin,
+  HostToSidebar,
+  SidebarState,
+  SidebarToHost,
+} from '../webview/protocol';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
 import { offerForcedRetry } from './forceRetry';
@@ -48,21 +54,30 @@ export interface SidebarDelegate {
   prefetch(repos: string[]): void;
 }
 
+/** The SINGLE producer of render-facing scope status — every "install state
+ *  unknown" decision (cards, details rows, the sidebar banner) funnels through
+ *  a `status: null` here. Per scope: a real ScopeSnapshot emits its status +
+ *  reason; a scope that is ABSENT but whose `grim context` probe failed
+ *  (project/globalProbeFailed) is synthesized as a `status: null` /
+ *  `'probe-failed'` row so a genuinely unreadable scope suppresses rather than
+ *  reads as empty. The ordinary "no grimoire.toml" project (no probe flag) stays
+ *  omitted, so an unconfigured project still emits no row. */
 export function scopeStatuses(snapshot: Snapshot): ScopeStatus[] {
   const scopes: ScopeStatus[] = [];
-  if (snapshot.project) {
-    scopes.push({
-      scope: 'project',
-      status: snapshot.project.status,
-      declared: snapshot.project.declared,
-    });
-  }
-  if (snapshot.global) {
-    scopes.push({
-      scope: 'global',
-      status: snapshot.global.status,
-      declared: snapshot.global.declared,
-    });
+  for (const scope of ['project', 'global'] as const) {
+    const snap = snapshot[scope];
+    if (snap) {
+      scopes.push({
+        scope,
+        status: snap.status,
+        ...(snap.statusUnknownReason !== undefined
+          ? { unknownReason: snap.statusUnknownReason }
+          : {}),
+        declared: snap.declared,
+      });
+    } else if (scope === 'project' ? snapshot.projectProbeFailed : snapshot.globalProbeFailed) {
+      scopes.push({ scope, status: null, unknownReason: 'probe-failed', declared: {} });
+    }
   }
   return scopes;
 }
@@ -77,6 +92,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // the loading flash (and without a fresh grim round-trip).
   private lastReady:
     | { cards: CardVM[]; installed: CardVM[]; snap: Snapshot; syncedAt: number | null }
+    | undefined;
+  // Last-known install-state trust, updated the moment a snapshot lands and
+  // stamped onto EVERY post by postState. Kept on the provider rather than
+  // passed per post because the two posts that most need it don't have a
+  // snapshot to read: the `phase:'loading'` post that opens the next refresh
+  // (otherwise the banner blinks out and back every watcher round) and a
+  // repostLogos, whose lastReady predates the failure by construction — it is
+  // only ever assigned on a round where status worked.
+  private lastUnknown:
+    | {
+        message: string;
+        reason?: 'too-old' | 'status-failed' | 'probe-failed';
+        origin?: GrimOrigin;
+      }
     | undefined;
   // In-flight refresh count; repostLogos stays quiet while > 0.
   private refreshing = 0;
@@ -200,6 +229,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'installGrim':
         await this.delegate.installGrim();
         return;
+      case 'showGrimInfo':
+        // Opens the grim-info modal (registered in extension.ts). Executed as a
+        // command rather than routed through the delegate — it is pure
+        // diagnostics with no state to plumb back.
+        await vscode.commands.executeCommand('grimoire.showGrimInfo');
+        return;
     }
   }
 
@@ -293,9 +328,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return; // a newer refresh started while snapshotting — it owns the state
     }
     if (snap.grimMissing) {
+      this.lastUnknown = undefined; // no grim at all is its own state, not a degraded one
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
+    // Trust verdict for this round, recorded before the catalog search so every
+    // post below carries it — and so a round whose status worked CLEARS it (the
+    // banner is last-known, not sticky). ONE source: the render funnel's first
+    // `status: null` scope, NOT snap.error — so a probe-failed scope (no error
+    // string) still trips the banner, and reason + message can never disagree
+    // (both come off the same scope). resolvedExecutable's origin gates which
+    // remedy the banner may offer; computed only when there IS an unknown, so a
+    // healthy refresh pays no PATH scan.
+    const scopeStatus = scopeStatuses(snap);
+    const firstUnknown = scopeStatus.find((s) => s.status === null);
+    this.lastUnknown = firstUnknown
+      ? {
+          message: snap.error ?? `Could not determine the ${firstUnknown.scope} install state.`,
+          ...(firstUnknown.unknownReason !== undefined
+            ? { reason: firstUnknown.unknownReason }
+            : {}),
+          origin: this.scopes.resolvedExecutable().origin,
+        }
+      : undefined;
     // One catalog search feeds both card sets: browse cards straight from the
     // results, installed cards from the snapshot enriched by the same items.
     const catalogState = await this.catalog.search(this.query, {
@@ -306,12 +361,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return; // superseded during the search
     }
     if (catalogState.grimMissing) {
+      this.lastUnknown = undefined;
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
     const defaultRegistry = snap.global?.context.default_registry;
     this.lastDefaultRegistry = defaultRegistry ? registryUrlHost(defaultRegistry) : undefined;
-    const scopeStatus = scopeStatuses(snap);
     const authed = authenticatedHosts(snap.global?.context.registries ?? []);
     // Default registry host, so a stored credential for it (many users are
     // docker-logged-in to ghcr.io, the default) doesn't lock-mark every card.
@@ -331,7 +386,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return; // superseded during logo enrichment — don't clobber newer state
     }
     // A failed status call (snap.error) means install state is unknown — the
-    // cards were built from an EMPTY status list and would lie "Install" on
+    // cards were built from an UNKNOWN status list and would lie "Install" on
     // installed artifacts. The catalog itself is fine, though, so browsing
     // stays available: the state posts `installStateUnknown` and the webview
     // renders a persistent banner, drops every install/update affordance, and
@@ -339,10 +394,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Blanking the whole view (the old behavior) made one stale binary look
     // like a broken extension.
     //
-    // Those cards still must not become lastReady (a late logo repost would
-    // repaint them as a clean 'ready' state), and the badge stays untouched —
-    // clearing it off empty data is the same lie in miniature.
-    if (snap.error === undefined) {
+    // Those cards still must not become lastReady, and the badge stays
+    // untouched — clearing it off unknown data is the same lie in miniature.
+    // (lastReady may then be an OLDER, healthy round; a later logo repost of it
+    // still carries this.lastUnknown, so it repaints with the banner up and the
+    // affordances suppressed rather than as a clean, fully-trusted 'ready'.)
+    // Gate on the render funnel, not snap.error: a project-probe failure
+    // synthesizes a status:null scope WITHOUT setting snap.error, and its cards
+    // are just as untrusted — storing them as lastReady or recomputing the badge
+    // from a single known scope would undercount updates the banner says are
+    // unavailable.
+    if (firstUnknown === undefined) {
       this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
       this.setBadge(installed.filter((c) => c.state === 'outdated').length);
     }
@@ -359,9 +421,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       items: cards,
       installed,
       ...(catalogError !== undefined ? { error: catalogError } : {}),
-      // The banner is persistent, so the status failure needs no toast of its
-      // own — it would re-fire on every refresh for as long as it persists.
-      ...(snap.error !== undefined ? { installStateUnknown: snap.error } : {}),
+      // The status failure itself rides this.lastUnknown (stamped by postState).
+      // The banner is persistent, so it needs no toast of its own — that would
+      // re-fire on every refresh for as long as the failure persists.
       syncedAt: catalogState.syncedAt,
       snapshot: snap,
     });
@@ -428,7 +490,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     items: SidebarState['items'];
     installed: SidebarState['installedItems'];
     error?: string;
-    installStateUnknown?: string;
     syncedAt?: number | null;
     snapshot?: Snapshot;
   }): void {
@@ -456,8 +517,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
-      ...(partial.installStateUnknown !== undefined
-        ? { installStateUnknown: partial.installStateUnknown }
+      // Every post carries the current trust verdict — loading, ready and logo
+      // repost alike. One source, so no post can silently drop it.
+      ...(this.lastUnknown !== undefined
+        ? {
+            installStateUnknown: this.lastUnknown.message,
+            ...(this.lastUnknown.reason !== undefined
+              ? { installStateUnknownReason: this.lastUnknown.reason }
+              : {}),
+            ...(this.lastUnknown.origin !== undefined
+              ? { installStateUnknownOrigin: this.lastUnknown.origin }
+              : {}),
+          }
         : {}),
     };
     this.post({ type: 'state', state });

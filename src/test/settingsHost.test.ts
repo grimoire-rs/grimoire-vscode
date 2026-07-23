@@ -788,44 +788,93 @@ suite('settings host integration', () => {
   // independently and grim never merges scope config, so a write can silently
   // land in a file Browse is not reading. The state carries the fact so the
   // webview can say so.
-  test('the posted state carries the scope Browse is searching, once one is known', async () => {
+  test('an unconfigured project dir puts the posted search scope on global, not project', async () => {
     canned(stub.dir, 'registry-fields', registryFieldsDoc());
-    const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
-    const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
-    const manager = new SettingsManager(
-      vscode.Uri.file(stub.dir),
-      scopes,
-      fakeOutput,
-      async () => {},
-      async () => {},
-    );
-    const { panel, posts } = fakeSettingsPanel();
+    // No grimoire.toml in the workspace: the project probe returns grim's
+    // NotDiscovered, so Browse falls back to the global registries.
+    const marker = path.join(stub.dir, 'project-initialized');
+    const wasInitialized = fs.existsSync(marker);
+    // The marker mutation lives inside the try so a throw constructing the
+    // ScopeService/SettingsManager can't leak the removed marker past the finally.
+    try {
+      fs.rmSync(marker, { force: true });
+      const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+      const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
+      const manager = new SettingsManager(
+        vscode.Uri.file(stub.dir),
+        scopes,
+        fakeOutput,
+        async () => {},
+        async () => {},
+      );
+      const { panel, posts } = fakeSettingsPanel();
+      // No snapshot has been taken yet: claim nothing rather than guess.
+      await manager.onMessage(panel, { type: 'ready', scope: 'global' });
+      const first = posts.at(-1);
+      assert.ok(first?.type === 'state');
+      assert.strictEqual(first.state.searchScope, undefined);
 
-    // No snapshot has been taken yet: claim nothing rather than guess.
-    await manager.onMessage(panel, { type: 'ready', scope: 'global' });
-    const first = posts.at(-1);
-    assert.ok(first?.type === 'state');
-    assert.strictEqual(first.state.searchScope, undefined);
+      // Once the sidebar has snapshotted, the panel reads the answer off it
+      // rather than spawning a probe of its own.
+      await scopes.snapshot();
+      const before = argvLines(stub).length;
+      await manager.onMessage(panel, { type: 'switchScope', scope: 'global' });
+      const second = posts.at(-1);
+      assert.ok(second?.type === 'state');
+      assert.strictEqual(
+        second.state.searchScope,
+        'global',
+        'an unconfigured project dir has no registries — Browse searches global',
+      );
+      // buildState already probes context for the scope it renders; the notice
+      // reads the cached snapshot, so it must not add a second one.
+      assert.strictEqual(
+        argvLines(stub)
+          .slice(before)
+          .filter((line) => line.startsWith('context')).length,
+        1,
+        'the notice must not cost an extra `grim context` spawn',
+      );
+    } finally {
+      if (wasInitialized) {
+        fs.writeFileSync(marker, '');
+      }
+    }
+  });
 
-    // Once the sidebar has snapshotted, the panel reads the answer off it
-    // rather than spawning a probe of its own.
-    await scopes.snapshot();
-    const before = argvLines(stub).length;
-    await manager.onMessage(panel, { type: 'switchScope', scope: 'global' });
-    const second = posts.at(-1);
-    assert.ok(second?.type === 'state');
-    assert.ok(
-      second.state.searchScope === 'project' || second.state.searchScope === 'global',
-      `expected a resolved search scope, got ${String(second.state.searchScope)}`,
-    );
-    // buildState already probes context for the scope it renders; the notice
-    // reads the cached snapshot, so it must not add a second one.
-    assert.strictEqual(
-      argvLines(stub)
-        .slice(before)
-        .filter((line) => line.startsWith('context')).length,
-      1,
-      'the notice must not cost an extra `grim context` spawn',
-    );
+  test('a configured project dir puts the posted search scope on project', async () => {
+    canned(stub.dir, 'registry-fields', registryFieldsDoc());
+    // The marker flips the stub's project-scope `grim context` to the
+    // post-init doc (config_exists: true) — a workspace with a grimoire.toml.
+    const marker = path.join(stub.dir, 'project-initialized');
+    const wasInitialized = fs.existsSync(marker);
+    // The marker mutation lives inside the try so a throw constructing the
+    // ScopeService/SettingsManager can't leak the written marker past the finally.
+    try {
+      fs.writeFileSync(marker, '');
+      const fakeOutput = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+      const scopes = new ScopeService(vscode.Uri.file(stub.dir), fakeOutput);
+      const manager = new SettingsManager(
+        vscode.Uri.file(stub.dir),
+        scopes,
+        fakeOutput,
+        async () => {},
+        async () => {},
+      );
+      const { panel, posts } = fakeSettingsPanel();
+      await scopes.snapshot();
+      await manager.onMessage(panel, { type: 'ready', scope: 'global' });
+      const posted = posts.at(-1);
+      assert.ok(posted?.type === 'state');
+      assert.strictEqual(
+        posted.state.searchScope,
+        'project',
+        'a project with a grimoire.toml is what Browse searches',
+      );
+    } finally {
+      if (!wasInitialized) {
+        fs.rmSync(marker, { force: true });
+      }
+    }
   });
 });

@@ -21,7 +21,20 @@ import {
 
 export interface ScopeSnapshot {
   context: ContextInfo;
-  status: StatusItem[];
+  /** The scope's installed artifacts, or `null` when install state could NOT be
+   *  determined (see `statusUnknownReason`). The two are different claims and
+   *  must render differently: `[]` is the positive "nothing is installed here",
+   *  `null` is "we don't know" — rendering `null` as `[]` flips every installed
+   *  card to Install and makes the details panel claim an artifact is absent
+   *  from a scope it may well be installed in. Every reader has to decide;
+   *  that is why this is `| null` rather than a sibling flag. */
+  status: StatusItem[] | null;
+  /** Why `status` is null. `'too-old'`: the binary is below the version floor,
+   *  so `grim status` was never run. `'status-failed'`: the status call ran and
+   *  failed. The control signal for the render layer's choice of action — the
+   *  human-readable `statusError` string stays display text and must not be
+   *  pattern-matched. Absent exactly when `status !== null`. */
+  statusUnknownReason?: 'too-old' | 'status-failed';
   /** name -> declared reference (with tag) from grimoire.toml */
   declared: Record<string, string>;
 }
@@ -43,6 +56,13 @@ export interface Snapshot {
    *  to read exactly like "unconfigured" so the global fallback and the
    *  init-offer notice both fire. See projectSearchable(). */
   projectProbeFailed?: boolean;
+  /** Set when the global-scope `grim context` probe failed with an error (not
+   *  the not-found case, which becomes `grimMissing`). `global` is `undefined`
+   *  then, so — like `projectProbeFailed` — this flag is what lets the render
+   *  funnel synthesize a `status: null` global scope (`scopeStatuses`) instead
+   *  of silently dropping it; without it a genuinely unreadable global reads as
+   *  "nothing installed globally". Set beside `error` in snapshot(). */
+  globalProbeFailed?: boolean;
 }
 
 /** Parses declared name -> ref pairs out of a grimoire.toml. Pure; exported for tests. */
@@ -152,6 +172,17 @@ export function projectSearchable(snapshot: Snapshot): boolean {
   return (snapshot.project?.context.config_exists ?? false) || (snapshot.projectProbeFailed ?? false);
 }
 
+/** The scope a browse/search actually targets: project only when a folder is
+ *  open AND it is searchable (see projectSearchable), else global — an
+ *  unconfigured project has no registries and would search nothing. One
+ *  source: CatalogService.search picks the scope with it, and the Settings
+ *  panel's "Browse searches <scope>" notice reads the same call. The notice
+ *  used to hand-copy the rule, and a notice that lies about where Browse looks
+ *  is worse than no notice. Pure; exported for tests. */
+export function searchScopeFor(projectFolder: string | undefined, searchable: boolean): Scope {
+  return projectFolder !== undefined && searchable ? 'project' : 'global';
+}
+
 export class ScopeService {
   // Last snapshot computed by snapshot(), so the details panel can render real
   // scope/install state in its instant skeleton without awaiting a fresh grim
@@ -182,6 +213,11 @@ export class ScopeService {
    * extension-managed copy in globalStorage/bin. The bundled copy is a
    * fallback for machines with no grim at all — it must never shadow a
    * user-managed PATH install (it goes stale independently of it).
+   *
+   * The spawn path: it needs the boolean {@link pathHasGrim}, never the
+   * absolute PATH hit, so it deliberately does NOT route through
+   * {@link resolvedExecutable} — that would charge every grim call a second
+   * PATH scan just to name a binary the OS resolves itself.
    */
   resolveExecutable(): string {
     const configured = readConfig().executable;
@@ -198,6 +234,44 @@ export class ScopeService {
     return configured;
   }
 
+  /**
+   * The resolution of {@link resolveExecutable} together with the branch it
+   * took — the single source for every consumer that needs to *name* the binary
+   * rather than just spawn it (`collectGrimInfo`'s Binary/Resolved rows, the
+   * version-floor message in `scopeSnapshot`), both of which re-derive the
+   * setting → PATH → bundled branch today and can disagree with the spawn.
+   *
+   * `path` is absolute wherever knowable: for the PATH branch that means the
+   * hit {@link whichGrim} found, not the bare `grim` the spawn passes to the OS.
+   * `origin` is `'missing'` when the setting is the default, {@link pathHasGrim}
+   * is false and no extension-managed copy exists at
+   * {@link bundledExecutablePath} — the state `resolveExecutable` reports as a
+   * bare `grim` and `collectGrimInfo` currently mislabels as `'PATH'`.
+   * `'bundled'` is the same condition {@link managedExecutable} tests.
+   * The PATH scan runs only behind `pathHasGrim()`, so the no-grim-anywhere
+   * state does not pay for a full scan twice.
+   */
+  resolvedExecutable(): { path: string; origin: 'setting' | 'PATH' | 'bundled' | 'missing' } {
+    const configured = readConfig().executable;
+    if (configured !== DEFAULT_EXECUTABLE) {
+      return { path: configured, origin: 'setting' };
+    }
+    if (this.pathHasGrim()) {
+      // Only the naming scan, and only behind the boolean gate: whichGrim
+      // early-returns on the first hit, so this costs a hit-length scan here
+      // and nothing at all in the no-grim-anywhere state below.
+      return {
+        path: whichGrim({ ...process.env, ...readConfig().extraEnv }) ?? configured,
+        origin: 'PATH',
+      };
+    }
+    const bundled = this.bundledExecutablePath();
+    if (fs.existsSync(bundled)) {
+      return { path: bundled, origin: 'bundled' };
+    }
+    return { path: configured, origin: 'missing' };
+  }
+
   bundledExecutablePath(): string {
     const bin = process.platform === 'win32' ? 'grim.exe' : 'grim';
     return path.join(this.storageUri.fsPath, 'bin', bin);
@@ -206,17 +280,15 @@ export class ScopeService {
   /**
    * True when the grim that would actually be spawned is the extension-managed
    * copy — the only case where the update toast may offer to overwrite it in
-   * place. Derived from resolveExecutable() itself rather than re-deriving the
-   * branch logic at the call site, so the two can never disagree about which
-   * binary is in play. The default-setting gate matters: a user who points
-   * path.executable AT the bundled path is user-managed, and we must not
-   * overwrite their explicit choice.
+   * place. Read off the one resolution rather than re-deriving the branch
+   * logic at the call site, so the two can never disagree about which binary
+   * is in play. The `'bundled'` branch already carries the default-setting
+   * gate that matters here: a user who points path.executable AT the bundled
+   * path resolves as `'setting'` (user-managed), and we must not overwrite
+   * their explicit choice.
    */
   managedExecutable(): boolean {
-    return (
-      readConfig().executable === DEFAULT_EXECUTABLE &&
-      this.resolveExecutable() === this.bundledExecutablePath()
-    );
+    return this.resolvedExecutable().origin === 'bundled';
   }
 
   projectFolder(): string | undefined {
@@ -325,17 +397,13 @@ export class ScopeService {
       // Name the ABSOLUTE binary: the default 'grim' spawns whatever the host
       // process's PATH resolves (a WSL vscode-server can hold a days-old PATH
       // snapshot), and "at grim" answers nothing when which-grim-ran is the
-      // whole question.
-      const executable = this.resolveExecutable();
-      const resolved =
-        executable === DEFAULT_EXECUTABLE
-          ? (whichGrim({ ...process.env, ...readConfig().extraEnv }) ?? executable)
-          : executable;
-      const message = tooOldMessage(resolved, ctx.value.version);
+      // whole question. resolvedExecutable() is that naming resolution — the
+      // same one the grim-info dialog reports, so the two cannot disagree.
+      const message = tooOldMessage(this.resolvedExecutable().path, ctx.value.version);
       this.output.appendLine(`  ${message}`);
       // Keep the context. `grim status` is skipped (a pre-floor binary rejects
       // its flags with exit 64) so install state stays UNKNOWN — the same
-      // `status: []` + statusError shape a failed status call produces below.
+      // `status: null` + statusError shape a failed status call produces below.
       // Dropping the whole snapshot instead would discard `config_exists`,
       // which `grim context` reports on ANY version: with `project` undefined
       // and `projectProbeFailed` unset (the probe SUCCEEDED — only the floor
@@ -343,18 +411,27 @@ export class ScopeService {
       // regardless of the project's real state.
       return {
         probe: ctx,
-        snapshot: { context: ctx.value, status: [], declared: this.readDeclared(ctx.value) },
+        snapshot: {
+          context: ctx.value,
+          status: null,
+          statusUnknownReason: 'too-old',
+          declared: this.readDeclared(ctx.value),
+        },
         statusError: message,
       };
     }
     const status = ctx.value.config_exists
       ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(options), scope)
       : undefined;
+    const failed = status !== undefined && !status.ok;
     return {
       probe: ctx,
       snapshot: {
         context: ctx.value,
-        status: status?.ok ? status.value.items : [],
+        // No config (status undefined) means no installs — a positive empty;
+        // a ran-but-failed status is unknown (null), never empty.
+        status: status === undefined ? [] : status.ok ? status.value.items : null,
+        ...(failed ? { statusUnknownReason: 'status-failed' as const } : {}),
         declared: this.readDeclared(ctx.value),
       },
       ...(status && !status.ok
@@ -402,6 +479,10 @@ export class ScopeService {
       snapshot.global = global.snapshot;
     } else if (!global.probe.ok && global.probe.kind === 'error') {
       snapshot.error = global.probe.message;
+      // No global ScopeSnapshot to carry a `status: null`; flag it so the render
+      // funnel synthesizes an unknown global scope (see scopeStatuses) rather
+      // than treating a failed probe as an empty global.
+      snapshot.globalProbeFailed = true;
     }
     // A failed status call means install state is unknown, not empty — surface
     // it so the sidebar shows an error instead of "Install" on installed cards.

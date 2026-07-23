@@ -338,6 +338,9 @@ root.addEventListener('click', (event) => {
     case 'install-grim':
       post({ type: 'installGrim' });
       break;
+    case 'show-grim-info':
+      post({ type: 'showGrimInfo' });
+      break;
     case 'toggle-kind': {
       const current = activeFilter();
       setActiveFilter({

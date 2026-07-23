@@ -8,6 +8,13 @@ export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle';
 
 export type RowState = 'not-installed' | 'installed' | 'outdated' | 'deprecated';
 
+/** Which resolution branch produced the grim binary
+ *  (ScopeService.resolvedExecutable().origin). Inlined here — structurally
+ *  identical to views/grimInfo.ts's GrimOrigin — rather than imported, so this
+ *  shared webview module stays free of host-only `views/` imports (same
+ *  convention as WireSearchItem duplicating grim.ts's SearchItem). */
+export type GrimOrigin = 'setting' | 'PATH' | 'bundled' | 'missing';
+
 export interface InstallVM {
   scope: Scope;
   /** Declared version/tag shown on the chip (e.g. "1.4.2", "latest"). */
@@ -99,6 +106,19 @@ export interface SidebarState {
    *  that may well be installed, and Updates/Installed say so instead of
    *  reading as empty. */
   installStateUnknown?: string;
+  /** Why {@link installStateUnknown} is set (the null scope's unknownReason).
+   *  A sibling field rather than widening `installStateUnknown` into an object:
+   *  the message is the banner's display text, this is the control signal for
+   *  which remedy the banner may offer. Only `'too-old'` is fixable by
+   *  installing a current grim. Absent when the reason isn't known. */
+  installStateUnknownReason?: 'too-old' | 'status-failed' | 'probe-failed';
+  /** How the resolved grim was found (ScopeService.resolvedExecutable().origin),
+   *  set alongside {@link installStateUnknownReason}. The banner offers "Install
+   *  grim" only for a too-old binary the extension can actually replace —
+   *  `'bundled'`/`'missing'`; a `'PATH'`/`'setting'` grim would keep being
+   *  preferred (resolveExecutable prefers it), so the download changes nothing
+   *  and the banner offers "Show grim Info" instead. Absent when not known. */
+  installStateUnknownOrigin?: GrimOrigin;
 }
 
 export type SidebarToHost =
@@ -118,7 +138,12 @@ export type SidebarToHost =
   | { type: 'copyRepoPath'; repo: string }
   | { type: 'copyShareLink'; repo: string }
   | { type: 'initProject' }
-  | { type: 'installGrim' };
+  | { type: 'installGrim' }
+  /** Banner "Show grim Info" — opens the grim-info modal so the user can see
+   *  which binary resolved and why its install state is unknown (offered when
+   *  installing a fresh grim would not change the resolution — a PATH/setting
+   *  grim, or a non-too-old failure). */
+  | { type: 'showGrimInfo' };
 
 export type HostToSidebar = { type: 'state'; state: SidebarState } | { type: 'focusSearch' };
 
@@ -182,6 +207,12 @@ export interface DetailsVM {
    *  boxes as pending shells (a spinner in each) rather than real install
    *  state. Absent/false once installs are known (cached snapshot or full VM). */
   scopesPending?: boolean;
+  /** Scopes whose install state could not be determined (ScopeSnapshot.status
+   *  null). PER SCOPE, unlike the whole-panel {@link scopesPending}: one scope
+   *  can be unknown while the other reports real installs. Such a row renders
+   *  no install affordance and makes no "Not installed" claim — its absence
+   *  from {@link installs} means nothing. */
+  unknownScopes?: Scope[];
   /** Host-stamped at post time: true while this panel is the reusable preview
    *  slot, so the header shows a Pin ("Keep open") button. Cleared on promote. */
   isPreview?: boolean;

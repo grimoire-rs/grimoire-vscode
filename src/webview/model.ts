@@ -162,13 +162,30 @@ export function parseViaBundles(source: string | null | undefined): string[] {
 
 export interface ScopeStatus {
   scope: Scope;
-  status: WireStatusItem[];
+  /** Null when the scope's install state is unknown (see ScopeSnapshot.status);
+   *  never coerce to `[]` — that is the positive "nothing installed" claim. */
+  status: WireStatusItem[] | null;
+  /** Why `status` is null. Carried on the render-facing status so the ONE
+   *  producer (`scopeStatuses`) speaks for every "unknown" — a real scope's
+   *  `statusUnknownReason` OR a synthesized `'probe-failed'` for a scope whose
+   *  `grim context` probe failed and so never produced a ScopeSnapshot. Absent
+   *  exactly when `status !== null`. */
+  unknownReason?: 'too-old' | 'status-failed' | 'probe-failed';
   declared: Record<string, string>;
 }
 
-/** Index of installs per repo for one scope. */
+/** Index of installs per repo for one scope. Empty when the scope's install
+ *  state is unknown — the single funnel both buildCards and buildInstalledCards
+ *  go through, so one guard here covers every card surface. */
 function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
   const byRepo = new Map<string, InstallVM>();
+  if (scope.status === null) {
+    // Nothing to index — and nothing here may imply "not installed". The card
+    // surfaces make that distinction one level up, off SidebarState's
+    // installStateUnknown: it suppresses every install/update affordance and
+    // turns the Updates pill into "?" rather than a count of an empty list.
+    return byRepo;
+  }
   for (const item of scope.status) {
     const declaredRef = scope.declared[item.name];
     // pinned is null for unlocked artifacts; with no declared ref either there

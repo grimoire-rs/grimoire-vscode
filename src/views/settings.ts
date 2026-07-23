@@ -24,7 +24,12 @@ import {
   type RegistryFieldEntry,
   type Scope,
 } from '../grim';
-import { isProjectNotDiscovered, projectSearchable, type ScopeService } from '../scopes';
+import {
+  isProjectNotDiscovered,
+  projectSearchable,
+  searchScopeFor,
+  type ScopeService,
+} from '../scopes';
 import { buildSettingsVM, resolveSettingsPhase, type SettingsSource } from '../webview/settings/model';
 import type {
   HostToSettings,
@@ -371,16 +376,17 @@ export class SettingsManager {
     return buildSettingsVM(source);
   }
 
-  /** The scope `CatalogService.search` would target, mirroring its own rule
-   *  (a project folder that is searchable, else global). Read off the last
-   *  snapshot the sidebar took — this panel must not spawn a probe of its own
-   *  just to draw a notice. Undefined before any snapshot exists. */
+  /** The scope `CatalogService.search` would target, read off the rule itself
+   *  (searchScopeFor) rather than a hand-copy of it — a notice that lies about
+   *  where Browse looks is worse than no notice. Applied to the last snapshot
+   *  the sidebar took: this panel must not spawn a probe of its own just to
+   *  draw a notice. Undefined before any snapshot exists. */
   private browseSearchScope(): Scope | undefined {
     const snapshot = this.scopes.cachedSnapshot();
     if (!snapshot) {
       return undefined;
     }
-    return this.scopes.projectFolder() && projectSearchable(snapshot) ? 'project' : 'global';
+    return searchScopeFor(this.scopes.projectFolder(), projectSearchable(snapshot));
   }
 
   /** Runs one grim write for `scope`, chained after any write already in

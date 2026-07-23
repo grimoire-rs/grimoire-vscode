@@ -327,11 +327,23 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     // fetches one at activation), so the Project/Global boxes show real install
     // state immediately; without one they render pending shells (spinner per
     // box) until the full VM from postVM lands ~1s later.
-    const installs =
-      cached && (cached.project || cached.global)
-        ? installsFor(repo, scopeStatuses(cached))
-        : undefined;
-    return buildSkeletonVM(repo, searchItem as never, scopes, installs);
+    const statuses = cached ? scopeStatuses(cached) : [];
+    const { installs, unknown } = installState(repo, statuses);
+    // No cached snapshot (or no scope in it): pass undefined so the scope boxes
+    // render pending shells rather than a positive "Not installed".
+    const vm = buildSkeletonVM(
+      repo,
+      searchItem as never,
+      scopes,
+      cached && (cached.project || cached.global) ? installs : undefined,
+    );
+    // Stamped rather than threaded through the builder (same posture as
+    // postArtifact's isPreview): a scope the cached snapshot could not read must
+    // render as unknown here too, not as "Not installed".
+    if (unknown.length > 0) {
+      vm.unknownScopes = unknown;
+    }
+    return vm;
   }
 
   /** Posts the instant skeleton VM so the header shows before grim fetch/describe
@@ -447,8 +459,8 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         // Only `replacedBy` (grim-validated) is taken from the message. Skip
         // bundle-held rows: their old copy can't be removed here (kept-by-bundle).
         const snapshot = this.scopes.cachedSnapshot() ?? (await this.scopes.snapshot());
-        const targets = installsFor(repo, scopeStatuses(snapshot))
-          .filter((i) => i.viaBundles.length === 0)
+        const targets = installState(repo, scopeStatuses(snapshot))
+          .installs.filter((i) => i.viaBundles.length === 0)
           .map((i) => ({ scope: i.scope, kind: i.kind, name: i.name }));
         await switchToReplacement({
           scopes: this.scopes,
@@ -703,9 +715,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     docs: CompanionDocs,
   ): DetailsVM {
     const searchItem = this.catalog.state().items.find((i) => i.repo === repo) ?? null;
-    const installs = installsFor(repo, scopeStatuses(snapshot));
+    const { installs, unknown } = installState(repo, scopeStatuses(snapshot));
     const projectName = snapshot.projectFolder?.split(/[\\/]/).pop() ?? null;
-    return buildDetailsVM({
+    const vm = buildDetailsVM({
       repo,
       searchItem: searchItem as never,
       describe,
@@ -721,6 +733,10 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       changelog: docs.changelog,
       catalog: this.catalog.state().items as never,
     });
+    if (unknown.length > 0) {
+      vm.unknownScopes = unknown;
+    }
+    return vm;
   }
 
   /** Content pipeline: describe + fetch + companion. The companion comes solely
@@ -835,10 +851,16 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   }
 
   /** The install/scope slice of a VM — compared to decide whether a snapshot
-   *  refresh actually changed the install rows (else no repost, no flicker). */
-  private installSlice(repo: string, snapshot: Snapshot): string {
+   *  refresh actually changed the install rows (else no repost, no flicker).
+   *  Stringifies BOTH `installs` and `unknown`: a scope that flips empty→unknown
+   *  keeps `installs` at `[]`, so without `unknown` in the slice the two compare
+   *  equal and the warm repost leaks a stale "Not installed" (Codex#1). Public
+   *  for the slice-difference regression test. */
+  installSlice(repo: string, snapshot: Snapshot): string {
+    const { installs, unknown } = installState(repo, scopeStatuses(snapshot));
     return JSON.stringify({
-      installs: installsFor(repo, scopeStatuses(snapshot)),
+      installs,
+      unknown,
       projectOpen: snapshot.projectFolder !== undefined,
       projectConfigured: projectSearchable(snapshot),
       projectName: snapshot.projectFolder?.split(/[\\/]/).pop() ?? null,
@@ -1025,9 +1047,25 @@ function logoFromDescFiles(files: DescFile[]): string | null {
   return null;
 }
 
-function installsFor(repo: string, scopes: ScopeStatus[]): DetailsVM['installs'] {
+/** The install/unknown split for one repo across scopes, in a single pass so a
+ *  caller can never take the `installs` half without the `unknown` half (arch
+ *  F5). `installs` reports presence; `unknown` names the scopes whose install
+ *  state could not be determined (`status: null`) — WITHOUT it the panel reads
+ *  an unknown scope's missing install as "Not installed" and offers an Install
+ *  button for an artifact that may already be there (finding A2), and the warm
+ *  installSlice compares `[]` (empty) equal to `[]` (unknown) and leaks a stale
+ *  repost (Codex#1). Exported for the slice-difference regression test. */
+export function installState(
+  repo: string,
+  scopes: ScopeStatus[],
+): { installs: DetailsVM['installs']; unknown: Scope[] } {
   const installs: DetailsVM['installs'] = [];
+  const unknown: Scope[] = [];
   for (const scope of scopes) {
+    if (scope.status === null) {
+      unknown.push(scope.scope); // unknown, not empty — never an install row
+      continue;
+    }
     for (const item of scope.status) {
       const declared = scope.declared[item.name];
       // pinned is null for unlocked artifacts — an undeclared, unlocked item
@@ -1050,5 +1088,5 @@ function installsFor(repo: string, scopes: ScopeStatus[]): DetailsVM['installs']
       }
     }
   }
-  return installs;
+  return { installs, unknown };
 }

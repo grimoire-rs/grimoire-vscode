@@ -6,16 +6,18 @@
 // stale PATH snapshot. Without this, "which grim is this?" costs a debugging
 // round every time a version-skew symptom shows up.
 import * as vscode from 'vscode';
-import { DEFAULT_EXECUTABLE, readConfig } from '../config';
 import { contextArgs, type ContextInfo } from '../grim';
 import { MINIMUM_GRIM_VERSION, grimTooOld } from '../installer';
-import { ScopeService, whichGrim } from '../scopes';
+import type { ScopeService } from '../scopes';
 
 const COPY = 'Copy';
 const SHOW_OUTPUT = 'Show Output';
 
-/** How resolveExecutable() arrived at the binary — the branch, not the path. */
-export type GrimOrigin = 'setting' | 'PATH' | 'bundled';
+/** How ScopeService.resolvedExecutable() arrived at the binary — the branch,
+ *  not the path. Mirrors that return type; `'missing'` is a real state (no
+ *  setting, no grim on PATH, no extension-managed copy) and reporting it as
+ *  `'PATH'` named a binary that is nowhere. */
+export type GrimOrigin = 'setting' | 'PATH' | 'bundled' | 'missing';
 
 export interface GrimInfo {
   /** Absolute where knowable; the bare `grim` only when PATH holds no grim. */
@@ -58,12 +60,19 @@ export function formatGrimInfo(info: GrimInfo): { summary: string; detail: strin
   if (info.offline !== null) {
     rows.push(['Offline', info.offline ? 'yes' : 'no']);
   }
-  rows.push(['Registry', info.defaultRegistry ?? 'none configured']);
+  // Only a probe that answered knows there is no registry configured. Pushed
+  // unconditionally, "Registry  none configured" printed directly above
+  // "Error  grim executable not found" — a claim about a grim that never ran.
+  // (`version === null` IS the failed probe; see the field's doc.)
+  if (info.version !== null) {
+    rows.push(['Registry', info.defaultRegistry ?? 'none configured']);
+  }
   if (info.error !== undefined) {
     rows.push(['Error', info.error]);
   }
-  const width = Math.max(...rows.map(([label]) => label.length));
-  const detail = rows.map(([label, value]) => `${label.padEnd(width)}  ${value}`).join('\n');
+  // No padEnd: the modal renders in a proportional font, so column padding
+  // aligns nothing and only widens the copied text.
+  const detail = rows.map(([label, value]) => `${label}: ${value}`).join('\n');
   return { summary, detail };
 }
 
@@ -75,6 +84,8 @@ function originLabel(origin: GrimOrigin): string {
       return 'extension-managed copy (no grim on PATH)';
     case 'PATH':
       return 'PATH';
+    case 'missing':
+      return 'not found (no setting, no grim on PATH, no extension-managed copy)';
     default: {
       const exhaustive: never = origin;
       throw new Error(`unhandled origin: ${String(exhaustive)}`);
@@ -86,16 +97,10 @@ function originLabel(origin: GrimOrigin): string {
  *  Global scope: it never fails for lack of a project grimoire.toml, and it is
  *  the scope that reports the version/home/default-registry facts. */
 export async function collectGrimInfo(scopes: ScopeService): Promise<GrimInfo> {
-  const configured = readConfig().executable;
-  const origin: GrimOrigin =
-    configured !== DEFAULT_EXECUTABLE ? 'setting' : scopes.managedExecutable() ? 'bundled' : 'PATH';
-  // Name the ABSOLUTE binary for the PATH case: the spawn passes the bare
-  // `grim` and lets the OS resolve it, so only a PATH scan can say which file
-  // that is (same resolution the version-floor message uses).
-  const path =
-    origin === 'PATH'
-      ? (whichGrim({ ...process.env, ...readConfig().extraEnv }) ?? DEFAULT_EXECUTABLE)
-      : scopes.resolveExecutable();
+  // Reported, never re-derived: this dialog exists to answer "which grim would
+  // actually be spawned", and its own copy of the setting → PATH → bundled
+  // branch is what made it claim `Resolved: PATH` for a binary that is nowhere.
+  const { path, origin } = scopes.resolvedExecutable();
   const ctx = await scopes.run<ContextInfo>(contextArgs(), 'global');
   if (!ctx.ok) {
     return {

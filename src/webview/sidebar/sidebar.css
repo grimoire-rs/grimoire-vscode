@@ -629,6 +629,11 @@ vscode-button.sm {
   align-self: flex-end;
 }
 
+/* Our sentence about grim's raw message, not part of it. */
+.init-body .init-hint {
+  color: var(--vscode-descriptionForeground);
+}
+
 .empty-state {
   padding: 56px 28px 64px;
   text-align: center;

@@ -20,6 +20,7 @@ import {
   renderSidebarTabs,
   revalidateIndicator,
 } from '../webview/render';
+import type { GrimOrigin } from '../webview/protocol';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 import { bothInstalled, card, detailsVM, installedScope, searchItem, sidebarState } from './fixtures/vms';
@@ -762,12 +763,76 @@ suite('sidebar rendering', () => {
     }
   });
 
+  test('the Updates pill reads "?" when install state is unknown, so it can never contradict the frozen badge', async () => {
+    // The native view badge is deliberately left at its last known value while
+    // status is unavailable; the tab pill counts `installedItems`, which is
+    // empty for want of data. A count of 0 (no pill) beside a badge of 1 is two
+    // surfaces stating different things about the same fact — the pill has to
+    // say "unknown" instead. This is the invariant a deleted extension.test.ts
+    // assertion used to protect.
+    const unknown = await litHtml(
+      renderSidebarTabs(sidebarState({ installStateUnknown: 'grim status failed' })),
+    );
+    assert.ok(unknown.includes('tab-count'), 'the pill still renders — absence would read as zero');
+    // The pill carries an accessible label/title (a bare "?" is opaque to a
+    // screen reader) — hence the attribute-tolerant match.
+    assert.match(
+      unknown,
+      /<span[^>]*class="tab-count"[^>]*>\?<\/span>/,
+      'the pill reads "?", not a count it cannot know',
+    );
+    assert.ok(unknown.includes('aria-label="update count unavailable"'), 'the ? pill is labelled');
+    assert.ok(!/class="tab-count"[^>]*>\d/.test(unknown), 'never a number while unknown');
+
+    // With install state known, the pill is a plain count again (and absent at
+    // zero) — the "?" is strictly the unknown case.
+    const outdated = { ...card(), state: 'outdated' as const };
+    const known = await litHtml(renderSidebarTabs(sidebarState({ installedItems: [outdated] })));
+    assert.ok(known.includes('<span class="tab-count">1</span>'));
+    assert.ok(!(await litHtml(renderSidebarTabs(sidebarState()))).includes('tab-count'));
+  });
+
   test('the unknown-install-state banner escapes its message', async () => {
     const html = await litHtml(
       renderSidebarNotice(sidebarState({ installStateUnknown: '<img src=x onerror=alert(1)>' })),
     );
     assert.ok(!html.includes('<img'), html);
     assert.ok(html.includes('&lt;img'), html);
+  });
+
+  test('the banner remedy gates on reason AND origin (A4)', async () => {
+    const remedy = (
+      reason: 'too-old' | 'status-failed' | 'probe-failed',
+      origin: GrimOrigin,
+    ): Promise<string> =>
+      litHtml(
+        renderSidebarNotice(
+          sidebarState({
+            installStateUnknown: 'grim is not usable',
+            installStateUnknownReason: reason,
+            installStateUnknownOrigin: origin,
+          }),
+        ),
+      );
+    // Install grim only when a too-old binary is one the extension can replace.
+    for (const origin of ['bundled', 'missing'] as const) {
+      const html = await remedy('too-old', origin);
+      assert.ok(html.includes('data-action="install-grim"'), `too-old + ${origin} → Install grim`);
+      assert.ok(!html.includes('data-action="show-grim-info"'), origin);
+    }
+    // A too-old grim on PATH / from the setting keeps being preferred, so a
+    // download changes nothing → diagnostics instead of the no-op loop.
+    for (const origin of ['PATH', 'setting'] as const) {
+      const html = await remedy('too-old', origin);
+      assert.ok(!html.includes('data-action="install-grim"'), `too-old + ${origin} → no Install`);
+      assert.ok(html.includes('data-action="show-grim-info"'), `${origin} → Show grim Info`);
+    }
+    // A non-too-old failure is never install-fixable, whatever the origin.
+    for (const reason of ['status-failed', 'probe-failed'] as const) {
+      const html = await remedy(reason, 'bundled');
+      assert.ok(!html.includes('data-action="install-grim"'), `${reason} → no Install grim`);
+      assert.ok(html.includes('data-action="show-grim-info"'), `${reason} → Show grim Info`);
+    }
   });
 
   test('updates view renders outdated cards as update rows, no section chrome or Update-All button', async () => {

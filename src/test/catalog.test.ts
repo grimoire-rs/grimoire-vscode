@@ -6,43 +6,47 @@ import { CatalogService } from '../catalog';
 import type { GrimResult, ItemsEnvelope, SearchItem } from '../grim';
 import type { ScopeService } from '../scopes';
 
-function searchItem(repo: string): SearchItem {
+function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   return {
-    repo,
     kind: 'skill',
-    name: repo.split('/').pop() ?? repo,
+    repo: 'ghcr.io/grimoire-rs/skills/demo',
     summary: null,
     description: null,
     version: null,
     latest_tag: null,
+    repository: null,
+    revision: null,
+    created: null,
     deprecated: null,
-    replaced_by: null,
-  } as unknown as SearchItem;
+    status: 'not-installed',
+    ...overrides,
+  };
 }
 
-/** A ScopeService stand-in whose `run` resolves when the test says so. */
+/** A ScopeService stand-in whose `run` resolves when the test says so. Each
+ *  in-flight search carries its OWN items, so a test can settle them in any
+ *  order without the results depending on the order the settlers were built. */
 function deferredScopes(): {
   scopes: ScopeService;
   resolveNext: (items: SearchItem[]) => () => void;
 } {
-  const pending: (() => void)[] = [];
+  const pending: ((items: SearchItem[]) => void)[] = [];
   const scopes = {
     projectFolder: () => undefined,
     run: <T>(): Promise<GrimResult<T>> =>
       new Promise((resolve) => {
-        pending.push(() => resolve(nextResult as GrimResult<T>));
+        pending.push((items) => {
+          const result: GrimResult<ItemsEnvelope<SearchItem>> = { ok: true, value: { items } };
+          resolve(result as GrimResult<T>);
+        });
       }),
   } as unknown as ScopeService;
-  let nextResult: GrimResult<ItemsEnvelope<SearchItem>>;
   return {
     scopes,
     resolveNext: (items) => {
       const settle = pending.shift();
       assert.ok(settle, 'no search was in flight');
-      return () => {
-        nextResult = { ok: true, value: { items } } as GrimResult<ItemsEnvelope<SearchItem>>;
-        settle();
-      };
+      return () => settle(items);
     },
   };
 }
@@ -56,8 +60,8 @@ suite('catalog search ordering', () => {
     const newer = catalog.search('b');
     // The newer search wins the cache even though the older one lands last —
     // typing two queries quickly used to leave the first one's results cached.
-    const settleOlder = resolveNext([searchItem('reg/old')]);
-    const settleNewer = resolveNext([searchItem('reg/new')]);
+    const settleOlder = resolveNext([searchItem({ repo: 'reg/old' })]);
+    const settleNewer = resolveNext([searchItem({ repo: 'reg/new' })]);
     settleNewer();
     await newer;
     settleOlder();
@@ -76,8 +80,8 @@ suite('catalog search ordering', () => {
 
     const older = catalog.search('a');
     const newer = catalog.search('b');
-    const settleOlder = resolveNext([searchItem('reg/old')]);
-    const settleNewer = resolveNext([searchItem('reg/new')]);
+    const settleOlder = resolveNext([searchItem({ repo: 'reg/old' })]);
+    const settleNewer = resolveNext([searchItem({ repo: 'reg/new' })]);
     settleNewer();
     await newer;
     settleOlder();

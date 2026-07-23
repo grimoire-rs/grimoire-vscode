@@ -2,7 +2,7 @@
 // this layer only remembers the last successful result set and when it was
 // fetched, for the "Cached catalog · synced Nm ago" footer.
 import { searchArgs, type GrimResult, type ItemsEnvelope, type SearchItem } from './grim';
-import type { ScopeService } from './scopes';
+import { searchScopeFor, type ScopeService } from './scopes';
 
 export interface CatalogState {
   items: SearchItem[];
@@ -16,9 +16,10 @@ export class CatalogService {
   private syncedAt: number | null = null;
   /** Monotonic search generation, so a slow response can't overwrite a newer
    *  one's results. Same pattern as SidebarProvider.refreshGen — but that one
-   *  only gates POSTING to its own webview; this shared cache is written by
-   *  every caller (the sidebar's search box, watcher and command refreshes,
-   *  the details panels' catalog lookups) and had no ordering guard at all. */
+   *  only gates POSTING to its own webview; this shared cache is what every
+   *  view reads, and the one writer (SidebarProvider.doRefresh) searches on
+   *  every keystroke, watcher event and command refresh with no ordering
+   *  guard at all. */
   private generation = 0;
 
   constructor(private readonly scopes: ScopeService) {}
@@ -43,8 +44,10 @@ export class CatalogService {
     // Callers pass projectConfigured via scopes.projectSearchable(), which also
     // treats a FAILED project probe as "configured" — otherwise a transient
     // probe error would silently fall back to global too, instead of searching
-    // project scope and surfacing the failure as a search error.
-    const scope = this.scopes.projectFolder() && options.projectConfigured ? 'project' : 'global';
+    // project scope and surfacing the failure as a search error. The rule
+    // itself lives in searchScopeFor, so the Settings panel's "Browse searches
+    // <scope>" notice cannot drift from where Browse actually looks.
+    const scope = searchScopeFor(this.scopes.projectFolder(), options.projectConfigured === true);
     const generation = ++this.generation;
     const result: GrimResult<ItemsEnvelope<SearchItem>> = await this.scopes.run(args, scope);
     if (!result.ok) {

@@ -410,12 +410,29 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
   // nothing on screen can be trusted to say what is installed, and the offer to
   // create a grimoire.toml would be answering the wrong question.
   if (state.installStateUnknown !== undefined) {
+    // "Install grim" only when the extension can actually replace the resolved
+    // binary: a too-old grim it manages ('bundled') or that is absent
+    // ('missing'). A too-old grim on PATH/setting, or any non-too-old failure,
+    // would keep being preferred by resolveExecutable, so a download changes
+    // nothing — offer "Show grim Info" (diagnostics) instead of a no-op loop.
+    const canInstall =
+      state.installStateUnknownReason === 'too-old' &&
+      (state.installStateUnknownOrigin === 'bundled' ||
+        state.installStateUnknownOrigin === 'missing');
+    const remedy = canInstall
+      ? html`<vscode-button class="sm" data-action="install-grim">Install grim</vscode-button>`
+      : state.installStateUnknownReason !== undefined
+        ? html`<vscode-button class="sm secondary" data-action="show-grim-info">Show grim Info</vscode-button>`
+        : nothing;
+    // grim's raw message and our sentence are two separate statements — one
+    // text node ran them together ("…'--check' found Install state is…").
     return html`
 <div class="init-notification">
   <span class="codicon codicon-warning init-icon"></span>
   <div class="init-body">
-    <span>${state.installStateUnknown} Install state is unavailable until this is resolved.</span>
-    <vscode-button class="sm" data-action="install-grim">Install grim</vscode-button>
+    <span>${state.installStateUnknown}</span>
+    <span class="init-hint">Install state is unavailable until this is resolved.</span>
+    ${remedy}
   </div>
 </div>`;
   }
@@ -547,11 +564,17 @@ export function renderSidebarTabs(state: SidebarState): TemplateResult | typeof 
     return nothing;
   }
   const outdated = state.installedItems.filter((c) => c.state === 'outdated').length;
-  const tabs = SIDEBAR_TABS.map(({ id, label }) => {
-    const count =
-      id === 'updates' && outdated > 0
+  // With status unavailable `installedItems` is empty for want of data, while
+  // the native badge deliberately keeps its last known value — no pill would
+  // read as zero and contradict it. Say "unknown" instead of a count.
+  const updatesCount =
+    state.installStateUnknown !== undefined
+      ? html`<span class="tab-count" title="Update count unavailable — install state is unknown" aria-label="update count unavailable">?</span>`
+      : outdated > 0
         ? html`<span class="tab-count">${outdated}</span>`
         : nothing;
+  const tabs = SIDEBAR_TABS.map(({ id, label }) => {
+    const count = id === 'updates' ? updatesCount : nothing;
     return html`<button class="tab${state.mode === id ? ' active' : ''}" data-action="set-tab" data-tab="${id}" aria-pressed="${state.mode === id}">${label}${count}</button>`;
   });
   return html`<div class="tabs sidebar-tabs">${tabs}</div>`;
@@ -845,6 +868,19 @@ function pendingScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): Templat
   return scopeRowShell(vm, scope, divided, cells);
 }
 
+/** A scope whose install state could not be determined (`grim status` failed, or
+ *  the binary is below the floor so it never ran): the same shell and column
+ *  widths as every other row, a muted "unknown" cell, and NO action. An Install
+ *  button here would be the positive "nothing is installed in this scope" claim
+ *  we specifically cannot make — the artifact may well be installed. Per scope,
+ *  unlike {@link pendingScopeRow}, which blanks the whole box. */
+function unknownScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): TemplateResult {
+  const cells = html`<span class="scope-version scope-status-muted"><span class="mono scope-ver"></span><span class="scope-glyph"><span class="codicon codicon-question"></span></span><span>Install state unknown</span></span>
+  <span class="scope-clients chip-list"></span>
+  <span class="scope-actions"></span>`;
+  return scopeRowShell(vm, scope, divided, cells);
+}
+
 /** A scope with no install: muted "Not installed" cell + gear (Copy repo path
  *  only) + the Install split button. */
 function notInstalledScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): TemplateResult {
@@ -883,6 +919,11 @@ function renderHeaderActions(vm: DetailsVM): TemplateResult {
   const rows = scopes.map((scope, index) => {
     if (vm.scopesPending) {
       return pendingScopeRow(vm, scope, index > 0);
+    }
+    // Checked before `installs`: an unknown scope contributes no installs, so
+    // the find below would fall through to the "Not installed" row.
+    if (vm.unknownScopes?.includes(scope)) {
+      return unknownScopeRow(vm, scope, index > 0);
     }
     const install = vm.installs.find((i) => i.scope === scope);
     return install
