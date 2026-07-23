@@ -226,10 +226,22 @@ suite('watchers', () => {
 
   // refreshAll re-arms on every refresh now; a rebuild that tore down and
   // recreated its watchers each time would drop events landing in the gap.
-  // Uses the workspace watcher (the reliable one — the grim-home watchers need
-  // suite warm-up before they fire) since the memo is shared by both.
-  test('re-arming with unchanged inputs keeps the existing watchers live', async function () {
+  // rebuild() always disposes before it arms, so "created no new watcher" IS
+  // "tore none down" — counting creations pins the memo without racing the
+  // arming latency. (The earlier version only touched the file after all six
+  // rebuilds, so it passed even with the memo deleted.)
+  test('re-arming with unchanged inputs reuses the live watchers instead of recreating them', async function () {
     this.timeout(15000);
+    const created: vscode.FileSystemWatcher[] = [];
+    const workspace = vscode.workspace as unknown as {
+      createFileSystemWatcher: typeof vscode.workspace.createFileSystemWatcher;
+    };
+    const createWatcher = workspace.createFileSystemWatcher;
+    workspace.createFileSystemWatcher = ((...args: Parameters<typeof createWatcher>) => {
+      const watcher = createWatcher(...args);
+      created.push(watcher);
+      return watcher;
+    }) as typeof createWatcher;
     let fired = 0;
     const watchers = new Watchers(() => {
       fired += 1;
@@ -240,15 +252,74 @@ suite('watchers', () => {
     const original = fs.readFileSync(file, 'utf8');
     try {
       watchers.rebuild(undefined);
+      const armed = [...created];
+      assert.ok(armed.length > 0, 'the first rebuild armed the workspace watchers');
       for (let i = 0; i < 5; i++) {
         watchers.rebuild(undefined);
       }
+      assert.deepStrictEqual(
+        created,
+        armed,
+        `re-arming with unchanged inputs created ${created.length - armed.length} extra watcher(s)`,
+      );
+      // ...and the set it kept is the one still delivering events.
       fired = 0;
       fs.writeFileSync(file, original + `\n# touched ${Date.now()}\n`);
       await waitFor(() => fired > 0);
     } finally {
+      workspace.createFileSystemWatcher = createWatcher;
       fs.writeFileSync(file, original);
       watchers.dispose();
+    }
+  });
+
+  // rev-quality#4: a throw mid-arm (e.g. createFileSystemWatcher failing) must
+  // leave the memo EMPTY, not stuck on the previous key. Otherwise the live set
+  // is a half-dead partial while armedKey still names the old key, and re-arming
+  // that key short-circuits — leaving its home unwatched for the session.
+  // disposeWatchers() clears the memo; rebuild() only re-sets it after a full arm.
+  test('a throw mid-arm clears the memo so re-arming the previously-armed key still re-arms', () => {
+    const created: vscode.FileSystemWatcher[] = [];
+    const workspace = vscode.workspace as unknown as {
+      createFileSystemWatcher: typeof vscode.workspace.createFileSystemWatcher;
+    };
+    const createWatcher = workspace.createFileSystemWatcher;
+    let calls = 0;
+    let armThrows = false;
+    workspace.createFileSystemWatcher = ((...args: Parameters<typeof createWatcher>) => {
+      calls += 1;
+      if (armThrows && calls === 2) {
+        throw new Error('createFileSystemWatcher blew up mid-arm');
+      }
+      const watcher = createWatcher(...args);
+      created.push(watcher);
+      return watcher;
+    }) as typeof createWatcher;
+    const homeA = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-home-A-'));
+    const homeB = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-home-B-'));
+    fs.mkdirSync(path.join(homeA, 'state'), { recursive: true });
+    fs.mkdirSync(path.join(homeB, 'state'), { recursive: true });
+    const watchers = new Watchers(() => {}, 40);
+    try {
+      watchers.rebuild(homeA); // clean arm: the memo now holds homeA's key
+      // A DIFFERENT key whose 2nd watcher throws mid-arm — the set is left partial.
+      armThrows = true;
+      calls = 0;
+      assert.throws(() => watchers.rebuild(homeB), /blew up mid-arm/);
+      const afterThrow = created.length;
+      // Re-arming homeA — the key a stale memo would still claim as current — must
+      // actually recreate its watchers rather than short-circuit on the memo.
+      armThrows = false;
+      watchers.rebuild(homeA);
+      assert.ok(
+        created.length > afterThrow,
+        `re-arming the previously-armed key after a mid-arm throw must recreate watchers (was ${afterThrow}, now ${created.length})`,
+      );
+    } finally {
+      workspace.createFileSystemWatcher = createWatcher;
+      watchers.dispose();
+      fs.rmSync(homeA, { recursive: true, force: true });
+      fs.rmSync(homeB, { recursive: true, force: true });
     }
   });
 

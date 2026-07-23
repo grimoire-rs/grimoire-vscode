@@ -438,10 +438,14 @@ suite('extension integration', () => {
     // land at once; each used to spawn its own full round of grim calls.
     await Promise.all([api.refresh(), api.refresh({ refresh: true }), api.refresh()]);
     const searches = argvLines(stub).filter((l) => l.startsWith('search'));
-    assert.ok(searches.length > 0, 'search ran');
-    assert.ok(
-      searches.length <= 2,
-      `three overlapping refreshes must not mean three search rounds: ${searches.join(' | ')}`,
+    // Exactly one: three callers on the same tick all queue before the drain
+    // starts, so they share a round. A drain that starts synchronously drains
+    // an empty queue and charges the later two a second full round of grim
+    // calls — the cost this coalescer exists to remove.
+    assert.strictEqual(
+      searches.length,
+      1,
+      `three same-tick refreshes are one round: ${searches.join(' | ')}`,
     );
     // The explicit refresh must not be downgraded by the cheap ones it merged
     // with — otherwise clicking Refresh could silently serve grim's cache.
@@ -449,6 +453,69 @@ suite('extension integration', () => {
       searches.some((l) => l.includes('--refresh')),
       `the coalesced round keeps --refresh: ${searches.join(' | ')}`,
     );
+  });
+
+  // The drain runs one round per queued request and each round is independent:
+  // one participant throwing must not reject callers whose round never ran
+  // (grimoire.refresh hands that promise to VS Code, which reports it as a
+  // failed command) nor discard the options queued behind it.
+  test('one round failing does not reject the callers or drop the queued round', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const settings = api.providers.settings;
+    const original = settings.refreshOpenPanel.bind(settings);
+    let rounds = 0;
+    let enteredFirstRound = (): void => {};
+    const entered = new Promise<void>((resolve) => {
+      enteredFirstRound = resolve;
+    });
+    settings.refreshOpenPanel = async () => {
+      rounds += 1;
+      if (rounds === 1) {
+        enteredFirstRound();
+        // Stay in flight so the next caller queues behind this round instead
+        // of joining it.
+        await new Promise((r) => setTimeout(r, 100));
+        throw new Error('refresh participant blew up');
+      }
+      await original();
+    };
+    try {
+      const first = api.refresh();
+      await entered;
+      const second = api.refresh();
+      const settled = await Promise.allSettled([first, second]);
+      assert.deepStrictEqual(
+        settled.map((r) => r.status),
+        ['fulfilled', 'fulfilled'],
+        'a failed round is logged, not handed back to callers as a rejected refresh',
+      );
+      assert.strictEqual(rounds, 2, 'the refresh queued during the failing round still ran');
+      await api.refresh();
+      assert.strictEqual(rounds, 3, 'the in-flight flag was released — later refreshes still run');
+    } finally {
+      settings.refreshOpenPanel = original;
+    }
+  });
+
+  // Options are unioned across coalesced callers: the daily `check: true`
+  // refresh must not be served by a cheap watcher refresh that queued with it.
+  test('a plain refresh coalescing with a checked one still runs status --check', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    try {
+      fs.rmSync(stub.argvLog, { force: true });
+      await Promise.all([api.refresh(), api.refresh({ check: true })]);
+      const statusLines = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(statusLines.length > 0, 'status was invoked');
+      assert.ok(
+        statusLines.some((l) => l.includes('--check')),
+        `the coalesced round keeps --check: ${statusLines.join(' | ')}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+    }
   });
 
   test('a plain refresh runs grim status without --check (stays offline)', async function () {
@@ -3453,7 +3520,10 @@ suite('project probe failure (run override)', () => {
     }) as typeof scopes.run;
     const snap = await scopes.snapshot({ check: true });
     assert.ok(snap.global, 'the scope snapshot itself survives a status failure');
-    assert.deepStrictEqual(snap.global.status, [], 'status stays empty (unknown), never fabricated');
+    // null, not []: "we could not find out" and "nothing is installed" are
+    // different claims, and [] is the one that flips installed cards to Install.
+    assert.strictEqual(snap.global.status, null, 'install state is unknown, never fabricated');
+    assert.strictEqual(snap.global.statusUnknownReason, 'status-failed');
     assert.ok(
       snap.error?.includes("unexpected argument '--check'"),
       `snapshot.error carries the status failure: ${snap.error}`,
@@ -3557,6 +3627,69 @@ suite('executable resolution', () => {
       await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
     }
   });
+
+  test('resolvedExecutable pins each origin (incl. missing) and stays in parity with resolveExecutable', async function () {
+    if (isWindows) {
+      this.skip(); // the PATH-hit assertions rely on a bare `grim` file (no .exe)
+      return;
+    }
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-storage-resolved-'));
+    const pathDir = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-resolved-path-'));
+    fs.writeFileSync(path.join(pathDir, 'grim'), '#!/bin/sh\n', { mode: 0o755 });
+    const scopes = new ScopeService(vscode.Uri.file(storage), recordingOutput([]));
+    const bundled = scopes.bundledExecutablePath();
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    const prevExec = cfg.inspect<string>('path.executable')?.globalValue;
+    const prevEnv = cfg.inspect<Record<string, string>>('extraEnv')?.globalValue;
+    // resolvedExecutable() names the PATH hit absolutely, but resolveExecutable()
+    // hands the OS a bare `grim` to resolve itself — so parity maps the PATH
+    // origin to the default, and every other origin to the reported path.
+    const derived = (r: ReturnType<ScopeService['resolvedExecutable']>): string =>
+      r.origin === 'PATH' ? DEFAULT_EXECUTABLE : r.path;
+    try {
+      await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
+      await cfg.update('extraEnv', { PATH: pathDir }, vscode.ConfigurationTarget.Global);
+
+      // PATH: the scan names the absolute hit whichGrim found, never bare `grim`.
+      scopes.pathHasGrim = () => true;
+      fs.rmSync(bundled, { force: true });
+      const onPath = scopes.resolvedExecutable();
+      assert.strictEqual(onPath.origin, 'PATH');
+      assert.strictEqual(onPath.path, path.join(pathDir, 'grim'));
+      assert.notStrictEqual(onPath.path, DEFAULT_EXECUTABLE, 'PATH names the hit, not bare grim');
+      assert.strictEqual(scopes.resolveExecutable(), derived(onPath));
+
+      // missing: no setting, no PATH grim, no bundled copy — reported as missing,
+      // never mislabelled PATH (the bug: a full scan only to name a nowhere binary).
+      scopes.pathHasGrim = () => false;
+      const missing = scopes.resolvedExecutable();
+      assert.strictEqual(missing.origin, 'missing');
+      assert.strictEqual(missing.path, DEFAULT_EXECUTABLE);
+      assert.strictEqual(scopes.resolveExecutable(), derived(missing));
+
+      // bundled: no PATH grim but the extension-managed copy exists.
+      fs.mkdirSync(path.dirname(bundled), { recursive: true });
+      fs.writeFileSync(bundled, '#!/bin/sh\n', { mode: 0o755 });
+      const bundledRes = scopes.resolvedExecutable();
+      assert.strictEqual(bundledRes.origin, 'bundled');
+      assert.strictEqual(bundledRes.path, bundled);
+      assert.strictEqual(scopes.resolveExecutable(), derived(bundledRes));
+
+      // setting: an explicit path wins over a PATH grim and the bundled copy alike.
+      const explicit = path.join(storage, 'explicit-grim');
+      await cfg.update('path.executable', explicit, vscode.ConfigurationTarget.Global);
+      scopes.pathHasGrim = () => true;
+      const setting = scopes.resolvedExecutable();
+      assert.strictEqual(setting.origin, 'setting');
+      assert.strictEqual(setting.path, explicit);
+      assert.strictEqual(scopes.resolveExecutable(), derived(setting));
+    } finally {
+      await cfg.update('path.executable', prevExec, vscode.ConfigurationTarget.Global);
+      await cfg.update('extraEnv', prevEnv, vscode.ConfigurationTarget.Global);
+      fs.rmSync(storage, { recursive: true, force: true });
+      fs.rmSync(pathDir, { recursive: true, force: true });
+    }
+  });
 });
 
 /** The version floor, end to end through the REAL resolveExecutable + execFile
@@ -3645,7 +3778,12 @@ suite('grim version floor', () => {
     // Dropping the whole scope snapshot used to leave projectSearchable false
     // and silently pin browse to global on a stale binary.
     assert.strictEqual(snapshot.project?.context.config_exists, true);
-    assert.deepStrictEqual(snapshot.project?.status, [], 'install state stays unknown, not faked');
+    assert.strictEqual(snapshot.project?.status, null, 'install state stays unknown, not faked');
+    assert.strictEqual(
+      snapshot.project?.statusUnknownReason,
+      'too-old',
+      'the render layer picks its action off the reason, not off the message text',
+    );
     assert.strictEqual(
       projectSearchable(snapshot),
       true,
@@ -3766,5 +3904,163 @@ suite('workspace fixture', () => {
     const folder = vscode.workspace.workspaceFolders?.[0];
     assert.ok(folder, 'test workspace folder missing');
     assert.ok(fs.existsSync(path.join(folder.uri.fsPath, 'grimoire.toml')));
+  });
+});
+
+// The global watchers ($GRIM_HOME grimoire.toml/lock, state/global.json) are
+// armed off a `grim context --global` probe. One transient failure of that
+// probe used to leave them unarmed — or, worse, disarm a set that was already
+// live — for the rest of the session, and every global-scope change made
+// outside this extension then went unnoticed. Declared last: it repoints
+// grimoire.path.executable at its own stub, so it must not run inside the
+// shared suite above.
+suite('global watcher arming across a failing probe', () => {
+  let dir: string;
+  let home: string;
+  let executable: string;
+  let argvLog: string;
+
+  const failProbe = (): string => path.join(dir, 'fail');
+
+  const argvCount = (): number => {
+    try {
+      // Count only refresh-round spawns (a snapshot's `context`, then `status`),
+      // not any spawn: an unrelated round that merely happened to land must not
+      // satisfy the wait for the watcher-driven refresh under test.
+      return fs
+        .readFileSync(argvLog, 'utf8')
+        .split('\n')
+        .filter((l) => /(?:^|\s)(?:context|status)(?:\s|$)/.test(l)).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  /** Rewrites the lock file until the refresh lands: an out-of-workspace
+   *  watcher arms asynchronously, and the production debounce is a full
+   *  second, so the writes have to be slower than the debounce (a faster
+   *  interval would keep resetting it) and repeated past the arming latency. */
+  const touchUntilRefreshed = async (): Promise<void> => {
+    const before = argvCount();
+    const lock = path.join(home, 'grimoire.lock');
+    const writer = setInterval(() => fs.writeFileSync(lock, `lock ${Date.now()}\n`), 2500);
+    try {
+      fs.writeFileSync(lock, `lock ${Date.now()}\n`);
+      await waitFor(() => argvCount() > before, 25000);
+    } finally {
+      clearInterval(writer);
+    }
+  };
+
+  suiteSetup(function () {
+    if (isWindows) {
+      this.skip();
+    }
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-watch-stub-'));
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-watch-home-'));
+    argvLog = path.join(dir, 'argv.log');
+    executable = path.join(dir, 'grim');
+    // The probe flips between working and failing through a marker FILE, so a
+    // test can break it without a configuration change (which would itself
+    // re-run rebuildWatchers and mask what is being measured).
+    const context = JSON.stringify(contextDoc({ grim_home: home }));
+    fs.writeFileSync(
+      executable,
+      `#!/bin/sh
+echo "$@" >> "${argvLog}"
+if [ -f "${dir}/fail" ]; then
+  echo '{"error":{"code":"failure","exit":70,"message":"transient probe failure"}}'
+  exit 0
+fi
+if [ "$1" = "--global" ]; then shift; fi
+if [ "$1" = "context" ]; then
+  echo '${context}'
+else
+  echo '{"items":[]}'
+fi
+`,
+      { mode: 0o755 },
+    );
+  });
+
+  suiteTeardown(async () => {
+    if (isWindows) {
+      return;
+    }
+    const cfg = vscode.workspace.getConfiguration('grimoire');
+    await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
+    await cfg.update('checkForUpdates', undefined, vscode.ConfigurationTarget.Global);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  test('a refresh arms the global watchers from its own snapshot when the probe failed', async function () {
+    this.timeout(60000);
+    const api = await activateExtension();
+    fs.writeFileSync(failProbe(), '');
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('path.executable', executable, vscode.ConfigurationTarget.Global);
+    await new Promise((r) => setTimeout(r, 1500)); // let the failed round settle
+    // The binary recovers with no configuration change, so nothing re-runs the
+    // probe — only the refresh's own re-arm, off the snapshot it just took,
+    // can get this grim home watched.
+    fs.rmSync(failProbe(), { force: true });
+    await api.refresh();
+    await touchUntilRefreshed();
+  });
+
+  test('a later failing probe does not disarm the global watchers a refresh armed', async function () {
+    this.timeout(60000);
+    const api = await activateExtension();
+    fs.rmSync(failProbe(), { force: true });
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('path.executable', executable, vscode.ConfigurationTarget.Global);
+    await api.refresh(); // armed on this grim home
+    await new Promise((r) => setTimeout(r, 1000));
+    // A configuration change re-runs the probe, and this time it fails. The
+    // failure knows nothing new about the grim home — re-arming with
+    // `undefined` throws away watchers that are working.
+    fs.writeFileSync(failProbe(), '');
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('checkForUpdates', false, vscode.ConfigurationTarget.Global);
+    await new Promise((r) => setTimeout(r, 2000));
+    fs.rmSync(failProbe(), { force: true }); // transient: the next call works again
+    await touchUntilRefreshed();
+  });
+
+  // rev-quality#6: a fan-out participant throwing must NOT skip the post-fan-out
+  // self-heal that arms the freshly-resolved grim home — an install→refresh where
+  // sidebar.refresh throws used to leave the new grim unwatched. Promise.allSettled
+  // runs every participant to completion, so the self-heal after it always runs.
+  test('a throwing fan-out participant still lets the refresh re-arm the global watchers', async function () {
+    this.timeout(60000);
+    const api = await activateExtension();
+    // Break the probe so neither activation nor the config-change's rebuildWatchers
+    // can arm `home`: only the refresh's own self-heal can get it watched.
+    fs.writeFileSync(failProbe(), '');
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('path.executable', executable, vscode.ConfigurationTarget.Global);
+    await new Promise((r) => setTimeout(r, 1500)); // let the failed round settle
+    fs.rmSync(failProbe(), { force: true }); // probe works again; nothing re-runs it
+    // Seed the cached snapshot the self-heal reads (home), independent of which
+    // participant snapshots — so this pins the self-heal, not snapshot timing.
+    await api.scopes.snapshot();
+    // Make the sidebar participant throw for this round. Under Promise.all the
+    // rejection aborts before the self-heal; allSettled lets it run anyway.
+    const sidebar = api.providers.sidebar;
+    const originalRefresh = sidebar.refresh.bind(sidebar);
+    sidebar.refresh = async () => {
+      throw new Error('sidebar participant blew up');
+    };
+    try {
+      await api.refresh();
+    } finally {
+      sidebar.refresh = originalRefresh;
+    }
+    await touchUntilRefreshed();
   });
 });

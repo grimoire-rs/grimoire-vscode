@@ -56,13 +56,10 @@ export interface RefreshOptions {
 /** Union of two queued requests: a flag asked for by ANY coalesced caller must
  *  survive, or the explicit refresh a user clicked could be served by a cheap
  *  watcher-driven one that happened to be queued alongside it. */
-function mergeRefreshOptions(
-  a: RefreshOptions | undefined,
-  b: RefreshOptions,
-): RefreshOptions {
+function mergeRefreshOptions(a: RefreshOptions | undefined, b: RefreshOptions): RefreshOptions {
   return {
-    ...(a?.refresh === true || b.refresh === true ? { refresh: true } : {}),
-    ...(a?.check === true || b.check === true ? { check: true } : {}),
+    refresh: a?.refresh === true || b.refresh === true,
+    check: a?.check === true || b.check === true,
   };
 }
 
@@ -81,11 +78,22 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // details panels take their own snapshots inside buildVM regardless.
     // `settings` is declared below; this closure only reads it at call time
     // (async, post-activation), so the forward reference is safe.
-    await Promise.all([
+    // allSettled, not all: one participant throwing must neither abort the
+    // others mid-round nor skip the self-heal below (an install's refresh that
+    // arms the freshly-downloaded grim's watchers relies on it). Each rejection
+    // is logged, never silently swallowed.
+    const results = await Promise.allSettled([
       sidebar.refresh(options),
       details.refreshOpenPanels(options),
       settings.refreshOpenPanel(),
     ]);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        const reason: unknown = result.reason;
+        const message = reason instanceof Error ? reason.message : String(reason);
+        output.appendLine(`refresh participant failed: ${message}`);
+      }
+    }
     // Self-heal the watchers. rebuildWatchers runs once at activation off a
     // single `grim context --global` probe with no retry; one transient
     // failure there leaves the global watchers unarmed for the whole session,
@@ -109,17 +117,32 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
 
   const refreshAll = (options: RefreshOptions = {}): Promise<void> => {
     queued = mergeRefreshOptions(queued, options);
-    draining ??= (async () => {
+    // Yield one microtask before draining. An immediately-invoked async drain
+    // runs its first iteration synchronously, emptying `queued` before
+    // refreshAll even returns — so the second and third same-tick callers find
+    // nothing queued and each pay for a full extra round of grim calls, the
+    // exact cost this coalescer exists to remove.
+    draining ??= Promise.resolve().then(async () => {
       try {
         while (queued !== undefined) {
           const next = queued;
           queued = undefined;
-          await runRefresh(next);
+          // Per round, so one bad round is logged instead of aborting the
+          // drain: a throw here used to discard the options queued behind it
+          // and reject callers whose round never ran (grimoire.refresh hands
+          // that promise to VS Code, which reports a command failure for a
+          // refresh that did not happen).
+          try {
+            await runRefresh(next);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            output.appendLine(`refresh failed: ${message}`);
+          }
         }
       } finally {
         draining = undefined;
       }
-    })();
+    });
     return draining;
   };
 
@@ -163,8 +186,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       );
       output.appendLine(`installed grim at ${target}`);
       void vscode.window.showInformationMessage(`grim installed at ${target}`);
+      // No separate probe: the refresh takes a global snapshot and re-arms the
+      // watchers from its grim home (see runRefresh).
       await refreshAll();
-      await rebuildWatchers();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       output.appendLine(`grim install failed: ${message}`);
@@ -289,6 +313,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   context.subscriptions.push(watchers);
 
   const rebuildWatchers = async (): Promise<void> => {
+    // The home known BEFORE the probe is the ultimate fallback: a concurrent
+    // refreshAll whose own probe failed can replace the cached snapshot with one
+    // that carries no `global` at all mid-flight, and this pre-read survives that.
+    const known = scopes.cachedSnapshot()?.global?.context.grim_home;
     const ctx = await scopes.run<ContextInfo>(contextArgs(), 'global');
     if (!ctx.ok) {
       // Silent until now, and the consequence is invisible: rebuild(undefined)
@@ -297,7 +325,18 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       const message = ctx.kind === 'not-found' ? 'grim executable not found' : ctx.message;
       output.appendLine(`watchers: global context probe failed (${message})`);
     }
-    watchers.rebuild(ctx.ok ? ctx.value.grim_home : undefined);
+    // A failed probe knows nothing NEW about the grim home, so it must not re-arm
+    // with `undefined` — that disposes a global watcher set a refresh already
+    // armed off its own snapshot, recreating the unarmed state this self-heal
+    // exists to fix (including at activation, where `known` above was undefined
+    // but a concurrent refresh has since armed a home). Read the cached snapshot
+    // AFTER the await so that just-armed home is picked up rather than disposed;
+    // fall back to the pre-probe `known`, and only `undefined` when there has
+    // never been one (the folder watchers, whose key includes the workspace
+    // folders, still rebuild).
+    watchers.rebuild(
+      ctx.ok ? ctx.value.grim_home : (scopes.cachedSnapshot()?.global?.context.grim_home ?? known),
+    );
   };
   void rebuildWatchers();
 
@@ -473,7 +512,8 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
         } else {
           void vscode.window.showInformationMessage('Created grimoire.toml');
         }
-        await rebuildWatchers();
+        // `grim init` writes in the workspace folder; the folder watchers are
+        // already armed for it and refreshAll re-arms the global set anyway.
         await refreshAll();
       }),
     ),

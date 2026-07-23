@@ -18,6 +18,7 @@ import {
   type RegistryFieldEntry,
   type StatusItem,
 } from '../grim';
+import { grimTooOld } from '../installer';
 import { withGlobalFlag } from '../scopes';
 
 // Live contract tests against a real grim. Defaults to `grim` on PATH (the
@@ -27,14 +28,23 @@ import { withGlobalFlag } from '../scopes';
 // the whole suite self-skips. Network-touching checks stay gated behind
 // GRIM_LIVE_NETWORK=1.
 const GRIM = process.env['GRIM_LIVE_BIN'] ?? 'grim';
-const HAVE_GRIM = spawnSync(GRIM, ['--version'], { timeout: 10000 }).status === 0;
+const VERSION_PROBE = spawnSync(GRIM, ['--version'], { timeout: 10000, encoding: 'utf8' });
+const HAVE_GRIM = VERSION_PROBE.status === 0;
+// `grim --version` prints e.g. "grim 0.11.0" — the semver is the last token.
+const GRIM_VERSION =
+  HAVE_GRIM ? (/(\d+\.\d+\.\d+)/.exec(VERSION_PROBE.stdout ?? '')?.[1] ?? null) : null;
 const NETWORK = process.env['GRIM_LIVE_NETWORK'] === '1';
 
 suite('grim live (real binary)', function () {
   this.timeout(30000);
 
   suiteSetup(function () {
-    if (!HAVE_GRIM) {
+    // Skip when grim is absent OR below the declared floor: this suite certifies
+    // the v2 surface (status --check, config registry fields, config set
+    // --dry-run), and a below-floor binary would either "pass" against an older
+    // interface or fail for the wrong reason. Only a grim at/above the floor can
+    // legitimately certify the surface this branch targets.
+    if (!HAVE_GRIM || GRIM_VERSION === null || grimTooOld(GRIM_VERSION)) {
       this.skip();
     }
   });

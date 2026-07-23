@@ -58,9 +58,9 @@ export class Watchers implements vscode.Disposable {
     if (key === this.armedKey) {
       return;
     }
-    this.armedKey = key;
-    this.disposeWatchers();
+    this.disposeWatchers(); // clears armedKey, so an arm that throws below leaves it empty
     if (!watchForChanges) {
+      this.armedKey = key;
       return;
     }
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -86,6 +86,11 @@ export class Watchers implements vscode.Disposable {
       }
       this.watch(new vscode.RelativePattern(vscode.Uri.joinPath(home, 'state'), 'global.json'));
     }
+    // Marked armed only once the set is actually up. disposeWatchers() above
+    // cleared the memo, so a throw mid-arming (e.g. createFileSystemWatcher
+    // failing) leaves it empty rather than stale — a later rebuild() with the
+    // same key then re-arms instead of short-circuiting forever on a partial set.
+    this.armedKey = key;
   }
 
   private watch(pattern: vscode.RelativePattern): void {
@@ -115,13 +120,16 @@ export class Watchers implements vscode.Disposable {
       disposable.dispose();
     }
     this.disposables = [];
+    // Clear the memo here, paired with the teardown: any arm that doesn't run to
+    // completion (a throw before rebuild() re-sets the key) then leaves it empty,
+    // so it can never mark a partial or torn-down set as the current armed one.
+    this.armedKey = undefined;
   }
 
   dispose(): void {
     if (this.timer) {
       clearTimeout(this.timer);
     }
-    this.armedKey = undefined; // disposed: the next rebuild must actually arm
-    this.disposeWatchers();
+    this.disposeWatchers(); // also clears armedKey: the next rebuild must actually arm
   }
 }
