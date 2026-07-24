@@ -21,12 +21,18 @@ function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
   });
 }
 
-// A disposed FileSystemWatcher releases its handle on the watched directory
-// asynchronously, so on Windows the teardown rm races it and fails with
-// ENOTEMPTY. maxRetries is Node's own remedy for exactly that class of error
-// (linear backoff, recursive removals only).
+// Disposing a FileSystemWatcher only asks the (out-of-process) watcher service
+// to stop; on Windows it still holds a handle on the watched directory long
+// after dispose() returns, so removing a grim home fails with ENOTEMPTY/EPERM
+// no matter how long we retry — verified in CI at 10 retries. The directory is
+// a mkdtemp under the OS temp dir and the assertions have already run by then,
+// so a failed cleanup must not fail the test.
 function rmGrimHome(dir: string): void {
-  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+  } catch (e) {
+    console.warn(`watchers test: leaving ${dir} for the OS to reclaim (${e})`);
+  }
 }
 
 suite('watchers', () => {
