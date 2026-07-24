@@ -21,6 +21,14 @@ function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
   });
 }
 
+// A disposed FileSystemWatcher releases its handle on the watched directory
+// asynchronously, so on Windows the teardown rm races it and fails with
+// ENOTEMPTY. maxRetries is Node's own remedy for exactly that class of error
+// (linear backoff, recursive removals only).
+function rmGrimHome(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 suite('watchers', () => {
   test('fires (debounced) on grimoire.toml change in the workspace', async () => {
     let fired = 0;
@@ -58,7 +66,7 @@ suite('watchers', () => {
       assert.ok(fired >= 1);
     } finally {
       watchers.dispose();
-      fs.rmSync(grimHome, { recursive: true, force: true });
+      rmGrimHome(grimHome);
     }
   });
 
@@ -82,7 +90,7 @@ suite('watchers', () => {
     } finally {
       clearInterval(writer);
       watchers.dispose();
-      fs.rmSync(grimHome, { recursive: true, force: true });
+      rmGrimHome(grimHome);
     }
   });
 
@@ -104,7 +112,7 @@ suite('watchers', () => {
     } finally {
       clearInterval(writer);
       watchers.dispose();
-      fs.rmSync(grimHome, { recursive: true, force: true });
+      rmGrimHome(grimHome);
     }
   });
 
@@ -220,7 +228,7 @@ suite('watchers', () => {
       await waitFor(() => fired > 0);
     } finally {
       watchers.dispose();
-      fs.rmSync(grimHome, { recursive: true, force: true });
+      rmGrimHome(grimHome);
     }
   });
 
@@ -318,8 +326,8 @@ suite('watchers', () => {
     } finally {
       workspace.createFileSystemWatcher = createWatcher;
       watchers.dispose();
-      fs.rmSync(homeA, { recursive: true, force: true });
-      fs.rmSync(homeB, { recursive: true, force: true });
+      rmGrimHome(homeA);
+      rmGrimHome(homeB);
     }
   });
 
