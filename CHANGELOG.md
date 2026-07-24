@@ -5,6 +5,34 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-07-24
+
+### Added
+
+- Add a grim info action to the view menu *(sidebar)*
+
+### Changed
+
+- Remove the unused showDeprecated card filter *(webview)*
+
+### Documentation
+
+- Clarify that defaultScope only affects install actions *(config)*
+- Document Show grim Info, the degraded mode, and the Pin Version label *(readme)*
+
+### Fixed
+
+- Keep config_exists when the version floor trips *(scopes)*
+- Keep browsing when install state is unknown *(sidebar)*
+- Flag when the edited scope is not the one browse searches *(settings)*
+- Re-arm the global watchers from the refresh snapshot *(extension)*
+- Drop superseded search responses *(catalog)*
+- Coalesce overlapping refreshAll runs *(extension)*
+- Model unknown install state as a first-class scope state *(sidebar)*
+- Isolate refresh rounds and harden watcher self-heal *(extension)*
+- Name the remedy in the scope-mismatch notice *(settings)*
+- Keep browse-card logos in sync with the cache *(details)*
+
 ## [0.2.3] - 2026-07-22
 
 ### Added
@@ -80,6 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.2.4]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.3..v0.2.4
 [0.2.3]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.2..v0.2.3
 [0.2.2]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.1..v0.2.2
 [0.2.1]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.0..v0.2.1
