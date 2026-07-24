@@ -31,6 +31,29 @@ const esbuildProblemMatcherPlugin = {
   },
 };
 
+/**
+ * esbuild merges a dependency's own source map into ours when the file carries
+ * a `sourceMappingURL` pragma. Some packages point their `sourceRoot` at a
+ * remote URL (`entities` → raw.githubusercontent.com), and c8 then remaps
+ * coverage onto those URLs: the HTML report tries to write a file path
+ * containing `https:`, which is illegal on Windows and rejected by
+ * actions/upload-artifact. Dropping the pragma keeps dist/*.map pointing at our
+ * own TypeScript only.
+ * @type {import('esbuild').Plugin}
+ */
+const stripDependencySourcemapsPlugin = {
+  name: 'strip-dependency-sourcemaps',
+  setup(build) {
+    build.onLoad({ filter: /[\\/]node_modules[\\/].*\.[cm]?js$/ }, async ({ path: file }) => ({
+      contents: (await fs.promises.readFile(file, 'utf8')).replace(
+        /\/\/# sourceMappingURL=\S*/g,
+        '',
+      ),
+      loader: 'js',
+    }));
+  },
+};
+
 function copyCodicons() {
   const src = path.join(__dirname, 'node_modules', '@vscode', 'codicons', 'dist');
   const dest = path.join(__dirname, 'dist', 'webview');
@@ -47,7 +70,7 @@ async function main() {
     sourcemap: !production,
     sourcesContent: false,
     logLevel: 'silent',
-    plugins: [esbuildProblemMatcherPlugin],
+    plugins: [stripDependencySourcemapsPlugin, esbuildProblemMatcherPlugin],
   };
 
   const hostCtx = await esbuild.context({
