@@ -249,13 +249,17 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     focusBrowseSearch,
     vscode.Uri.joinPath(context.globalStorageUri, 'details-cache').fsPath,
     suspendWhile,
+    // Every details cache write that carries a logo — prefetch OR a panel open —
+    // pokes the (debounced) sidebar repost. `prefetcher` is declared below and
+    // read at call time — forward-ref safe.
+    () => prefetcher.notifyLogo(),
   );
 
   // Background prefetch of top browse results into the details cache. onLogosLanded
   // reads the provider (declared below) at call time — forward-ref safe.
   const prefetcher = new Prefetcher({
     work: (repo) => details.prefetchInto(repo),
-    isCached: (repo) => details.hasCached(repo),
+    isFresh: (repo) => details.isFresh(repo),
     onLogosLanded: () => {
       void sidebar.repostLogos();
     },

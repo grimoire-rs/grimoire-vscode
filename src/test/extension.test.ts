@@ -91,6 +91,8 @@ if [ "$cmd" = "fetch" ]; then
       [ -f "${dir}/fetch-readme.json" ] && { cat "${dir}/fetch-readme.json"; exit 0; } ;;
     *--path*CHANGELOG*)
       [ -f "${dir}/fetch-changelog.json" ] && { cat "${dir}/fetch-changelog.json"; exit 0; } ;;
+    *--path*logo*)
+      [ -f "${dir}/fetch-logo.json" ] && { cat "${dir}/fetch-logo.json"; exit 0; } ;;
   esac
 fi
 # A --force retry (e.g. after a confirmed force-confirm dialog) can be canned
@@ -193,6 +195,19 @@ function describeDoc(repo: string, overrides: Record<string, unknown> = {}): Rec
     annotations: {},
     ...overrides,
   };
+}
+
+/** 1x1 PNG — the bytes never matter, only that a logo data: URI gets built. */
+const LOGO_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** Cans a repo that ships an in-tree logo.png: describe, the descriptor fetch
+ *  (whose files[] advertises it) and the `--path logo.png` fetch. */
+function cannedWithLogo(stub: Stub, repo: string, digest: string): void {
+  const base = { ref: `${repo}:latest`, digest, kind: 'skill', name: artifactName(repo), vendor: 'canonical' };
+  canned(stub, 'describe', describeDoc(repo, { has_description: false, digest }));
+  canned(stub, 'fetch', { ...base, content: '# Descriptor', files: [{ path: 'logo.png', size: 70 }] });
+  canned(stub, 'fetch-logo', { ...base, path: 'logo.png', content: LOGO_B64, encoding: 'base64' });
 }
 
 function searchItem(repo: string): Record<string, unknown> {
@@ -2604,6 +2619,121 @@ suite('extension integration', () => {
       assert.deepStrictEqual(revalidates, ['checking', 'done'], 'cached paint → checking/done');
     } finally {
       canned(stub, 'search', { items: [] });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a logo cached by a details open pops into the browse cards', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/logo-open';
+    // Prefetch OFF, so the only path that can cache this logo is the panel open —
+    // exactly the case that used to leave the card on its codicon tile until an
+    // unrelated refresh happened by (only the prefetcher reported landed logos).
+    await vscode.workspace
+      .getConfiguration('grimoire')
+      .update('prefetchDetails', false, vscode.ConfigurationTarget.Global);
+    canned(stub, 'search', { items: [searchItem(repo)] });
+    cannedWithLogo(stub, repo, 'sha256:art1');
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    try {
+      await api.providers.sidebar.refresh();
+      const before = states[states.length - 1];
+      assert.strictEqual(before?.items[0]?.logoUri ?? null, null, 'card starts logo-less');
+      const { panel } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      await waitFor(() => (states[states.length - 1]?.items[0]?.logoUri ?? null) !== null);
+    } finally {
+      await vscode.workspace
+        .getConfiguration('grimoire')
+        .update('prefetchDetails', undefined, vscode.ConfigurationTarget.Global);
+      canned(stub, 'search', { items: [] });
+      fs.rmSync(path.join(stub.dir, 'fetch-logo.json'), { force: true });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale cache entry is re-prefetched and picks up a later-published logo', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/late-logo';
+    canned(stub, 'search', { items: [searchItem(repo)] });
+    // v1 of the artifact ships no logo.
+    canned(stub, 'describe', describeDoc(repo, { has_description: false, digest: 'sha256:art1' }));
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'late-logo',
+      vendor: 'canonical', content: '# Descriptor', files: [],
+    });
+    try {
+      await api.providers.sidebar.refresh();
+      await waitFor(() => fs.readdirSync(cacheDir).some((f) => f.endsWith('.json')));
+      const name = fs.readdirSync(cacheDir).find((f) => f.endsWith('.json')) as string;
+      const entryFile = path.join(cacheDir, name);
+      // A FRESH entry is still skipped outright — no probe per browse refresh.
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.providers.sidebar.refresh();
+      await new Promise((r) => setTimeout(r, 300)); // give any prefetch a chance to fire
+      assert.ok(
+        !argvLines(stub).some((l) => l.startsWith(`describe ${repo}`)),
+        'a fresh entry is not re-probed',
+      );
+      // Age it past the TTL, then publish a logo under a new digest.
+      const aged = {
+        ...(JSON.parse(fs.readFileSync(entryFile, 'utf8')) as Record<string, unknown>),
+        savedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
+      };
+      fs.writeFileSync(entryFile, JSON.stringify(aged));
+      cannedWithLogo(stub, repo, 'sha256:art2');
+      await api.providers.sidebar.refresh();
+      await waitFor(() => {
+        const entry = JSON.parse(fs.readFileSync(entryFile, 'utf8')) as { logoUri: string | null };
+        return entry.logoUri !== null;
+      });
+    } finally {
+      canned(stub, 'search', { items: [] });
+      fs.rmSync(path.join(stub.dir, 'fetch-logo.json'), { force: true });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed doc fetch is not pinned to the digest — the next open retries', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/flaky-readme';
+    canned(stub, 'describe', describeDoc(repo, { has_description: false, digest: 'sha256:art1' }));
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'flaky-readme',
+      vendor: 'canonical', content: '# Descriptor', files: [{ path: 'README.md', size: 12 }],
+    });
+    canned(stub, 'fetch-readme', { error: { code: 'network', exit: 70, message: 'flaky' } });
+    try {
+      const first = fakePanel();
+      await api.providers.details.onMessage(repo, first.panel, { type: 'ready', repo });
+      assert.strictEqual(
+        first.posts[first.posts.length - 1]?.readmeMarkdown ?? null,
+        null,
+        'the README fetch failed, so nothing rendered',
+      );
+      // The README now lands, under the SAME artifact digest. Caching the failure
+      // as "ships no README" would let revalidate short-circuit on the matching
+      // digest and hide it for good.
+      canned(stub, 'fetch-readme', {
+        ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'flaky-readme',
+        vendor: 'canonical', path: 'README.md', content: '# real-readme-marker',
+      });
+      const second = fakePanel();
+      await api.providers.details.onMessage(repo, second.panel, { type: 'ready', repo });
+      assert.match(
+        second.posts[second.posts.length - 1]?.readmeMarkdown ?? '',
+        /real-readme-marker/,
+        'the retried README landed',
+      );
+    } finally {
+      fs.rmSync(path.join(stub.dir, 'fetch-readme.json'), { force: true });
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
   });

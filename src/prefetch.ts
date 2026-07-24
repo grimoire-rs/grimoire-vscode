@@ -9,11 +9,11 @@ const CONCURRENCY = 6;
 const REPOST_DEBOUNCE_MS = 500;
 
 export interface PrefetchDeps {
-  /** Runs the content pipeline for a repo → cache save; reports if a logo landed. */
-  work: (repo: string) => Promise<{ hadLogo: boolean }>;
-  /** True when the repo already has a details-cache entry (skip it). */
-  isCached: (repo: string) => Promise<boolean>;
-  /** Called (debounced) after a burst of prefetches produced new logos. */
+  /** Runs the content pipeline for a repo → cache save. */
+  work: (repo: string) => Promise<void>;
+  /** True when the repo's cached snapshot is young enough to skip it. */
+  isFresh: (repo: string) => Promise<boolean>;
+  /** Called (debounced) after a burst of cache writes produced logos. */
   onLogosLanded: () => void;
   /** Prefetch is a no-op while this returns false (grimoire.prefetchDetails). */
   enabled: () => boolean;
@@ -38,7 +38,7 @@ export class Prefetcher {
       if (this.inFlight.has(repo) || uncached.includes(repo)) {
         continue;
       }
-      if (!(await this.deps.isCached(repo))) {
+      if (!(await this.deps.isFresh(repo))) {
         uncached.push(repo);
       }
     }
@@ -59,10 +59,7 @@ export class Prefetcher {
 
   private async run(repo: string): Promise<void> {
     try {
-      const { hadLogo } = await this.deps.work(repo);
-      if (hadLogo) {
-        this.scheduleRepost();
-      }
+      await this.deps.work(repo);
     } catch {
       // No retry — a failed prefetch just falls back to the normal cold open.
     } finally {
@@ -71,8 +68,12 @@ export class Prefetcher {
     }
   }
 
-  /** Single trailing repost per burst: coalesce logo landings within the window. */
-  private scheduleRepost(): void {
+  /** A logo landed in the details cache — from ANY path, prefetch or a details
+   *  panel open (the cache reports it at its save choke point). Single trailing
+   *  repost per burst: coalesce logo landings within the window. The debounce
+   *  lives here because this object owns the disposable timer wired to the
+   *  sidebar; the prefetch loop no longer signals it directly. */
+  notifyLogo(): void {
     if (this.logoTimer || this.disposed) {
       return;
     }

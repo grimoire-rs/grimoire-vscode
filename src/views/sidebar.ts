@@ -109,6 +109,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     | undefined;
   // In-flight refresh count; repostLogos stays quiet while > 0.
   private refreshing = 0;
+  // A logo repost that arrived mid-refresh, replayed once the refresh drains.
+  // Without it the signal is LOST: the debounce upstream has already fired, and
+  // the refresh's own enrichLogos may have run before the logo was cached — so
+  // the card keeps its codicon tile until some unrelated later refresh.
+  private logoRepostPending = false;
   // Monotonic refresh generation. A refresh checks it after every await and
   // bails if a newer one has started, so a slow older refresh can never
   // overwrite a newer refresh's state (stale cards / badge / prefetch).
@@ -314,6 +319,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       await this.doRefresh(options, gen);
     } finally {
       this.refreshing--;
+      if (this.refreshing === 0 && this.logoRepostPending) {
+        this.logoRepostPending = false;
+        void this.repostLogos(); // replay the signal this refresh swallowed
+      }
     }
   }
 
@@ -464,17 +473,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** Re-enriches the last ready result's logos and reposts WITHOUT the loading
    *  flash — pops in logos as prefetches land (debounced by the prefetcher). */
   async repostLogos(): Promise<void> {
-    const ready = this.lastReady;
-    if (!ready || this.refreshing > 0) {
+    if (this.refreshing > 0) {
+      this.logoRepostPending = true; // replayed when the refresh drains
       return;
+    }
+    const ready = this.lastReady;
+    if (!ready) {
+      return; // nothing painted yet — the first ready post enriches from cache
     }
     await this.enrichLogos(ready.cards);
     await this.enrichLogos(ready.installed);
     // Re-check after the await gap: a refresh may have started (or replaced
     // lastReady) while the logo reads were in flight — posting now would emit
     // a stale ready state that cancels the webview's refreshing footer.
-    if (this.refreshing > 0 || this.lastReady !== ready) {
+    if (this.refreshing > 0) {
+      this.logoRepostPending = true;
       return;
+    }
+    if (this.lastReady !== ready) {
+      return; // a newer ready post already enriched from the same cache
     }
     this.postState({
       phase: 'ready',

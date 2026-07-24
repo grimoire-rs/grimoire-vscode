@@ -8,9 +8,8 @@ function make(overrides: Partial<PrefetchDeps> = {}): { p: Prefetcher; worked: s
   const p = new Prefetcher({
     work: async (repo) => {
       worked.push(repo);
-      return { hadLogo: false };
     },
-    isCached: async () => false,
+    isFresh: async () => false,
     onLogosLanded: () => {},
     enabled: () => true,
     ...overrides,
@@ -19,10 +18,10 @@ function make(overrides: Partial<PrefetchDeps> = {}): { p: Prefetcher; worked: s
 }
 
 suite('Prefetcher', () => {
-  test('prefetches only uncached repos, deduped', async () => {
-    const cached = new Set(['b']);
-    const { p, worked } = make({ isCached: async (r) => cached.has(r) });
-    await p.enqueue(['a', 'b', 'c', 'a']); // b cached, a duplicated
+  test('prefetches only stale/uncached repos, deduped', async () => {
+    const fresh = new Set(['b']);
+    const { p, worked } = make({ isFresh: async (r) => fresh.has(r) });
+    await p.enqueue(['a', 'b', 'c', 'a']); // b fresh, a duplicated
     await flush();
     await flush();
     assert.deepStrictEqual(worked.slice().sort(), ['a', 'c']);
@@ -41,16 +40,15 @@ suite('Prefetcher', () => {
     const release: Array<() => void> = [];
     const { p, worked } = make({
       work: (repo) =>
-        new Promise((resolve) => {
+        new Promise<void>((resolve) => {
           inFlight += 1;
           max = Math.max(max, inFlight);
           release.push(() => {
             inFlight -= 1;
-            resolve({ hadLogo: false });
+            resolve();
           });
         }).then(() => {
           worked.push(repo);
-          return { hadLogo: false };
         }),
     });
     await p.enqueue(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
@@ -67,9 +65,9 @@ suite('Prefetcher', () => {
     const gate: Array<() => void> = [];
     const { p, worked } = make({
       work: (repo) =>
-        new Promise((resolve) => {
+        new Promise<void>((resolve) => {
           worked.push(repo);
-          gate.push(() => resolve({ hadLogo: false }));
+          gate.push(resolve);
         }),
     });
     await p.enqueue(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']); // 6 start, a7/a8 pending
@@ -84,27 +82,42 @@ suite('Prefetcher', () => {
     assert.ok(!worked.includes('a7') && !worked.includes('a8'), 'stale pending was cleared');
   });
 
-  test('a landed logo triggers a single debounced repost per burst', async () => {
+  test('landed logos trigger a single debounced repost per burst', async () => {
     let reposts = 0;
     const { p } = make({
-      work: async () => ({ hadLogo: true }),
       onLogosLanded: () => {
         reposts += 1;
       },
     });
-    await p.enqueue(['a', 'b', 'c']);
+    // Any cache write with a logo notifies — prefetch or a details panel open.
+    p.notifyLogo();
+    p.notifyLogo();
+    p.notifyLogo();
     await new Promise((r) => setTimeout(r, 700)); // past the 500ms debounce
     assert.strictEqual(reposts, 1, 'the burst coalesced to one repost');
     p.dispose();
+  });
+
+  test('notifyLogo after dispose never reposts', async () => {
+    let reposts = 0;
+    const { p } = make({
+      onLogosLanded: () => {
+        reposts += 1;
+      },
+    });
+    p.dispose();
+    p.notifyLogo();
+    await new Promise((r) => setTimeout(r, 700));
+    assert.strictEqual(reposts, 0, 'a disposed prefetcher stays quiet');
   });
 
   test('dispose stops pumping', async () => {
     const gate: Array<() => void> = [];
     const { p, worked } = make({
       work: (repo) =>
-        new Promise((resolve) => {
+        new Promise<void>((resolve) => {
           worked.push(repo);
-          gate.push(() => resolve({ hadLogo: false }));
+          gate.push(resolve);
         }),
     });
     await p.enqueue(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']); // 6 in flight, 2 pending

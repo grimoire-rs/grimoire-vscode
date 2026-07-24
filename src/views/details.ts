@@ -61,6 +61,14 @@ const LOGO_MIME: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
+/** How long a cached snapshot is trusted before the browse-list prefetch
+ *  re-probes it. A plain "is it cached?" filter made the FIRST snapshot immortal:
+ *  a package that gained a logo (or README) after it was cached never showed one
+ *  on its card, because the prefetcher skipped every repo that had any entry. The
+ *  re-probe is one manifest describe per repo (see {@link DetailsManager.prefetchInto}),
+ *  not a blob download. ponytail: fixed TTL, not per-repo tracking. */
+const PREFETCH_TTL_MS = 6 * 60 * 60 * 1000;
+
 const KIND_LABELS: Record<string, string> = {
   skill: 'Skill',
   rule: 'Rule',
@@ -103,6 +111,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
      *  events are redundant with the completion refresh). Defaults to a no-op
      *  passthrough so the manager is usable without the wiring. */
     private readonly suspendWhile: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn(),
+    /** Fired (from the single {@link saveEntry} choke point) whenever a cache
+     *  write carries a logo, so the sidebar can pop it into its cards. Every
+     *  save path counts — opening a details panel caches logos exactly like the
+     *  background prefetch does, and only the prefetch used to report them. */
+    private readonly onLogoCached: () => void = () => {},
   ) {
     this.cache = new DetailsCache(cacheDir);
   }
@@ -762,6 +775,23 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return { describe, fetchValue, fetchError, companion };
   }
 
+  /** True when the artifact ADVERTISES a doc in its file list that resolved to
+   *  null — i.e. the `--path` fetch failed, since absence and failure are both
+   *  null. Caching that under a valid digest pins the miss to that digest
+   *  forever: every later revalidate short-circuits on the matching digest and
+   *  never retries, so one transient error hides a logo/README for good. The
+   *  caller nulls the digest instead — content still paints instantly from
+   *  cache, but the pipeline re-runs until the doc actually lands. */
+  private incompleteDocs(fetchValue: FetchResult, docs: CompanionDocs): boolean {
+    const missed = (names: string[], value: string | null): boolean =>
+      value === null && findAssetPath(fetchValue.files, names) !== null;
+    return (
+      missed(LOGO_NAMES, docs.logoUri) ||
+      missed(['readme.md'], docs.readme) ||
+      missed(['changelog.md'], docs.changelog)
+    );
+  }
+
   private entryFrom(
     repo: string,
     describe: DescribeResult | null,
@@ -772,7 +802,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       ? {
           version: CACHE_VERSION,
           repo,
-          artifactDigest: fetchValue.digest ?? null,
+          artifactDigest: this.incompleteDocs(fetchValue, companion)
+            ? null
+            : (fetchValue.digest ?? null),
           companionDigest: companion.companionDigest,
           savedAt: new Date().toISOString(),
           describe,
@@ -799,15 +831,32 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   }
 
   /** Background prefetch: content pipeline → cache save, no snapshot/VM/webview.
-   *  Returns whether a logo landed so the caller can pop it into the browse
-   *  cards. Never touches the revalidate indicator. */
-  async prefetchInto(repo: string): Promise<{ hadLogo: boolean }> {
+   *  Landed logos reach the sidebar through the {@link saveEntry} choke point.
+   *  Never touches the revalidate indicator.
+   *
+   *  A repo the TTL sweep re-queued ({@link isFresh}) is usually unchanged, so it
+   *  short-circuits on the describe digest exactly like the on-open revalidate:
+   *  re-checking a browse list costs one manifest probe per repo, not a full
+   *  blob download. */
+  async prefetchInto(repo: string): Promise<void> {
+    const cached = await this.cache.load(repo).catch(() => null);
+    if (cached) {
+      const live = await this.describe(repo);
+      if (live && (await this.contentUnchanged(repo, cached, live))) {
+        // Unchanged: keep the content, refresh the metadata and the TTL stamp.
+        await this.saveEntry(repo, {
+          ...cached,
+          describe: live,
+          savedAt: new Date().toISOString(),
+        });
+        return;
+      }
+    }
     const { describe, fetchValue, companion } = await this.resolveContent(repo);
     const entry = this.entryFrom(repo, describe, fetchValue, companion);
     if (entry) {
       await this.saveEntry(repo, entry);
     }
-    return { hadLogo: !!entry?.logoUri };
   }
 
   /** Cached logo data-URIs for the given repos (misses omitted) — browse-card
@@ -816,10 +865,14 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return this.cache.presentLogos(repos);
   }
 
-  /** True when the repo already has a cache entry — the prefetch skip filter
-   *  (freshness stays the on-open revalidate's job, so no digest probe here). */
-  async hasCached(repo: string): Promise<boolean> {
-    return (await this.cache.load(repo)) !== null;
+  /** The prefetch skip filter: true only for an entry younger than
+   *  {@link PREFETCH_TTL_MS}. An older one is re-queued (cheap digest probe
+   *  first) — "has an entry" alone made a stale snapshot immortal, so an
+   *  artifact that published a logo after its first prefetch kept a codicon
+   *  tile until the entry was evicted. An unparsable savedAt reads as stale. */
+  async isFresh(repo: string): Promise<boolean> {
+    const entry = await this.cache.load(repo);
+    return entry !== null && Date.now() - Date.parse(entry.savedAt) < PREFETCH_TTL_MS;
   }
 
   /** Full-pipeline VM, persisting the snapshot for a future instant paint. Used
@@ -838,6 +891,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     await this.cache
       .save(repo, entry)
       .catch((e) => this.output.appendLine(`details cache save failed for ${repo}: ${String(e)}`));
+    if (entry.logoUri !== null) {
+      this.onLogoCached();
+    }
   }
 
   /** Builds a VM from cached content + a given install/scope snapshot (sync — the
@@ -870,6 +926,28 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   private async digestOnly(args: string[]): Promise<string | null> {
     const result = await this.scopes.run<DigestResult>(args, 'global');
     return result.ok ? result.value.digest : null;
+  }
+
+  /** The SWR short-circuit, shared by the on-open revalidate and the prefetch
+   *  re-probe: a live describe proves the cached content current when BOTH the
+   *  artifact manifest digest and the companion digest still match. A describe
+   *  without has_description simply means "no companion" (null digest), so a
+   *  live describe always drives — no legacy branch. A cached entry with a null
+   *  artifactDigest (see {@link incompleteDocs}) can never match, so a snapshot
+   *  whose doc fetch failed always re-runs the pipeline. */
+  private async contentUnchanged(
+    repo: string,
+    cached: DetailsCacheEntry,
+    live: DescribeResult,
+  ): Promise<boolean> {
+    if (cached.artifactDigest === null || live.digest !== cached.artifactDigest) {
+      return false;
+    }
+    const companionDigest =
+      live.has_description === true
+        ? await this.digestOnly(fetchArgs(repo, { description: true, digestOnly: true }))
+        : null;
+    return companionDigest === cached.companionDigest;
   }
 
   /** Last concrete revalidate-failure message per repo, so the indicator click
@@ -945,15 +1023,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
     const live = await this.describe(repo);
     if (cached && live) {
-      // A describe without has_description simply means "no companion" (null
-      // digest), so a live describe always drives — no legacy branch.
-      const companionDigest =
-        live.has_description === true
-          ? await this.digestOnly(fetchArgs(repo, { description: true, digestOnly: true }))
-          : null;
-      const contentSame =
-        live.digest === cached.artifactDigest && companionDigest === cached.companionDigest;
-      if (contentSame) {
+      if (await this.contentUnchanged(repo, cached, live)) {
         if (JSON.stringify(live) !== JSON.stringify(cached.describe)) {
           // Metadata-only change: refresh describe, keep the cached content.
           const entry: DetailsCacheEntry = {
