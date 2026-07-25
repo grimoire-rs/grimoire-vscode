@@ -1,0 +1,9 @@
+# Generated output, not source — formatting these rewrites the artifact instead
+# of the code that produces it.
+
+# Byte-exact @lit-labs/ssr captures compared with strictEqual by parity.test.ts
+# and settingsRender.test.ts. Regenerate via UPDATE_GOLDENS=1, never by prettier.
+src/test/fixtures/goldens/
+
+# Derived from Conventional Commit subjects through cliff.toml (git-cliff).
+CHANGELOG.md
