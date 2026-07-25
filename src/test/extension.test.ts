@@ -244,6 +244,27 @@ function searchItem(repo: string): Record<string, unknown> {
   };
 }
 
+/** One `grim status` row. `pinned` is what the repo is keyed on (the stub's
+ *  context points config_path at a nonexistent file, so no declared ref wins
+ *  over it), and `state: 'outdated'` is enough for the count — the local lock
+ *  proxy answers when no `--check` verdict is around. */
+function statusDoc(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: 'skill',
+    name: 'counted',
+    source: 'direct',
+    pinned: 'ghcr.io/grimoire-rs/skills/counted:1.0.0',
+    state: 'installed',
+    outputs: [],
+    clients_missing: [],
+    clients_extra: [],
+    deprecated: null,
+    replaced_by: null,
+    update_available: null,
+    ...overrides,
+  };
+}
+
 /** A detached webview-panel double that records posted VMs and revalidate states. */
 function fakePanel(): {
   panel: vscode.WebviewPanel;
@@ -275,12 +296,13 @@ function fakePanel(): {
 /** A detached webview-view double for the sidebar so its posted states (a
  *  no-op until a real view resolves — see SidebarProvider.post) can be
  *  observed. Models fakePanel(); resolveWebviewView additionally needs
- *  asWebviewUri/cspSource to build the HTML shell, and onDidReceiveMessage to
- *  wire the (unused here — tests call handleMessage/refresh directly) message
- *  channel. */
+ *  asWebviewUri/cspSource to build the HTML shell, onDidDispose to drop the
+ *  boot handshake when the view goes away, and onDidReceiveMessage to wire the
+ *  (unused here — tests call handleMessage/refresh directly) message channel. */
 function fakeView(): { view: vscode.WebviewView; states: SidebarState[] } {
   const states: SidebarState[] = [];
   const view = {
+    onDidDispose: () => ({ dispose() {} }),
     webview: {
       options: undefined,
       html: '',
@@ -590,6 +612,147 @@ suite('extension integration', () => {
       );
     } finally {
       canned(stub, 'context', contextDoc());
+    }
+  });
+
+  // The daily check's gate is three-part: enabled, due, and TRUSTED. The
+  // throttle stamp is persisted and outlives the window, so a test can only
+  // reach the due path by writing it (activation consumed the never-checked
+  // state before any test body ran) — hence api.globalState.
+  const THROTTLE_KEY = 'artifactCheck.lastCheck';
+
+  /** Runs `fn` with the window reporting itself untrusted. `isTrusted` is an
+   *  accessor on the vscode namespace object and is configurable in this host,
+   *  so the real getter is put back afterwards. */
+  async function whileUntrusted(fn: () => Promise<void>): Promise<void> {
+    const original = Object.getOwnPropertyDescriptor(vscode.workspace, 'isTrusted');
+    assert.ok(original, 'vscode.workspace.isTrusted has no own descriptor to restore');
+    Object.defineProperty(vscode.workspace, 'isTrusted', { get: () => false, configurable: true });
+    try {
+      assert.strictEqual(vscode.workspace.isTrusted, false, 'precondition: the window is untrusted');
+      await fn();
+    } finally {
+      Object.defineProperty(vscode.workspace, 'isTrusted', original);
+    }
+  }
+
+  test('refreshWithDueCheck spawns status --check when the daily round is due', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    await api.globalState.update(THROTTLE_KEY, 0); // never checked → due
+    try {
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.refreshWithDueCheck();
+      const status = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(status.length > 0, 'status was invoked');
+      assert.ok(
+        status.some((l) => l.includes('--check')),
+        `the due round goes online: ${status.join(' | ')}`,
+      );
+      const stamped = api.globalState.get<number>(THROTTLE_KEY, 0);
+      assert.ok(
+        stamped > 0 && Date.now() - stamped < 60_000,
+        `the round stamped the throttle before calling: ${stamped}`,
+      );
+      // ...and that stamp is the whole throttle: the next round stays offline.
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.refreshWithDueCheck();
+      const second = argvLines(stub).filter((l) => l.startsWith('status'));
+      assert.ok(second.length > 0, 'the second round still refreshed');
+      assert.ok(
+        second.every((l) => !l.includes('--check')),
+        `a stamped throttle keeps the next round off the network: ${second.join(' | ')}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+      await api.globalState.update(THROTTLE_KEY, Date.now());
+    }
+  });
+
+  test('an untrusted window neither checks nor stamps', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    await api.globalState.update(THROTTLE_KEY, 0); // due — only trust can stop it
+    try {
+      await whileUntrusted(async () => {
+        fs.rmSync(stub.argvLog, { force: true });
+        await api.refreshWithDueCheck();
+        const status = argvLines(stub).filter((l) => l.startsWith('status'));
+        assert.ok(status.length > 0, 'the refresh itself still runs — only the check is gated');
+        assert.ok(
+          status.every((l) => !l.includes('--check')),
+          `a restricted window resolves nothing against the registry: ${status.join(' | ')}`,
+        );
+        assert.strictEqual(
+          api.globalState.get<number>(THROTTLE_KEY, 0),
+          0,
+          'and it must not stamp — the check has to still be due when trust arrives',
+        );
+      });
+      // Which is exactly what happens the moment it does.
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.refreshWithDueCheck();
+      assert.ok(
+        argvLines(stub)
+          .filter((l) => l.startsWith('status'))
+          .some((l) => l.includes('--check')),
+        'the check the untrusted window skipped runs as soon as trust is granted',
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+      await api.globalState.update(THROTTLE_KEY, Date.now());
+    }
+  });
+
+  test('the activation round publishes a count without a catalog search', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    canned(stub, 'status', { items: [statusDoc({ state: 'outdated' })] });
+    // Not due: a due round ends in a full refreshAll, and its catalog search is
+    // the very thing this test says the count does not need.
+    await api.globalState.update(THROTTLE_KEY, Date.now());
+    try {
+      api.providers.updates.setCount(0);
+      fs.rmSync(stub.argvLog, { force: true });
+      await api.publishUpdateCount();
+      assert.strictEqual(api.providers.updates.badge()?.value, 1, 'the count reaches the badge');
+      assert.deepStrictEqual(
+        argvLines(stub).filter((l) => l.startsWith('search')),
+        [],
+        'and it cost no catalog search — updateCount reads no field the catalog provides',
+      );
+    } finally {
+      canned(stub, 'status', { items: [] });
+      canned(stub, 'context', contextDoc());
+      api.providers.updates.setCount(0);
+    }
+  });
+
+  test('an unknown install state leaves the count untouched', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    // A stale binary rejecting `status`: install state is UNKNOWN, and a count
+    // taken over it reads as "no updates" — indistinguishable from good news.
+    canned(stub, 'status', {
+      error: { code: 'usage', exit: 64, message: "unexpected argument '--check' found" },
+    });
+    await api.globalState.update(THROTTLE_KEY, Date.now());
+    try {
+      api.providers.updates.setCount(3);
+      await api.publishUpdateCount();
+      assert.strictEqual(
+        api.providers.updates.badge()?.value,
+        3,
+        'the last count it could stand behind stays up; it is not cleared to 0',
+      );
+    } finally {
+      canned(stub, 'status', { items: [] });
+      canned(stub, 'context', contextDoc());
+      api.providers.updates.setCount(0);
     }
   });
 

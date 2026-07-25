@@ -69,7 +69,8 @@
         {
           "id": "grimoire.updates",
           "name": "Updates",
-          "when": "grimoire.updatesAvailable"
+          "when": "grimoire.updatesAvailable",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -87,7 +88,7 @@
       },
       {
         "command": "grimoire.checkArtifactUpdates",
-        "title": "Check for Updates",
+        "title": "Check for Artifact Updates",
         "category": "Grimoire",
         "icon": "$(sync)"
       },
@@ -247,7 +248,7 @@
         },
         "grimoire.checkArtifactUpdates": {
           "type": "boolean",
-          "markdownDescription": "Once a day, ask your registries whether installed artifacts have newer versions (`grim status --check`). This is what the update count on the Grimoire icon is based on; with it off, the count falls back to what the local lock file can tell without network access. The **Grimoire: Check for Updates** command always runs the check regardless.",
+          "markdownDescription": "Once a day, ask your registries whether installed artifacts have newer versions (`grim status --check`). This is what the update count on the Grimoire icon is based on. Turning it off stops the daily check only: verdicts already remembered keep counting (they have no expiry, and are invalidated by re-pinning an artifact rather than by age), and an artifact with no remembered verdict falls back to what the local lock file can tell without network access. The **Grimoire: Check for Artifact Updates** command always runs the check regardless.",
           "default": true
         },
         "grimoire.extraEnv": {

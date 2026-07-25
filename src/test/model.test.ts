@@ -43,6 +43,7 @@ import {
   keepPaintedOnLoading,
   shouldResetUi,
   toggleKinds,
+  updateCount,
   viewForTab,
   type MenuEntry,
   type MenuItem,
@@ -1209,6 +1210,61 @@ suite('hasUpdate', () => {
       ],
     };
     assert.strictEqual(hasUpdate(card), true);
+  });
+});
+
+suite('updateCount', () => {
+  test('the count is the same with and without catalog items', () => {
+    // updateCount builds its cards from an EMPTY catalog on purpose — that is
+    // what lets activation publish the badge off the snapshot alone, with no
+    // `grim search` in front of it. It only holds while nothing the catalog
+    // contributes can reach hasUpdate, so this is the invariant that whole
+    // optimization rests on.
+    const scopes: ScopeStatus[] = [
+      {
+        scope: 'project',
+        status: [
+          statusItem({
+            name: 'drifted',
+            pinned: 'ghcr.io/a/skills/drifted:1.0.0',
+            state: 'outdated',
+          }),
+          statusItem({ name: 'current', pinned: 'ghcr.io/a/skills/current:1.0.0' }),
+        ],
+        declared: {},
+      },
+      {
+        scope: 'global',
+        status: [
+          statusItem({
+            name: 'checked',
+            pinned: 'ghcr.io/a/skills/checked:1.0.0',
+            update_available: true,
+          }),
+        ],
+        declared: {},
+      },
+    ];
+    // A catalog that disagrees with the snapshot everywhere it is allowed to:
+    // newer versions than any install, plus a deprecation and a replacement —
+    // and they sit on a row that DOES have an update, so any of them leaking
+    // into the count would move it.
+    const items = [
+      searchItem({
+        repo: 'ghcr.io/a/skills/drifted',
+        version: '9.9.9',
+        deprecated: 'moved on',
+        replaced_by: 'ghcr.io/a/skills/next',
+      }),
+      searchItem({ repo: 'ghcr.io/a/skills/current', version: '9.9.9' }),
+      searchItem({ repo: 'ghcr.io/a/skills/checked', version: '9.9.9' }),
+    ];
+    assert.strictEqual(updateCount(scopes), 2, 'the drifted lock and the checked verdict');
+    assert.strictEqual(
+      buildInstalledCards(items, scopes).filter(hasUpdate).length,
+      updateCount(scopes),
+      'a catalog cannot move the count — the badge is safe to publish without one',
+    );
   });
 });
 

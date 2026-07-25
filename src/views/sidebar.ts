@@ -1,9 +1,21 @@
-// The ONE WebviewViewProvider behind the single merged sidebar view. The old
-// browse/updates/installed native views are internal tabs now (a single-view
-// container merges the view header into the container header, so the title
-// icons stay permanently visible and the view can't collapse): every refresh
-// computes BOTH card sets — browse (catalog search) and installed (snapshot +
-// catalog cache) — and posts them together; the webview slices per tab.
+// The ONE WebviewViewProvider behind the sidebar's marketplace view. The old
+// browse/updates/installed native views are internal tabs of it now: every
+// refresh computes BOTH card sets — browse (catalog search) and installed
+// (snapshot + catalog cache) — and posts them together; the webview slices per
+// tab.
+//
+// Merging them into one view was originally also what kept the container a
+// SINGLE-view container, where VS Code folds the view header into the container
+// header — title icons permanently visible, nothing to collapse. That no longer
+// holds unconditionally: `grimoire.updates` (views/updatesView.ts) is a second
+// native view in the same container, because only a TreeView can carry the
+// activity-bar count in a window where this webview is never resolved. Its
+// `when` clause keeps it out of the container until updates are actually
+// pending, so the folded single-view header is still the normal state; the price
+// is that while a count is up the container shows two rows and this view's
+// header separates back out. `visibility: collapsed` on the other one only sets
+// its INITIAL state — VS Code persists a user's expand, so it is a default, not
+// a guarantee of one header row. A count in every window is worth that.
 import * as vscode from 'vscode';
 import {
   addArgs,
@@ -23,8 +35,9 @@ import {
   buildCards,
   buildInstalledCards,
   buildShareLink,
-  hasUpdate,
+  firstUnknownScope,
   registryUrlHost,
+  updateCount,
   type ScopeStatus,
 } from '../webview/model';
 import type {
@@ -121,6 +134,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // bails if a newer one has started, so a slow older refresh can never
   // overwrite a newer refresh's state (stale cards / badge / prefetch).
   private refreshGen = 0;
+  // The webview's boot handshake. A resolved postMessage does NOT mean
+  // delivered (@types/vscode: "the message can only be delivered if the webview
+  // is live"), so a setTab or focusSearch issued while the view was still
+  // booting was dropped silently — the Updates row's click-through lost exactly
+  // when the click is what opened the container. The `ready` message is the
+  // only signal that a post can land; `this.view` is NOT (resolveWebviewView
+  // assigns it long before the webview process boots, so guarding on it drops
+  // the same messages).
+  private ready = false;
+  // Posts held until then, ONE PER MESSAGE TYPE — last wins. showTab('installed')
+  // then showTab('updates') delivers `updates`: the user's latest intent is the
+  // right one, and a queue of N identical setTabs against a webview that may
+  // never resolve is not. A `state` post is deliberately NOT held — it keeps
+  // going out best-effort exactly as before: the ready handler runs a full
+  // refresh of its own, so a held one would only repaint cards that are stale by
+  // the time they land.
+  private readonly pendingPosts = new Map<HostToSidebar['type'], HostToSidebar>();
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -132,11 +162,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    // A fresh webview process, which has not said `ready` yet. Re-resolution is
+    // routine, not a one-off: without retainContextWhenHidden VS Code disposes a
+    // hidden view and resolves a new one when it comes back, so leaving the flag
+    // set would fire the next boot's posts into a webview that is not listening.
+    this.ready = false;
     view.webview.options = {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview')],
     };
     view.webview.html = webviewHtml(view.webview, this.extensionUri, 'sidebar');
+    // Down again the moment the view is disposed, not only on the next resolve:
+    // between the two, `post` would hand messages to a dead webview instead of
+    // holding them for the boot that follows.
+    view.onDidDispose(() => {
+      this.ready = false;
+    });
     view.webview.onDidReceiveMessage((message: SidebarToHost) => {
       void this.handleMessage(message);
     });
@@ -158,15 +199,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private post(message: HostToSidebar): void {
+    if (!this.ready && message.type !== 'state') {
+      this.pendingPosts.set(message.type, message);
+      return;
+    }
     void this.view?.webview.postMessage(message);
   }
 
   /** Public for tests: the webview message entry point. */
   async handleMessage(message: SidebarToHost): Promise<void> {
     switch (message.type) {
-      case 'ready':
+      case 'ready': {
+        // The webview is live from here. The flag goes up FIRST: the drain
+        // below posts through post(), which would otherwise put every message
+        // straight back in the map and deliver nothing at all.
+        this.ready = true;
+        // Drain before the refresh — these are the posts that raced the boot.
+        const pending = [...this.pendingPosts.values()];
+        this.pendingPosts.clear();
+        for (const message of pending) {
+          this.post(message);
+        }
         await this.refresh();
         return;
+      }
       case 'search':
         this.query = message.query;
         await this.refresh();
@@ -359,7 +415,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // remedy the banner may offer; computed only when there IS an unknown, so a
     // healthy refresh pays no PATH scan.
     const scopeStatus = scopeStatuses(snap);
-    const firstUnknown = scopeStatus.find((s) => s.status === null);
+    const firstUnknown = firstUnknownScope(scopeStatus);
     this.lastUnknown = firstUnknown
       ? {
           message: snap.error ?? `Could not determine the ${firstUnknown.scope} install state.`,
@@ -425,7 +481,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // unavailable.
     if (firstUnknown === undefined) {
       this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
-      this.setBadge(installed.filter(hasUpdate).length);
+      // Off the scopes, not off `installed` — the same one derivation activation
+      // publishes from (see webview/model.ts updateCount). The two used to be
+      // separate expressions that agreed only because catalog items happen not
+      // to touch any field hasUpdate reads.
+      this.setBadge(updateCount(scopeStatus));
     }
     // A catalog failure is the one that still has nothing to show: its cards
     // come from a possibly-empty result set, so it keeps the error phase.

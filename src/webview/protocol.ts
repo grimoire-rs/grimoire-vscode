@@ -19,7 +19,11 @@ export interface InstallVM {
   scope: Scope;
   /** Declared version/tag shown on the chip (e.g. "1.4.2", "latest"). */
   version: string | null;
-  /** True when grim reports the install as outdated/stale. */
+  /** Whether this install surfaces an update — model.ts's
+   *  `computeUpdateAvailable`, NOT `state === 'outdated'/'stale'`: grim's verdict
+   *  `--check` decides when there is one (fresh this round or remembered from
+   *  the last checked one), and the local lock state is only the fallback proxy
+   *  when there is none. */
   updateAvailable: boolean;
   clients: string[];
   /** grim's raw state (installed|stale|modified|missing|outdated). */
@@ -87,9 +91,10 @@ export interface SidebarState {
   query: string;
   items: CardVM[];
   /** The merged installed set, both scopes (buildInstalledCards). The Updates
-   *  tab is its `state === 'outdated'` slice; the Installed tab applies the
-   *  SCOPE toggle client-side. Rides every post so tab switches never need a
-   *  host round-trip. */
+   *  tab is its `hasUpdate` slice — NOT `state === 'outdated'`, which shadows an
+   *  updatable artifact the moment it is also deprecated (model.ts rowState);
+   *  the Installed tab applies the SCOPE toggle client-side. Rides every post so
+   *  tab switches never need a host round-trip. */
   installedItems: CardVM[];
   scopes: ScopesVM;
   registries: string[];

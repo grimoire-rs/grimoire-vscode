@@ -269,13 +269,18 @@ export function rowState(deprecated: string | null, installs: InstallVM[]): RowS
  *  rowState above shadows outdated with 'deprecated', and `deprecated` is
  *  itself a `--check`-only field, so counting by row state dropped a
  *  deprecated-but-updatable artifact out of the count on exactly the rounds
- *  that had network-verified data. A deprecated artifact with a newer version
- *  is still an update, and the Update button on its card says so.
+ *  that had network-verified data. A deprecated artifact with a newer version is
+ *  still an update — its card demotes the action rather than dropping it: the
+ *  1g state matrix gives a deprecated row the installed chip and gear menu, and
+ *  the Update entry lives in that menu (cardMenuEntries offers it off the same
+ *  `updateAvailable` an install carries).
  *
- *  Shared by the native badge (views/sidebar.ts), the UPDATES tab pill
- *  (render.ts) and the Updates tab's own slice (viewForTab) so the number on
- *  the icon, the number on the pill and the length of the rendered list are one
- *  computation and cannot disagree. */
+ *  The one predicate behind every update number: {@link updateCount} (the
+ *  activity-bar badge, from the sidebar's refresh AND from activation's
+ *  badge-only round), the UPDATES tab pill (render.ts) and the Updates tab's own
+ *  slice (viewForTab) all read it, so the number on the icon, the number on the
+ *  pill and the length of the rendered list are one computation and cannot
+ *  disagree. */
 export function hasUpdate(card: Pick<CardVM, 'installs'>): boolean {
   return card.installs.some((i) => i.updateAvailable);
 }
@@ -355,6 +360,28 @@ export function buildInstalledCards(
     card.state = rowState(card.deprecated, card.installs);
   }
   return cards;
+}
+
+/** The activity-bar update count for a set of scopes — the ONE derivation of
+ *  that number. Both writers call it (the sidebar's refresh and activation's
+ *  badge-only round), so they cannot answer differently; they used to derive it
+ *  two ways and agree only by an invariant nothing enforced. Catalog items are
+ *  deliberately not a parameter: they decorate cards (description, latest
+ *  version, deprecation text) and change no field {@link hasUpdate} reads, which
+ *  all come off the status rows. Callers gate on {@link firstUnknownScope}
+ *  first. Pure. */
+export function updateCount(scopes: ScopeStatus[]): number {
+  return buildInstalledCards([], scopes).filter(hasUpdate).length;
+}
+
+/** The first scope whose install state is unknown, or undefined when every scope
+ *  is readable — the ONE statement of the freeze rule. A count taken over a
+ *  snapshot with an unknown scope silently undercounts (that scope contributes
+ *  nothing, and nothing is indistinguishable from zero here), so both badge
+ *  writers skip publishing rather than publish a number they can't stand behind;
+ *  the sidebar reads the same call for its banner and its lastReady gate. Pure. */
+export function firstUnknownScope(scopes: ScopeStatus[]): ScopeStatus | undefined {
+  return scopes.find((s) => s.status === null);
 }
 
 export interface CardFilter {

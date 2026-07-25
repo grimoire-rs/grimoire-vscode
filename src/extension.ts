@@ -24,15 +24,22 @@ import {
 } from './installer';
 import { initNotify, notifyError, runWithStatusProgress } from './notify';
 import { Prefetcher } from './prefetch';
-import { ScopeService } from './scopes';
+import { ScopeService, type CheckStore, type CheckedFields } from './scopes';
 import { DetailsManager, DETAILS_VIEW_TYPE } from './views/details';
 import { showGrimInfo } from './views/grimInfo';
 import { pickVersion } from './views/pickVersion';
 import { SettingsManager } from './views/settings';
-import { SidebarProvider } from './views/sidebar';
+import { SidebarProvider, scopeStatuses } from './views/sidebar';
 import { UpdatesView } from './views/updatesView';
 import { Watchers } from './watchers';
-import { artifactName, isValidRepo, parseShareLink, refRepo } from './webview/model';
+import {
+  artifactName,
+  firstUnknownScope,
+  isValidRepo,
+  parseShareLink,
+  refRepo,
+  updateCount,
+} from './webview/model';
 
 export interface GrimoireApi {
   refresh(options?: RefreshOptions): Promise<void>;
@@ -46,6 +53,22 @@ export interface GrimoireApi {
   };
   /** Deep-link handler (test seam; fired for real via registerUriHandler). */
   handleUri(uri: vscode.Uri): Promise<void>;
+  /** The refresh that opts into the daily `grim status --check` when it is
+   *  enabled, due AND the workspace is trusted (test seam; fired for real via
+   *  the config-change and trust-grant listeners and the daily timer). A seam
+   *  because activation completes before any test body runs, so the trust gate
+   *  is unreachable from the outside otherwise — and because trust is read on
+   *  every call, not captured once at activation. */
+  refreshWithDueCheck(): Promise<void>;
+  /** Activation's badge-only round (test seam; fired for real once at
+   *  activation). Exposed so a test can assert what it does and does not spawn:
+   *  the count comes off the snapshot, never a catalog `grim search`. */
+  publishUpdateCount(): Promise<void>;
+  /** The extension's own globalState (test seam). The daily check's throttle
+   *  stamp lives here and OUTLIVES the window, so it is the only lever a test
+   *  has over whether the check is due: activation has already consumed the
+   *  never-checked state (and stamped it) long before any test body runs. */
+  globalState: vscode.Memento;
 }
 
 /** `refresh` busts grim's own catalog cache (`--refresh`); `check` opts into
@@ -65,6 +88,41 @@ function mergeRefreshOptions(a: RefreshOptions | undefined, b: RefreshOptions): 
   };
 }
 
+/** Where each scope's remembered `--check` verdicts live. Project verdicts are
+ *  about THIS workspace's grimoire.toml, so they belong in workspaceState:
+ *  under one shared globalState record, two open workspaces pruned each other's
+ *  project entries away (mergeCheckedFields self-prunes to the installed set)
+ *  and the badge fell back to the lock proxy. Global verdicts are machine-wide,
+ *  so they stay in globalState. The keys live here, not in ScopeService — see
+ *  {@link CheckStore}. */
+const CHECK_VERDICTS_KEY = 'artifactCheck.verdicts';
+
+export function mementoCheckStore(
+  workspaceState: vscode.Memento,
+  globalState: vscode.Memento,
+): CheckStore {
+  const memento = (scope: Scope): vscode.Memento =>
+    scope === 'project' ? workspaceState : globalState;
+  return {
+    read: (scope) => memento(scope).get<Record<string, CheckedFields>>(CHECK_VERDICTS_KEY, {}),
+    write: async (scope, record) => {
+      await memento(scope).update(CHECK_VERDICTS_KEY, record);
+    },
+  };
+}
+
+/** True when the daily `grim status --check` round is due. Pure so the three
+ *  cases (off / within the day / past it) are testable without an activation.
+ *  `lastCheck` is the stored epoch stamp; 0 (never checked) is always due. */
+export function artifactCheckDue(
+  enabled: boolean,
+  lastCheck: number,
+  now: number,
+  dayMs: number,
+): boolean {
+  return enabled && now - lastCheck >= dayMs;
+}
+
 export function activate(context: vscode.ExtensionContext): GrimoireApi {
   const output = vscode.window.createOutputChannel('Grimoire', { log: true });
   context.subscriptions.push(output);
@@ -75,7 +133,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   // throttle below is already persisted; without this the result it gates was
   // not, so a reloaded window fell back to the local lock proxy for up to a day
   // and the update count silently changed meaning.
-  scopes.checkStore = context.globalState;
+  scopes.checkStore = mementoCheckStore(context.workspaceState, context.globalState);
   scopes.logExecutable();
   const catalog = new CatalogService(scopes);
 
@@ -370,34 +428,101 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   const DAY_MS = 24 * 60 * 60 * 1000;
   const ARTIFACT_CHECK_KEY = 'artifactCheck.lastCheck';
 
+  /** Whether this round may run `grim status --check`, stamping the daily
+   *  throttle when it may. Trust is read HERE, at call time, and gates THIS
+   *  check — not the extension's network use in general: `--check` is the one
+   *  call a restricted window makes with no user gesture behind it at all (it
+   *  fires from activation and a timer), and it resolves every artifact against
+   *  the registry set a WORKSPACE-controlled grimoire.toml names. A catalog
+   *  `grim search` still runs untrusted through any refreshAll, and the manual
+   *  **Check for Artifact Updates** command is deliberately ungated — invoking
+   *  it IS the gesture. (`untrustedWorkspaces: "limited"` restricts two
+   *  settings; it does not restrict any of this.) Reading trust once at
+   *  activation would be both untestable and wrong: it can be granted
+   *  mid-session, which is what onDidGrantWorkspaceTrust below re-runs this for.
+   *  An untrusted window does not stamp, so the check is still due the moment
+   *  trust arrives. */
+  const artifactCheckIsDue = async (): Promise<boolean> => {
+    if (!vscode.workspace.isTrusted) {
+      return false;
+    }
+    const due = artifactCheckDue(
+      readConfig().checkArtifactUpdates,
+      context.globalState.get<number>(ARTIFACT_CHECK_KEY, 0),
+      Date.now(),
+      DAY_MS,
+    );
+    if (!due) {
+      return false;
+    }
+    // Stamp before the call, like the GitHub check: a failing registry must not
+    // make every refresh retry the network.
+    await context.globalState.update(ARTIFACT_CHECK_KEY, Date.now());
+    return true;
+  };
+
   /** Refreshes every view, asking grim for network-verified update and
-   *  deprecation data when the daily artifact check is due and enabled. A plain
-   *  refresh otherwise — which still produces a correct update count, because
-   *  the last check's verdicts are remembered (see ScopeService.checkStore) and
-   *  no longer expire with the window. */
+   *  deprecation data when the daily artifact check is due (see
+   *  {@link artifactCheckIsDue}). A plain refresh otherwise — which still
+   *  produces a correct update count, because the last check's verdicts are
+   *  remembered (see ScopeService.checkStore) and no longer expire with the
+   *  window. */
   const refreshWithDueCheck = async (): Promise<void> => {
     try {
-      const due =
-        readConfig().checkArtifactUpdates &&
-        Date.now() - context.globalState.get<number>(ARTIFACT_CHECK_KEY, 0) >= DAY_MS;
-      if (!due) {
-        await refreshAll();
-        return;
-      }
-      // Stamp before the call, like the GitHub check: a failing registry must
-      // not make every refresh retry the network.
-      await context.globalState.update(ARTIFACT_CHECK_KEY, Date.now());
-      await refreshAll({ check: true });
+      await refreshAll({ check: await artifactCheckIsDue() });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       output.appendLine(`artifact update check failed: ${message}`);
     }
   };
-  // The one refresh at activation. Without it nothing computes an update count
-  // until the sidebar view first becomes visible, so the activity-bar number —
-  // the whole point of activating eagerly — never appeared in a window where
-  // Grimoire was not opened.
-  void refreshWithDueCheck();
+
+  /** Activation's one round, and deliberately NOT `refreshWithDueCheck`. The
+   *  count is the thing that must happen in every window — including one where
+   *  Grimoire is never opened — and it needs the snapshot and nothing else
+   *  (`updateCount` reads no field the catalog provides). The full refresh a
+   *  plain activation used to run put a catalog search in front of the number,
+   *  and then queued a details prefetch of up to 24 `grim describe` calls: that
+   *  prefetch is enqueued AFTER the badge and is fire-and-forget, so it never
+   *  delayed the number itself — it just kept the CLI busy behind it. And when
+   *  the container WAS restored at startup, the round raced the webview's own
+   *  `ready` refresh (which bypasses the refreshAll coalescer) with a duplicate.
+   *  The daily check still runs here when due — and a round that actually
+   *  checked ends in one full refresh, because by then the other views ARE
+   *  looking at numbers this round has just superseded. */
+  const publishUpdateCount = async (): Promise<void> => {
+    try {
+      const checked = await artifactCheckIsDue();
+      const snap = await scopes.snapshot({ check: checked });
+      // The watcher self-heal runRefresh ends in — activation no longer goes
+      // through it. rebuildWatchers' own probe resolves BEFORE this snapshot, so
+      // its cached-snapshot fallback is empty at activation and one transient
+      // probe failure leaves the global watchers unarmed for the whole session.
+      // This snapshot has the grim home in hand; rebuild() is idempotent.
+      const grimHome = snap.global?.context.grim_home;
+      if (grimHome !== undefined) {
+        watchers.rebuild(grimHome);
+      }
+      const status = scopeStatuses(snap);
+      // Same rule the sidebar applies (firstUnknownScope): never compute a count
+      // off an unknown install state — one unreadable scope undercounts the other.
+      if (firstUnknownScope(status) === undefined) {
+        updatesView.setCount(updateCount(status));
+      }
+      // A checked round moved the verdicts every view renders, and nothing
+      // orders this against the sidebar's own refresh — this round costs a
+      // network `--check` against the sidebar's offline tens of milliseconds, so
+      // without a repaint the icon carries post-check numbers while the Updates
+      // pill keeps the pre-check ones until something unrelated refreshes. Only
+      // after a check: a plain round tells the other views nothing new.
+      if (checked) {
+        void refreshAll();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`update count failed: ${message}`);
+    }
+  };
+  void publishUpdateCount();
   const checkForUpdates = async (): Promise<void> => {
     try {
       if (!readConfig().checkForUpdates) {
@@ -461,8 +586,17 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       if (event.affectsConfiguration('grimoire')) {
         scopes.logExecutable(); // the executable setting may have just changed
         void rebuildWatchers();
-        void refreshAll();
+        // Due-check, not a plain refreshAll: turning grimoire.checkArtifactUpdates
+        // ON is a user asking for the check, and a plain refresh would leave them
+        // on the local lock proxy until the daily timer came round up to 24h later.
+        void refreshWithDueCheck();
       }
+    }),
+    // Trust granted mid-session. The daily check is gated on it
+    // (artifactCheckIsDue), so this is when a window that started restricted
+    // gets the count it was not allowed to go and fetch.
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      void refreshWithDueCheck();
     }),
   );
 
@@ -607,6 +741,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     scopes,
     providers: { sidebar, details, settings, updates: updatesView },
     handleUri,
+    refreshWithDueCheck,
+    publishUpdateCount,
+    globalState: context.globalState,
   };
 }
 

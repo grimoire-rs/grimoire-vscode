@@ -21,8 +21,12 @@ AI artifacts your tools rely on.
   The tab lists them; an **Update All** icon appears in the sidebar's title bar
   whenever updates are pending and updates them in one click (also always
   available in the title bar's `…` menu). Check on demand with
-  **Grimoire: Check for Updates**, or turn the daily one off with
-  `grimoire.checkArtifactUpdates`.
+  **Grimoire: Check for Artifact Updates**, or turn the daily one off with the
+  `grimoire.checkArtifactUpdates` **setting** — the verdicts already gathered
+  keep counting either way. The daily check asks the registries your
+  `grimoire.toml` names, so it is skipped in a **restricted** (untrusted)
+  workspace and starts as soon as you trust the folder. The command is
+  deliberately not gated that way: running it yourself is the go-ahead.
 - **See what you have** — the **Installed** tab lists your installed artifacts,
   with a **Project / Global** toggle to switch which scope's list you're looking
   at. A status line pinned below the list shows when the catalog was last
@@ -73,7 +77,7 @@ Run from the Command Palette (all under the **Grimoire** category).
 | ---------------------------------------------- | -------------------------------------------------------------------------------- |
 | `Grimoire: Search Artifacts`                   | Focus the Browse tab and jump to its search box                                  |
 | `Grimoire: Refresh Catalog`                    | Re-fetch the catalog and refresh every tab                                       |
-| `Grimoire: Check for Updates`                  | Ask your registries which installed artifacts have newer versions                |
+| `Grimoire: Check for Artifact Updates`         | Ask your registries which installed artifacts have newer versions                |
 | `Grimoire: Update All Artifacts`               | Update every artifact with a pending update (project + global)                   |
 | `Grimoire: Initialize Project (grimoire.toml)` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
 | `Grimoire: Install grim CLI`                   | Download the latest `grim` release from GitHub                                   |
@@ -97,7 +101,7 @@ available.
 | `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
 | `grimoire.prefetchDetails`      | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
 | `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
-| `grimoire.checkArtifactUpdates` | `true`    | Once a day, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on                        |
+| `grimoire.checkArtifactUpdates` | `true`    | Once a day, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on. Off stops the daily check only; remembered verdicts keep counting |
 | `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
 
 ## Requirements

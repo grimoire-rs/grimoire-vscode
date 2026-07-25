@@ -27,7 +27,13 @@ export interface ScopeSnapshot {
    *  `null` is "we don't know" — rendering `null` as `[]` flips every installed
    *  card to Install and makes the details panel claim an artifact is absent
    *  from a scope it may well be installed in. Every reader has to decide;
-   *  that is why this is `| null` rather than a sibling flag. */
+   *  that is why this is `| null` rather than a sibling flag.
+   *
+   *  Not uniformly this round's data: the three `--check`-only fields
+   *  (`update_available`/`deprecated`/`replaced_by`) on each row may be
+   *  REMEMBERED from an earlier checked round rather than what grim just said —
+   *  a plain `grim status` leaves them null and {@link mergeCheckedFields} fills
+   *  them from the last check. Every other field is this round's. */
   status: StatusItem[] | null;
   /** Why `status` is null. `'too-old'`: the binary is below the version floor,
    *  so `grim status` was never run. `'status-failed'`: the status call ran and
@@ -189,32 +195,44 @@ export function searchScopeFor(projectFolder: string | undefined, searchable: bo
 
 /** The three fields `grim status` only populates under `--check`, remembered
  *  per artifact pin between checks. */
-interface CheckedFields {
+export interface CheckedFields {
   update_available: boolean | null;
   deprecated: string | null;
   replaced_by: string | null;
 }
 
-/** Narrow key/value face of `vscode.Memento` — `context.globalState` satisfies
- *  it structurally. Narrow on purpose: the store only ever holds the last
- *  `--check` verdicts, and a full Memento would let this reach the rest of the
- *  extension's persisted state. */
+/** One remembered-verdict record per scope. Key-free on purpose: the key names
+ *  AND which storage each scope lands in (project → workspaceState, global →
+ *  globalState) are composition-root decisions and live in extension.ts. The
+ *  earlier key/value face was a strict subset of `vscode.Memento` (no `keys()`),
+ *  but a key-addressable one over the SAME store — so it still reached the rest
+ *  of the extension's persisted state, and it pinned every scope to whichever
+ *  single Memento was handed in: two open workspaces then pruned each other's
+ *  project record away.
+ *
+ *  Required of every implementation: once a `write` for a scope has RESOLVED,
+ *  the next `read` of that scope must observe it. `rememberChecks` serializes
+ *  read → merge → write per scope and awaits the write, and that guarantee is
+ *  the whole reason the serialization works — it relies on nothing more, so a
+ *  store whose write lands asynchronously (a real disk-backed one) is fine.
+ *  `read` is deliberately synchronous and total: it answers `{}` for a scope
+ *  nothing was ever written for, never a rejection. */
 export interface CheckStore {
-  get<T>(key: string, defaultValue: T): T;
-  update(key: string, value: unknown): Thenable<void>;
+  read(scope: Scope): Record<string, CheckedFields>;
+  write(scope: Scope, record: Record<string, CheckedFields>): Promise<void>;
 }
 
 /** Session-lifetime CheckStore. The default, so tests and any construction
  *  without an ExtensionContext behave — verdicts then simply don't outlive the
- *  window, which is the pre-existing behavior. */
+ *  window. */
 export function memoryCheckStore(): CheckStore {
-  const values = new Map<string, unknown>();
+  const records = new Map<Scope, Record<string, CheckedFields>>();
   return {
-    get<T>(key: string, defaultValue: T): T {
-      return values.has(key) ? (values.get(key) as T) : defaultValue;
+    read(scope: Scope): Record<string, CheckedFields> {
+      return records.get(scope) ?? {};
     },
-    update(key: string, value: unknown): Thenable<void> {
-      values.set(key, value);
+    write(scope: Scope, record: Record<string, CheckedFields>): Promise<void> {
+      records.set(scope, record);
       return Promise.resolve();
     },
   };
@@ -225,10 +243,14 @@ export function memoryCheckStore(): CheckStore {
  *  artifact re-pins it, so the old verdict is simply never looked up again. No
  *  TTL, and nothing to clear when `grim update` runs behind our back. */
 function checkKey(item: Pick<StatusItem, 'kind' | 'name' | 'pinned'>): string {
-  // '|' separates because it can appear in none of the three: kind is a fixed
-  // lowercase word, name is [A-Za-z0-9._-] (see parseDeclaredRefs), and an OCI
-  // reference has no room for it either — so two distinct rows cannot collide
-  // on one key.
+  // '|' BRACKETS the name rather than merely separating three fields, and that
+  // is the whole argument: `kind` is a fixed lowercase word and `pinned` is a
+  // full OCI reference, neither of which can contain a '|', so the first and the
+  // last '|' delimit `name` unambiguously however it is spelled. Deliberately
+  // NOT a charset claim about the name itself — grim's own name grammar has no
+  // underscore, and bundle and MCP names are not charset-validated at all, so
+  // two of the five kinds are simply not guaranteed to be OCI path segments.
+  // Two distinct rows still cannot collide on one key.
   return [item.kind, item.name, item.pinned ?? ''].join('|');
 }
 
@@ -242,30 +264,118 @@ function checkKey(item: Pick<StatusItem, 'kind' | 'name' | 'pinned'>): string {
  *  NOT "the registry has something newer"), so the badge flipped between two
  *  different meanings all day.
  *
- *  One expression covers both directions: `item.X ?? remembered.X ?? null`. A
- *  fresh `false` wins (`??` only falls back on null/undefined), so a check that
- *  says "no update" clears a remembered `true`; a per-artifact re-resolution
- *  that FAILED under `checked: true` reads as null and keeps the last good
- *  verdict rather than flip-flopping. Only keys seen this round are written
- *  back, so the record self-prunes to the installed set.
+ *  The three fields do NOT share one rule, because their nulls do not mean the
+ *  same thing:
+ *
+ *  - `update_available` is tri-state, so a fresh `false` is an answer and wins
+ *    (`??` only falls back on null/undefined): a check that says "no update"
+ *    clears a remembered `true`, while a per-artifact re-resolution that FAILED
+ *    under `checked: true` reads as null and keeps the last good verdict rather
+ *    than flip-flopping. The MEMORY steps aside on a row grim reports as
+ *    `outdated`/`stale`: that is a config-vs-lock question, and a registry
+ *    verdict cannot answer it at any age. The merged value is null there, so
+ *    `computeUpdateAvailable` falls back to the local proxy — which is how this
+ *    path behaved before any of it was remembered. The rule is not special-cased
+ *    to a remembered `false`: a remembered `true` reaches the same displayed
+ *    outcome through the proxy, so stepping aside for both costs nothing.
+ *    Stepping aside is a DISPLAY rule only — the record still keeps the last
+ *    registry verdict. It has to: grim derives `stale` from the scope's
+ *    `declaration_hash`, which is scope-wide, so a single grimoire.toml edit
+ *    marks every row in that scope stale at once, and remembering the
+ *    drift-induced null would erase the whole scope's memory until the next
+ *    daily check. Resolving the drift does not save it either — an `outdated`
+ *    row's remediation moves the RECORDED pin, not the lock pin the key is built
+ *    from, and simply reverting the toml edit clears `stale` with the lock
+ *    untouched. So the key (see {@link checkKey}) is not an escape hatch here.
+ *  - `deprecated`/`replaced_by` are two-state: null encodes "not deprecated" and
+ *    "did not look" identically, and `checked` narrows that only partly. Under
+ *    `checked: true` grim did go online, but its null is still ambiguous — grim
+ *    degrades a failing registry per-row and keeps reporting `checked: true`
+ *    (commands.md), so a null means EITHER "upstream cleared the notice" OR
+ *    "this row's registry was unreachable". Taking it verbatim is a choice
+ *    between two wrong answers rather than a definitive clear, and it is NOT
+ *    self-limiting: the clear is persisted, so a registry that stays unreachable
+ *    keeps its rows' notices cleared for as long as it is down. It is still the
+ *    better trade — a stale `replaced_by` drives a Switch install at a target
+ *    the publisher has moved on from, while a missing notice only fails to offer
+ *    one, and the alternative pins a deprecation on an artifact forever past the
+ *    day upstream un-deprecates it.
+ *
+ *  Only keys seen this round are written back, so the record self-prunes to the
+ *  installed set.
  *
  *  Pure over its inputs; exported for tests. */
 export function mergeCheckedFields(
   items: StatusItem[],
   remembered: Record<string, CheckedFields>,
+  /** This round's `envelope.checked` — true when grim actually re-resolved
+   *  online, which is what makes a null `deprecated`/`replaced_by` a clear
+   *  rather than "didn't look". */
+  checked: boolean,
 ): { items: StatusItem[]; remember: Record<string, CheckedFields> } {
   const remember: Record<string, CheckedFields> = {};
   const merged = items.map((item) => {
-    const previous = remembered[checkKey(item)];
+    const key = checkKey(item);
+    const previous = remembered[key];
+    // The registry's last word on this row, fresh or remembered — what gets
+    // PERSISTED, drift or no drift.
+    const carried = item.update_available ?? previous?.update_available ?? null;
+    // Drift the local lock itself reports — no remembered registry verdict
+    // applies to it, so the row DISPLAYS null and the proxy answers (see above).
+    const drifted = item.state === 'outdated' || item.state === 'stale';
     const fields: CheckedFields = {
-      update_available: item.update_available ?? previous?.update_available ?? null,
-      deprecated: item.deprecated ?? previous?.deprecated ?? null,
-      replaced_by: item.replaced_by ?? previous?.replaced_by ?? null,
+      update_available: carried,
+      deprecated: checked
+        ? (item.deprecated ?? null)
+        : (item.deprecated ?? previous?.deprecated ?? null),
+      replaced_by: checked
+        ? (item.replaced_by ?? null)
+        : (item.replaced_by ?? previous?.replaced_by ?? null),
     };
-    remember[checkKey(item)] = fields;
-    return { ...item, ...fields };
+    remember[key] = fields;
+    return {
+      ...item,
+      ...fields,
+      update_available: item.update_available ?? (drifted ? null : carried),
+    };
   });
   return { items: merged, remember };
+}
+
+/** True when a persisted entry still has the shape {@link CheckedFields}
+ *  promises. Absent fields are NOT coerced to null: the record is written by
+ *  {@link mergeCheckedFields}, which always emits all three, so a missing one
+ *  means the entry is not ours to trust. */
+function isCheckedFields(entry: unknown): entry is CheckedFields {
+  if (typeof entry !== 'object' || entry === null) {
+    return false;
+  }
+  const fields = entry as Record<string, unknown>;
+  return (
+    (fields['update_available'] === null || typeof fields['update_available'] === 'boolean') &&
+    (fields['deprecated'] === null || typeof fields['deprecated'] === 'string') &&
+    (fields['replaced_by'] === null || typeof fields['replaced_by'] === 'string')
+  );
+}
+
+/** The persisted record with every malformed entry dropped. `CheckStore.read`'s
+ *  typed face is a CLAIM, not a guarantee — a Memento-backed store hands back
+ *  JSON that round-tripped through disk and can be hand-edited, half-migrated or
+ *  written by a future version, and a persisted `null` used to throw inside the
+ *  merge and take the whole snapshot down with it. Dropping (never coercing) is
+ *  the degrade: `"yes"` is not a verdict, and the artifact costs one round on
+ *  the local proxy before the next check re-answers it. */
+function validRecord(raw: unknown): Record<string, CheckedFields> {
+  if (typeof raw !== 'object' || raw === null) {
+    return {};
+  }
+  const valid: Record<string, CheckedFields> = {};
+  for (const [key, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (isCheckedFields(entry)) {
+      valid[key] = entry;
+    }
+  }
+  return valid;
 }
 
 export class ScopeService {
@@ -297,11 +407,16 @@ export class ScopeService {
     whichGrim({ ...process.env, ...readConfig().extraEnv });
 
   /** Where the last `--check` verdicts are remembered (see
-   *  {@link mergeCheckedFields}). In-memory by default; extension.ts swaps in
-   *  `context.globalState` so they outlive a window reload — the 24h throttle
+   *  {@link mergeCheckedFields}). In-memory by default; extension.ts swaps in a
+   *  Memento-backed store so they outlive a window reload — the 24h throttle
    *  that gates the next check already does, and a throttle that outlives its
    *  own result is what left a reloaded window on the lock proxy for a day. */
   checkStore: CheckStore = memoryCheckStore();
+
+  /** Per-scope tail of the remembered-verdict read→merge→write chain (see
+   *  {@link rememberChecks}). Per scope, not global, so a slow project write
+   *  never delays global's merge. */
+  private readonly checkChains = new Map<Scope, Promise<unknown>>();
 
   /**
    * The grim executable to spawn: explicit setting wins; the default `grim`
@@ -314,8 +429,9 @@ export class ScopeService {
    * OS: run() spawns with `cwd` set to the workspace folder, and libuv resolves
    * a directory-free name against that cwd BEFORE PATH on Windows — so opening
    * a repository that ships a `grim.exe` in its root ran THAT binary instead of
-   * the user's grim. Naming the hit is free: {@link pathGrim}'s scan is the same
-   * one that answers whether a PATH grim exists at all.
+   * the user's grim, at activation, with no user gesture. Naming the hit is
+   * free: {@link pathGrim}'s scan is the same one that answers whether a PATH
+   * grim exists at all.
    *
    * One derivation with {@link resolvedExecutable}, so the binary that gets
    * spawned and the binary the grim-info dialog names cannot disagree.
@@ -503,18 +619,19 @@ export class ScopeService {
       ? await this.run<StatusEnvelope>(statusArgs(options), scope)
       : undefined;
     const failed = status !== undefined && !status.ok;
+    // No config (status undefined) means no installs — a positive empty; a
+    // ran-but-failed status is unknown (null), never empty.
+    const items =
+      status === undefined
+        ? []
+        : status.ok
+          ? await this.rememberChecks(scope, status.value, options.check === true)
+          : null;
     return {
       probe: ctx,
       snapshot: {
         context: ctx.value,
-        // No config (status undefined) means no installs — a positive empty;
-        // a ran-but-failed status is unknown (null), never empty.
-        status:
-          status === undefined
-            ? []
-            : status.ok
-              ? this.rememberChecks(scope, status.value, options.check === true)
-              : null,
+        status: items,
         ...(failed ? { statusUnknownReason: 'status-failed' as const } : {}),
         declared: this.readDeclared(ctx.value),
       },
@@ -531,12 +648,23 @@ export class ScopeService {
    *  and why the badge needs it). One record per scope, so the two scopes'
    *  self-pruning writes can't clobber each other. Also names the one degrade
    *  worth a log line: `--check` was asked for, but grim reports it did not run
-   *  online, so the numbers on screen are last-known rather than fresh. */
+   *  online, so the numbers on screen are last-known rather than fresh.
+   *
+   *  Serialized per scope through {@link checkChains}: read → merge → write is a
+   *  read-modify-write over a record every round rewrites in full, and snapshots
+   *  overlap routinely — the details host reaches for one from six different
+   *  call sites, and the per-panel refresh among them runs once per OPEN PANEL
+   *  per round, all outside the refresh coalescer and any of them able to
+   *  straddle the daily check. Unordered, a plain round that read before a
+   *  checked round's write had landed then wrote its own nulls back over that
+   *  scope's fresh verdicts. Ordering is the only tool available:
+   *  `vscode.Memento` has no compare-and-swap, so there is nothing to build an
+   *  atomic write out of. */
   private rememberChecks(
     scope: Scope,
     envelope: StatusEnvelope,
     checkRequested: boolean,
-  ): StatusItem[] {
+  ): Promise<StatusItem[]> {
     if (checkRequested && envelope.checked !== true) {
       this.output.appendLine(
         `  grim status --check (${scope}) did not run online (offline?) — update and ` +
@@ -546,16 +674,59 @@ export class ScopeService {
     // Boundary guard, same as the update summary in extension.ts: an envelope
     // that parses but whose `items` is missing or not an array must not throw.
     const raw = Array.isArray(envelope.items) ? envelope.items : [];
-    const key = `updateCheck.${scope}`;
-    const previous = this.checkStore.get<Record<string, CheckedFields>>(key, {});
-    const { items, remember } = mergeCheckedFields(raw, previous);
-    // Only persist a round that actually learned something. Most rounds are
-    // plain refreshes that merge the record back unchanged, and globalState is
-    // backed by disk — a watcher storm would write on every event.
-    if (JSON.stringify(remember) !== JSON.stringify(previous)) {
-      void this.checkStore.update(key, remember);
+    const merged = (this.checkChains.get(scope) ?? Promise.resolve()).then(() => {
+      const stored: unknown = this.checkStore.read(scope);
+      const previous = validRecord(stored);
+      const { items, remember } = mergeCheckedFields(raw, previous, envelope.checked === true);
+      // Only persist a round that actually learned something. Most rounds are
+      // plain refreshes that merge the record back unchanged, and the store is
+      // backed by disk — a watcher storm would write on every event. Compared
+      // against the RAW record, not the validated one: an entry validRecord
+      // dropped is missing from `remember` too once its artifact is gone, so
+      // against the validated record the two sides match, no write happens and
+      // the malformed entry outlives every round — the opposite of pruning it.
+      const written =
+        JSON.stringify(remember) === JSON.stringify(stored)
+          ? Promise.resolve()
+          : this.persistChecks(scope, remember);
+      return { items, written };
+    });
+    // What the NEXT round waits on is the WRITE ITSELF — that is the
+    // read-after-write guarantee CheckStore asks for. It never rejects: one bad
+    // round (a store whose read throws) must not wedge the scope's chain for
+    // the session.
+    this.checkChains.set(
+      scope,
+      merged.then(({ written }) => written).catch(() => undefined),
+    );
+    // THIS round's rows, on the other hand, do not wait for the write at all.
+    // They are already correct, and a snapshot() that awaited persistence would
+    // hand a storage stall straight to every caller of it.
+    return merged.then(({ items }) => items);
+  }
+
+  /** Persists one scope's record, never rejecting. A failed persist costs the
+   *  NEXT round its memory; it must not cost this one its rows, so the failure
+   *  is logged rather than propagated.
+   *
+   *  The write is AWAITED outright, never raced against a timer. A 5s timeout
+   *  lived here (to bound a `vscode.Memento.update` that never settles, which
+   *  would hold the scope's chain for the session) and was removed: the race
+   *  only lets the chain advance — the abandoned write keeps running. A later
+   *  round could then read, merge and persist newer verdicts and have that old
+   *  write land on top of them, reverting real verdicts that the next plain
+   *  refresh goes on trusting for a day. A lost update is a live bug; a
+   *  Thenable that never settles is hypothetical. Do not re-add the timeout. */
+  private async persistChecks(
+    scope: Scope,
+    record: Record<string, CheckedFields>,
+  ): Promise<void> {
+    try {
+      await this.checkStore.write(scope, record);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`  remembering ${scope} check verdicts failed: ${message}`);
     }
-    return items;
   }
 
   /** The scope's declared refs, read off grimoire.toml. Empty when there is no

@@ -101,6 +101,12 @@ let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 let loadingFooterTimeout: ReturnType<typeof setTimeout> | undefined;
 // True from a kept-painted loading state until the next ready/error state.
 let refreshInFlight = false;
+// A focusSearch that arrived before anything was painted. The sidebar has no
+// first-paint body — render() bails while `state` is null — so `#search` does
+// not exist yet when a post held across the boot handshake is drained, and
+// focusing it was a silent no-op that flipped the tab and did nothing else.
+// Honoured at the end of the next render().
+let focusPending = false;
 // Gear/right-click menus are appended onto root, fixed-positioned — never
 // inside the card: the results live in vscode-scrollable's viewport, which
 // clips any absolutely-positioned child at the widget border. The anchor is
@@ -191,6 +197,10 @@ function render(): void {
   litRender(renderSidebarFilters(view, activeFilter()), filtersEl);
   litRender(renderSidebarResults(view, activeFilter()), resultsEl);
   litRender(renderSidebarFooter(view), footerEl);
+  if (focusPending) {
+    focusPending = false;
+    (document.getElementById('search') as HTMLInputElement | null)?.focus();
+  }
 }
 
 // Renders the search region on every render() (lit's own dirty-check makes an
@@ -504,7 +514,13 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
       persist();
       render();
     }
-    (document.getElementById('search') as HTMLInputElement | null)?.focus();
+    const search = document.getElementById('search') as HTMLInputElement | null;
+    if (search) {
+      search.focus();
+    } else {
+      // Nothing painted yet (see focusPending) — the next render() does it.
+      focusPending = true;
+    }
   } else if (message.type === 'setTab') {
     // Host-driven tab switch (the activity-bar Updates row clicks through
     // here). Persisted like a user click so the tab survives a reload.
