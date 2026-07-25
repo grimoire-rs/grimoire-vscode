@@ -17,6 +17,7 @@ import {
   filterCards,
   findAssetPath,
   hasClientDrift,
+  hasUpdate,
   INTERACTIVE_SELECTOR,
   isInteractiveTarget,
   isValidRepo,
@@ -49,7 +50,7 @@ import {
   type WireSearchItem,
   type WireStatusItem,
 } from '../webview/model';
-import type { CardVM, InstallVM, ScopesVM } from '../webview/protocol';
+import type { CardVM, InstallVM, RowState, ScopesVM } from '../webview/protocol';
 
 function searchItem(overrides: Partial<WireSearchItem> = {}): WireSearchItem {
   return {
@@ -1110,12 +1111,24 @@ suite('viewForTab', () => {
     replacedBy: null,
     installs: [],
   });
+  // Installed cards carry their installs — rowState returns 'not-installed' for
+  // an empty set, so an installed/outdated card without one cannot come out of
+  // buildInstalledCards, and the Updates slice reads the installs (hasUpdate),
+  // not the row state.
   const combined = sidebarState({
     query: 'host-query',
     items: [browseCard('ghcr.io/a/browse-item')],
     installedItems: [
-      { ...browseCard('ghcr.io/a/fresh'), state: 'installed' },
-      { ...browseCard('ghcr.io/a/stale'), state: 'outdated' },
+      {
+        ...browseCard('ghcr.io/a/fresh'),
+        state: 'installed',
+        installs: [install({ updateAvailable: false })],
+      },
+      {
+        ...browseCard('ghcr.io/a/stale'),
+        state: 'outdated',
+        installs: [install({ updateAvailable: true, state: 'outdated' })],
+      },
     ],
   });
 
@@ -1144,6 +1157,58 @@ suite('viewForTab', () => {
       ['ghcr.io/a/fresh', 'ghcr.io/a/stale'],
     );
     assert.strictEqual(view.query, 'client-query');
+  });
+
+  test('a deprecated artifact with an update stays in the Updates slice', () => {
+    // rowState shadows 'outdated' with 'deprecated', and `deprecated` is itself
+    // only populated under `--check` — so slicing by row state dropped this
+    // card from the list on exactly the rounds that had real update data, while
+    // its own card still offered an Update button.
+    const state = sidebarState({
+      installedItems: [
+        {
+          ...browseCard('ghcr.io/a/retired'),
+          state: 'deprecated',
+          deprecated: 'moved to ghcr.io/a/successor',
+          installs: [install({ updateAvailable: true, state: 'outdated' })],
+        },
+      ],
+    });
+    assert.deepStrictEqual(
+      viewForTab(state, 'updates', '').items.map((c) => c.repo),
+      ['ghcr.io/a/retired'],
+    );
+  });
+});
+
+suite('hasUpdate', () => {
+  test('counts by the install verdict, never by row state', () => {
+    const card = (state: RowState, updateAvailable: boolean): CardVM => ({
+      repo: 'ghcr.io/a/x',
+      name: 'x',
+      kind: 'skill',
+      description: null,
+      registryHost: 'ghcr.io',
+      latestVersion: null,
+      deprecated: null,
+      replacedBy: null,
+      state,
+      installs: [install({ updateAvailable })],
+    });
+    assert.strictEqual(hasUpdate(card('deprecated', true)), true, 'deprecated does not shadow it');
+    assert.strictEqual(hasUpdate(card('outdated', true)), true);
+    assert.strictEqual(hasUpdate(card('installed', false)), false);
+    assert.strictEqual(hasUpdate({ installs: [] }), false, 'not installed is not an update');
+  });
+
+  test('one updatable scope is enough when the other is current', () => {
+    const card: Pick<CardVM, 'installs'> = {
+      installs: [
+        install({ scope: 'global', updateAvailable: false }),
+        install({ scope: 'project', updateAvailable: true, state: 'outdated' }),
+      ],
+    };
+    assert.strictEqual(hasUpdate(card), true);
   });
 });
 

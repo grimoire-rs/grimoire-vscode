@@ -32,6 +32,7 @@ import {
   effectiveInstall,
   filterCards,
   hasClientDrift,
+  hasUpdate,
   installedViewCards,
   normalizeKind,
   registriesOf,
@@ -574,7 +575,7 @@ export function renderSidebarTabs(state: SidebarState): TemplateResult | typeof 
   if (state.phase === 'no-grim') {
     return nothing;
   }
-  const outdated = state.installedItems.filter((c) => c.state === 'outdated').length;
+  const outdated = state.installedItems.filter(hasUpdate).length;
   // With status unavailable `installedItems` is empty for want of data, while
   // the native badge deliberately keeps its last known value — no pill would
   // read as zero and contradict it. Say "unknown" instead of a count.

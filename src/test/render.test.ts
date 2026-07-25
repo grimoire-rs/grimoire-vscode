@@ -28,6 +28,7 @@ import {
   card,
   detailsVM,
   installedScope,
+  outdatedCard,
   searchItem,
   sidebarState,
 } from './fixtures/vms';
@@ -716,7 +717,7 @@ suite('sidebar rendering', () => {
   });
 
   test('tab bar: three tabs, active underline, updates count, hidden on no-grim', async () => {
-    const outdated = { ...card(), state: 'outdated' as const };
+    const outdated = outdatedCard();
     const html = await litHtml(
       renderSidebarTabs(sidebarState({ mode: 'updates', installedItems: [outdated] })),
     );
@@ -816,7 +817,7 @@ suite('sidebar rendering', () => {
 
     // With install state known, the pill is a plain count again (and absent at
     // zero) — the "?" is strictly the unknown case.
-    const outdated = { ...card(), state: 'outdated' as const };
+    const outdated = outdatedCard();
     const known = await litHtml(renderSidebarTabs(sidebarState({ installedItems: [outdated] })));
     assert.ok(known.includes('<span class="tab-count">1</span>'));
     assert.ok(!(await litHtml(renderSidebarTabs(sidebarState()))).includes('tab-count'));

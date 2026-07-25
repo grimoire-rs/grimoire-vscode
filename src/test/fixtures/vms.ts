@@ -112,6 +112,33 @@ export function installedScope(scope: 'project' | 'global'): ScopeStatus {
   };
 }
 
+/** {@link installedScope} with grim's `--check` verdict saying the registry has
+ *  something newer — what an artifact in the Updates tab actually looks like. */
+export function outdatedScope(scope: 'project' | 'global'): ScopeStatus {
+  const base = installedScope(scope);
+  return {
+    ...base,
+    status: (base.status ?? []).map((item) => ({
+      ...item,
+      state: 'outdated',
+      update_available: true,
+    })),
+  };
+}
+
+/** One installed card whose grim `--check` verdict says the registry has
+ *  something newer — the shape the Updates tab, its pill and the activity-bar
+ *  count all read. Built through the real funnel on purpose: a card with a
+ *  forced `state: 'outdated'` and no installs cannot come out of
+ *  buildInstalledCards, and counting reads the installs, not the row state. */
+export function outdatedCard(): CardVM {
+  const [built] = buildCards([searchItem()], [outdatedScope('global')]);
+  if (!built) {
+    throw new Error('buildCards produced no card for the outdated fixture');
+  }
+  return built;
+}
+
 /** One installed-row entry for `scope` (render.test.ts's inline `bothInstalled`),
  *  used to build a details VM with the same artifact installed in both scopes. */
 export function bothInstalled(scope: 'project' | 'global'): InstallVM {
@@ -379,10 +406,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     r.renderSidebarTabs(
       sidebarState({
         mode: 'updates',
-        installedItems: buildCards([searchItem()], []).map((c) => ({
-          ...c,
-          state: 'outdated' as const,
-        })),
+        installedItems: [outdatedCard()],
       }),
     ),
   );

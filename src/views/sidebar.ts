@@ -23,6 +23,7 @@ import {
   buildCards,
   buildInstalledCards,
   buildShareLink,
+  hasUpdate,
   registryUrlHost,
   type ScopeStatus,
 } from '../webview/model';
@@ -411,7 +412,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // unavailable.
     if (firstUnknown === undefined) {
       this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
-      this.setBadge(installed.filter((c) => c.state === 'outdated').length);
+      this.setBadge(installed.filter(hasUpdate).length);
     }
     // A catalog failure is the one that still has nothing to show: its cards
     // come from a possibly-empty result set, so it keeps the error phase.

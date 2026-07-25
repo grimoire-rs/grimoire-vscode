@@ -265,6 +265,21 @@ export function rowState(deprecated: string | null, installs: InstallVM[]): RowS
   return installs.some((i) => i.updateAvailable) ? 'outdated' : 'installed';
 }
 
+/** The single "this card has an update" predicate — NOT `state === 'outdated'`.
+ *  rowState above shadows outdated with 'deprecated', and `deprecated` is
+ *  itself a `--check`-only field, so counting by row state dropped a
+ *  deprecated-but-updatable artifact out of the count on exactly the rounds
+ *  that had network-verified data. A deprecated artifact with a newer version
+ *  is still an update, and the Update button on its card says so.
+ *
+ *  Shared by the native badge (views/sidebar.ts), the UPDATES tab pill
+ *  (render.ts) and the Updates tab's own slice (viewForTab) so the number on
+ *  the icon, the number on the pill and the length of the rendered list are one
+ *  computation and cannot disagree. */
+export function hasUpdate(card: Pick<CardVM, 'installs'>): boolean {
+  return card.installs.some((i) => i.updateAvailable);
+}
+
 /** Merges search results with per-scope install status into sidebar cards.
  *  `authed` = registry hosts the user is authenticated to (marks cards
  *  private, except the public default registry — see {@link isPrivateRegistry}). */
@@ -425,10 +440,7 @@ export function viewForTab(
   return {
     ...state,
     mode: tab,
-    items:
-      tab === 'updates'
-        ? state.installedItems.filter((c) => c.state === 'outdated')
-        : state.installedItems,
+    items: tab === 'updates' ? state.installedItems.filter(hasUpdate) : state.installedItems,
     query: tab === 'installed' ? installedQuery : '',
   };
 }
