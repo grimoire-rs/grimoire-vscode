@@ -7,6 +7,7 @@ export interface GrimoireConfig {
   watchForChanges: boolean;
   prefetchDetails: boolean;
   checkForUpdates: boolean;
+  checkArtifactUpdates: boolean;
   extraEnv: Record<string, string>;
 }
 
@@ -22,6 +23,7 @@ export function readConfig(): GrimoireConfig {
     watchForChanges: cfg.get<boolean>('watchForChanges', true),
     prefetchDetails: cfg.get<boolean>('prefetchDetails', true),
     checkForUpdates: cfg.get<boolean>('checkForUpdates', true),
+    checkArtifactUpdates: cfg.get<boolean>('checkArtifactUpdates', true),
     extraEnv: cfg.get<Record<string, string>>('extraEnv', {}),
   };
 }

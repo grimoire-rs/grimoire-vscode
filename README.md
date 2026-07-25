@@ -15,11 +15,14 @@ AI artifacts your tools rely on.
 - **Browse the catalog** — the **Browse** tab searches every configured
   registry at once. Filter by kind with the chip row (Skill / Rule / Agent /
   MCP / Bundle).
-- **Stay current** — the **Updates** tab lists every installed artifact with a
-  newer version available (the tab and the activity-bar icon carry the count).
-  An **Update All** icon appears in the sidebar's title bar whenever updates
-  are pending and updates them in one click (also always available in the
-  title bar's `…` menu).
+- **Stay current** — once a day Grimoire asks your registries which installed
+  artifacts have newer versions and carries the count on the activity-bar icon,
+  on the **Updates** tab, and on an **Updates** row that appears in the sidebar.
+  The tab lists them; an **Update All** icon appears in the sidebar's title bar
+  whenever updates are pending and updates them in one click (also always
+  available in the title bar's `…` menu). Check on demand with
+  **Grimoire: Check for Updates**, or turn the daily one off with
+  `grimoire.checkArtifactUpdates`.
 - **See what you have** — the **Installed** tab lists your installed artifacts,
   with a **Project / Global** toggle to switch which scope's list you're looking
   at. A status line pinned below the list shows when the catalog was last
@@ -70,6 +73,7 @@ Run from the Command Palette (all under the **Grimoire** category).
 | ---------------------------------------------- | -------------------------------------------------------------------------------- |
 | `Grimoire: Search Artifacts`                   | Focus the Browse tab and jump to its search box                                  |
 | `Grimoire: Refresh Catalog`                    | Re-fetch the catalog and refresh every tab                                       |
+| `Grimoire: Check for Updates`                  | Ask your registries which installed artifacts have newer versions                |
 | `Grimoire: Update All Artifacts`               | Update every artifact with a pending update (project + global)                   |
 | `Grimoire: Initialize Project (grimoire.toml)` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
 | `Grimoire: Install grim CLI`                   | Download the latest `grim` release from GitHub                                   |
@@ -86,14 +90,15 @@ available.
 
 ## Settings
 
-| Setting                    | Default   | Does                                                                                                                                                                                  |
-| -------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `grimoire.path.executable` | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                 |
-| `grimoire.defaultScope`    | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
-| `grimoire.watchForChanges` | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
-| `grimoire.prefetchDetails` | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
-| `grimoire.checkForUpdates` | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
-| `grimoire.extraEnv`        | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
+| Setting                         | Default   | Does                                                                                                                                                                                  |
+| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grimoire.path.executable`      | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                 |
+| `grimoire.defaultScope`         | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
+| `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
+| `grimoire.prefetchDetails`      | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
+| `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
+| `grimoire.checkArtifactUpdates` | `true`    | Once a day, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on                        |
+| `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
 
 ## Requirements
 

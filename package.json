@@ -245,6 +245,11 @@
           "default": true,
           "description": "Once a day, check GitHub for a newer grim CLI release. Offers a one-click update when the extension manages the grim binary, or a link to the release page for a PATH- or manually-installed grim."
         },
+        "grimoire.checkArtifactUpdates": {
+          "type": "boolean",
+          "markdownDescription": "Once a day, ask your registries whether installed artifacts have newer versions (`grim status --check`). This is what the update count on the Grimoire icon is based on; with it off, the count falls back to what the local lock file can tell without network access. The **Grimoire: Check for Updates** command always runs the check regardless.",
+          "default": true
+        },
         "grimoire.extraEnv": {
           "type": "object",
           "default": {},

@@ -360,7 +360,44 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   // Daily grim update check. Best-effort background task: every failure is
   // log-only, never a toast. The extension only offers to overwrite a binary
   // it installed itself (globalStorage/bin); PATH/setting grims get notify-only.
+  //
+  // The artifact check below is deliberately NOT the same task: one asks GitHub
+  // about the grim CLI, the other asks the user's registries about installed
+  // artifacts. They have their own setting and their own throttle key — a
+  // private registry is not something to poll because someone left the GitHub
+  // release check on, and the update count should not go dark because they
+  // turned it off.
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const ARTIFACT_CHECK_KEY = 'artifactCheck.lastCheck';
+
+  /** Refreshes every view, asking grim for network-verified update and
+   *  deprecation data when the daily artifact check is due and enabled. A plain
+   *  refresh otherwise — which still produces a correct update count, because
+   *  the last check's verdicts are remembered (see ScopeService.checkStore) and
+   *  no longer expire with the window. */
+  const refreshWithDueCheck = async (): Promise<void> => {
+    try {
+      const due =
+        readConfig().checkArtifactUpdates &&
+        Date.now() - context.globalState.get<number>(ARTIFACT_CHECK_KEY, 0) >= DAY_MS;
+      if (!due) {
+        await refreshAll();
+        return;
+      }
+      // Stamp before the call, like the GitHub check: a failing registry must
+      // not make every refresh retry the network.
+      await context.globalState.update(ARTIFACT_CHECK_KEY, Date.now());
+      await refreshAll({ check: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.appendLine(`artifact update check failed: ${message}`);
+    }
+  };
+  // The one refresh at activation. Without it nothing computes an update count
+  // until the sidebar view first becomes visible, so the activity-bar number —
+  // the whole point of activating eagerly — never appeared in a window where
+  // Grimoire was not opened.
+  void refreshWithDueCheck();
   const checkForUpdates = async (): Promise<void> => {
     try {
       if (!readConfig().checkForUpdates) {
@@ -373,15 +410,6 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       }
       // Stamp before fetching so a flaky network can't hammer GitHub.
       await context.globalState.update('updateCheck.lastCheck', Date.now());
-      // Once a day (same setting + throttle) also refresh the views with
-      // network-verified `status --check` data, so update/deprecation badges are
-      // honest rather than lock-state proxies. Fire-and-forget and decoupled
-      // from the binary-version check below — a slow or failed status check
-      // must not abort the grim-release prompt.
-      void refreshAll({ check: true }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        output.appendLine(`update-badge check failed: ${message}`);
-      });
       const latest = await fetchLatestVersion();
       if (!latest || latest === context.globalState.get<string>('updateCheck.skippedVersion')) {
         return;
@@ -416,9 +444,12 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     }
   };
   void checkForUpdates();
-  // Long-lived windows (WSL/remote stay open for days) re-check daily; the
-  // globalState throttle makes repeat invocations idempotent.
-  const updateTimer = setInterval(() => void checkForUpdates(), DAY_MS);
+  // Long-lived windows (WSL/remote stay open for days) re-check daily; both
+  // globalState throttles make repeat invocations idempotent.
+  const updateTimer = setInterval(() => {
+    void checkForUpdates();
+    void refreshWithDueCheck();
+  }, DAY_MS);
   context.subscriptions.push({ dispose: () => clearInterval(updateTimer) });
 
   context.subscriptions.push(
@@ -451,9 +482,12 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     vscode.commands.registerCommand('grimoire.refresh', () => refreshAll({ refresh: true })),
     // Network-verified update/deprecation check (`grim status --check`), on
     // explicit request only — plain refreshes stay offline and cheap.
-    vscode.commands.registerCommand('grimoire.checkArtifactUpdates', () =>
-      refreshAll({ check: true }),
-    ),
+    vscode.commands.registerCommand('grimoire.checkArtifactUpdates', async () => {
+      // Stamps the daily throttle: a check the user just ran by hand is still a
+      // check, and the background one has nothing left to add today.
+      await context.globalState.update(ARTIFACT_CHECK_KEY, Date.now());
+      await refreshAll({ check: true });
+    }),
     vscode.commands.registerCommand('grimoire.updateAll', () =>
       suspendWhile(async () => {
         await runWithStatusProgress('Updating all artifacts', async () => {

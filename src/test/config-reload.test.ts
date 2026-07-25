@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { readConfig } from '../config';
 import type { GrimoireApi } from '../extension';
 import { MINIMUM_GRIM_VERSION } from '../installer';
 
@@ -58,6 +59,26 @@ suite('config manifest', () => {
         `${key} must not be machine-scoped (is "${scope}") — remote windows ignore it in user settings`,
       );
     }
+  });
+
+  test('every setting readConfig reads is declared in the manifest', () => {
+    // An undeclared key is invisible: getConfiguration returns the hardcoded
+    // default forever, so the setting silently does not exist and nothing
+    // fails. Reading the keys off readConfig's own result keeps the two in step
+    // without a second hand-maintained list.
+    const extension = vscode.extensions.getExtension('grimoire-rs.grimoire-vscode');
+    assert.ok(extension);
+    const declared = Object.keys(
+      extension.packageJSON.contributes.configuration.properties as Record<string, unknown>,
+    );
+    // readConfig flattens `path.executable` to `executable`; the rest are 1:1.
+    const read = Object.keys(readConfig())
+      .map((key) => (key === 'executable' ? 'path.executable' : key))
+      .map((key) => `grimoire.${key}`);
+    assert.deepStrictEqual(
+      read.filter((key) => !declared.includes(key)),
+      [],
+    );
   });
 });
 
