@@ -343,6 +343,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     if (snap.grimMissing) {
       this.lastUnknown = undefined; // no grim at all is its own state, not a degraded one
+      // Cleared, not frozen: unlike an unknown install state, "there is no grim"
+      // is a definite answer, and a leftover count would keep pointing at an
+      // Updates tab that now renders the no-grim state.
+      this.setBadge(0);
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
@@ -376,6 +380,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     if (catalogState.grimMissing) {
       this.lastUnknown = undefined;
+      this.setBadge(0); // same definite answer as the snapshot's own no-grim above
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }

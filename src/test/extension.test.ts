@@ -4380,6 +4380,29 @@ suite('update badge', () => {
     }
   });
 
+  test('grim going missing clears the count, unlike an unknown install state', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    const originalRun = api.scopes.run;
+    try {
+      api.scopes.run = statusRun('outdated');
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(badgeOf(api)?.value, 1);
+      // The executable disappeared (uninstalled, PATH changed). That is a
+      // definite answer, not a degraded one — the count must not survive it
+      // pointing at an Updates tab that now renders the no-grim state.
+      api.scopes.run = (async <T>(): Promise<GrimResult<T>> =>
+        ({ ok: false, kind: 'not-found', message: 'grim not found' }) as GrimResult<T>) as
+        typeof api.scopes.run;
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(badgeOf(api), undefined);
+    } finally {
+      api.scopes.run = originalRun;
+    }
+  });
+
   test('a failed status freezes the badge AND the posted cards together, never one without the other', async function () {
     this.timeout(15000);
     const api = await activateExtension();
