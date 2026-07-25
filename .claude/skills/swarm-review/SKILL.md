@@ -54,6 +54,7 @@ single-axis pipeline adjustments on top of chosen tier.
 ### 1. Parse arguments and resolve target
 
 Detect target (ordered, first match wins):
+
 1. Full GitHub PR URL
 2. `PR <N>` / `pull/<N>` → PR
 3. `#<N>` or bare integer → probe PR via `mcp__github__pull_request_read`
@@ -100,9 +101,10 @@ Workers per perspective, Estimated cost, Not Doing (no auto-fixes, no
 commits).
 
 **Approval UI** (always single interaction):
+
 - Default: `EnterPlanMode` with meta-plan path; resume on approve.
-  *Fall back to `AskUserQuestion` Approve/Edit/Cancel if skill resume
-  after `ExitPlanMode` unreliable in practice.*
+  _Fall back to `AskUserQuestion` Approve/Edit/Cancel if skill resume
+  after `ExitPlanMode` unreliable in practice._
 - `--form`: ONE `AskUserQuestion` call with ≤4 batched axis questions
   (Tier / Breadth / RCA / Codex), first option "Recommended".
 
@@ -130,18 +132,18 @@ Swarm review
 See `.claude/rules/workflow-swarm.md` for worker types, models, tools,
 focus modes. Tier files select subset of these perspectives.
 
-| Perspective | Worker / focus | Tier use |
-|---|---|---|
-| Spec-compliance | `worker-reviewer` (spec-compliance, phase: `post-implementation`) | all |
-| Test coverage | `worker-reviewer` (quality, lens: test-coverage) | high, max |
-| Quality | `worker-reviewer` (quality) | all |
-| Security | `worker-reviewer` (security) | high (security paths), max |
-| Performance | `worker-reviewer` (performance) | high (hot paths), max |
-| Architecture | `worker-architect` | max (+ `adversarial`) |
-| Documentation | `worker-doc-reviewer` | high, max |
-| CLI UX | `worker-reviewer` (quality, lens: cli-ux) | max (+ `adversarial`) |
-| SOTA | `worker-researcher` | max (+ `adversarial`) |
-| Cross-model | `codex-adversary` (code-diff) | high (when `--codex` fires), max (mandatory) |
+| Perspective     | Worker / focus                                                    | Tier use                                     |
+| --------------- | ----------------------------------------------------------------- | -------------------------------------------- |
+| Spec-compliance | `worker-reviewer` (spec-compliance, phase: `post-implementation`) | all                                          |
+| Test coverage   | `worker-reviewer` (quality, lens: test-coverage)                  | high, max                                    |
+| Quality         | `worker-reviewer` (quality)                                       | all                                          |
+| Security        | `worker-reviewer` (security)                                      | high (security paths), max                   |
+| Performance     | `worker-reviewer` (performance)                                   | high (hot paths), max                        |
+| Architecture    | `worker-architect`                                                | max (+ `adversarial`)                        |
+| Documentation   | `worker-doc-reviewer`                                             | high, max                                    |
+| CLI UX          | `worker-reviewer` (quality, lens: cli-ux)                         | max (+ `adversarial`)                        |
+| SOTA            | `worker-researcher`                                               | max (+ `adversarial`)                        |
+| Cross-model     | `codex-adversary` (code-diff)                                     | high (when `--codex` fires), max (mandatory) |
 
 Max concurrent workers: 8 (per `workflow-swarm.md`).
 
@@ -157,13 +159,20 @@ breadth they run. Every tier produces:
 
 ```markdown
 ## Code Review: [target]
+
 ### Summary
+
 - Verdict: Approved | Needs Work | Request Changes
 - Tier / Baseline / Diff: N files, +L / -L lines, S subsystems
+
 ### Stage 1 — Correctness (spec-compliance, test-coverage)
+
 ### Stage 2 — [perspectives run at this tier]
-### Cross-Model Adversarial (Codex)  # if --codex fired
-### Root-Cause Analysis               # if rca=on
+
+### Cross-Model Adversarial (Codex) # if --codex fired
+
+### Root-Cause Analysis # if rca=on
+
 ### Deferred Findings (human judgment required)
 ```
 

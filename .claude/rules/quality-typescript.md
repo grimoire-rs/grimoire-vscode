@@ -1,10 +1,10 @@
 ---
 paths:
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.mts"
-  - "**/*.cts"
-  - "**/tsconfig*.json"
+  - '**/*.ts'
+  - '**/*.tsx'
+  - '**/*.mts'
+  - '**/*.cts'
+  - '**/tsconfig*.json'
 ---
 
 # TypeScript Code Quality
@@ -28,14 +28,14 @@ standard for new projects:
 {
   "compilerOptions": {
     "strict": true,
-    "noUncheckedIndexedAccess": true,          // arr[0] → T | undefined
-    "exactOptionalPropertyTypes": true,        // ? means absent, not undefined
+    "noUncheckedIndexedAccess": true, // arr[0] → T | undefined
+    "exactOptionalPropertyTypes": true, // ? means absent, not undefined
     "noPropertyAccessFromIndexSignature": true,
-    "verbatimModuleSyntax": true,              // type imports stay type-only in emit
-    "moduleResolution": "Bundler",             // for Vite/Bun/esbuild projects
+    "verbatimModuleSyntax": true, // type imports stay type-only in emit
+    "moduleResolution": "Bundler", // for Vite/Bun/esbuild projects
     "module": "ESNext",
-    "isolatedModules": true                    // safe for single-file transforms
-  }
+    "isolatedModules": true, // safe for single-file transforms
+  },
 }
 ```
 
@@ -90,8 +90,10 @@ standard for new projects:
 ```ts
 function handle(msg: Message): Result {
   switch (msg.kind) {
-    case "text": return handleText(msg);
-    case "image": return handleImage(msg);
+    case 'text':
+      return handleText(msg);
+    case 'image':
+      return handleImage(msg);
     default: {
       const _exhaustive: never = msg;
       throw new Error(`Unhandled: ${_exhaustive}`);
@@ -116,7 +118,7 @@ function handle(msg: Message): Result {
 - **`using` / `await using`** (TS 5.2): Explicit Resource Management. Objects implementing `Symbol.dispose` auto-disposed at scope exit. Relevant for file handles, DB connections, test teardown.
   ```ts
   async function processFile(path: string) {
-    await using file = await openFile(path);  // auto-closed at scope exit
+    await using file = await openFile(path); // auto-closed at scope exit
     return file.read();
   }
   ```
@@ -127,14 +129,14 @@ function handle(msg: Message): Result {
 
 ## Tooling (2026 State)
 
-| Tool | Status | Use when |
-|------|--------|----------|
-| **Biome** | Recommended default | New projects, single binary, 10-25x faster, ~85% ESLint rule coverage |
-| **ESLint + `@typescript-eslint`** | Still required | Type-aware rules, framework-specific plugins (react, vue, svelte), custom rules |
-| **Oxlint** | Emerging | Experimental speed option; keep alongside ESLint for rule coverage |
-| **tsc** | Type checking only | Never build tool in Vite/Bun projects — use `tsc --noEmit` in CI |
-| **Bun** | Type-stripping runtime | Pair with `tsc --noEmit` in CI for actual type checking |
-| **SWC** | Transpilation | Mature alternative to esbuild; no type checking |
+| Tool                              | Status                 | Use when                                                                        |
+| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------- |
+| **Biome**                         | Recommended default    | New projects, single binary, 10-25x faster, ~85% ESLint rule coverage           |
+| **ESLint + `@typescript-eslint`** | Still required         | Type-aware rules, framework-specific plugins (react, vue, svelte), custom rules |
+| **Oxlint**                        | Emerging               | Experimental speed option; keep alongside ESLint for rule coverage              |
+| **tsc**                           | Type checking only     | Never build tool in Vite/Bun projects — use `tsc --noEmit` in CI                |
+| **Bun**                           | Type-stripping runtime | Pair with `tsc --noEmit` in CI for actual type checking                         |
+| **SWC**                           | Transpilation          | Mature alternative to esbuild; no type checking                                 |
 
 2026 rec: **Biome** for formatting + basic linting, **`tsc --noEmit`** in CI for full type checking. Keep ESLint only when need its plugin ecosystem (e.g., `eslint-plugin-react`).
 

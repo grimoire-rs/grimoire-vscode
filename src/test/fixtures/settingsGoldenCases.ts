@@ -12,7 +12,12 @@ import {
   type AddRegistryUI,
 } from '../../webview/settings/model';
 import type * as render from '../../webview/settings/render';
-import { settingsState, wireConfigEntries, wireConfigEntry, wireRegistryEntry } from './settingsVms';
+import {
+  settingsState,
+  wireConfigEntries,
+  wireConfigEntry,
+  wireRegistryEntry,
+} from './settingsVms';
 
 export interface GoldenCase {
   name: string;
@@ -56,18 +61,44 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
     }),
   );
   const readyGroups = [
-    { title: 'Options', rows: rows.filter((r) => ['options.default_registry', 'options.clients', 'options.show_deprecated'].includes(r.key)) },
-    { title: 'TUI', rows: [...rows.filter((r) => !['options.default_registry', 'options.clients', 'options.show_deprecated'].includes(r.key)), unknownRow] },
+    {
+      title: 'Options',
+      rows: rows.filter((r) =>
+        ['options.default_registry', 'options.clients', 'options.show_deprecated'].includes(r.key),
+      ),
+    },
+    {
+      title: 'TUI',
+      rows: [
+        ...rows.filter(
+          (r) =>
+            !['options.default_registry', 'options.clients', 'options.show_deprecated'].includes(
+              r.key,
+            ),
+        ),
+        unknownRow,
+      ],
+    },
   ];
   const readyRegistries = [
     buildRegistryRow(wireRegistryEntry()),
-    buildRegistryRow(wireRegistryEntry({ alias: 'internal', oci: null, index: 'https://index.acme.io/index.json', default: false })),
+    buildRegistryRow(
+      wireRegistryEntry({
+        alias: 'internal',
+        oci: null,
+        index: 'https://index.acme.io/index.json',
+        default: false,
+      }),
+    ),
     buildRegistryRow(wireRegistryEntry({ alias: null, oci: 'ghcr.io/legacy-org', default: false })),
   ];
   const readyState = settingsState({ groups: readyGroups, registries: readyRegistries });
 
   add('settings-ready-full', r.renderSettings(readyState));
-  add('settings-ready-empty-registries', r.renderSettings(settingsState({ groups: readyGroups, registries: [] })));
+  add(
+    'settings-ready-empty-registries',
+    r.renderSettings(settingsState({ groups: readyGroups, registries: [] })),
+  );
   add(
     'settings-ready-add-registry-open',
     r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
@@ -89,10 +120,21 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
   add(
     'settings-no-folder',
     r.renderSettings(
-      settingsState({ phase: 'no-folder', projectOpen: false, configPath: null, groups: [], registries: [] }),
+      settingsState({
+        phase: 'no-folder',
+        projectOpen: false,
+        configPath: null,
+        groups: [],
+        registries: [],
+      }),
     ),
   );
-  add('settings-project-no-toml', r.renderSettings(settingsState({ phase: 'project-no-toml', configPath: null, groups: [], registries: [] })));
+  add(
+    'settings-project-no-toml',
+    r.renderSettings(
+      settingsState({ phase: 'project-no-toml', configPath: null, groups: [], registries: [] }),
+    ),
+  );
   add(
     'settings-global-no-toml',
     r.renderSettings(
@@ -106,12 +148,35 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
       }),
     ),
   );
-  add('settings-no-grim', r.renderSettings(settingsState({ phase: 'no-grim', configPath: null, groups: [], registries: [] })));
-  add('settings-loading', r.renderSettings(settingsState({ phase: 'loading', configPath: null, groups: [], registries: [] })));
-  add('settings-error', r.renderSettings(settingsState({ phase: 'error', groups: [], registries: [], error: 'grim exited with status 1' })));
+  add(
+    'settings-no-grim',
+    r.renderSettings(
+      settingsState({ phase: 'no-grim', configPath: null, groups: [], registries: [] }),
+    ),
+  );
+  add(
+    'settings-loading',
+    r.renderSettings(
+      settingsState({ phase: 'loading', configPath: null, groups: [], registries: [] }),
+    ),
+  );
+  add(
+    'settings-error',
+    r.renderSettings(
+      settingsState({
+        phase: 'error',
+        groups: [],
+        registries: [],
+        error: 'grim exited with status 1',
+      }),
+    ),
+  );
 
   add('settings-tabs-project-with-path', r.renderSettingsTabs(settingsState({ scope: 'project' })));
-  add('settings-tabs-global-no-path', r.renderSettingsTabs(settingsState({ scope: 'global', configPath: null })));
+  add(
+    'settings-tabs-global-no-path',
+    r.renderSettingsTabs(settingsState({ scope: 'global', configPath: null })),
+  );
 
   add('settings-footer', r.renderSettingsFooter());
 

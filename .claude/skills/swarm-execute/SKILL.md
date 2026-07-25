@@ -3,13 +3,13 @@ name: swarm-execute
 description: Use to implement a plan artifact from `/swarm-plan`, or a free-text implementation task with contract-first TDD + Review-Fix Loop. Tier (`low | auto | high | max`) scales builder model, loop rounds, review breadth, and Codex code-diff gate.
 user-invocable: true
 disable-model-invocation: false
-argument-hint: "[tier] <plan-artifact-or-task> [--flags]"
+argument-hint: '[tier] <plan-artifact-or-task> [--flags]'
 triggers:
-  - "execute this plan"
-  - "execute the plan"
-  - "implement this plan"
-  - "implement the plan"
-  - "run the plan"
+  - 'execute this plan'
+  - 'execute the plan'
+  - 'implement this plan'
+  - 'implement the plan'
+  - 'run the plan'
 ---
 
 # Execution Orchestrator — Tiered
@@ -46,6 +46,7 @@ execution in tier files.
 ### 1. Parse arguments and detect plan artifact
 
 Detect target type:
+
 1. Path ending `.md` (typically under `.claude/state/plans/`) → plan-artifact mode
 2. Else → free-text mode
 
@@ -78,9 +79,10 @@ Classification (tier + rationale + plan-header source), Overlays
 Whether Codex fires, Not Doing (push, PR creation).
 
 **Approval UI** (always single interaction):
+
 - Default: `EnterPlanMode` with meta-plan path; resume on approve.
-  *If skill resume after `ExitPlanMode` unreliable in practice,
-  fall back to `AskUserQuestion` with Approve / Edit / Cancel options.*
+  _If skill resume after `ExitPlanMode` unreliable in practice,
+  fall back to `AskUserQuestion` with Approve / Edit / Cancel options._
 - `--form`: ONE `AskUserQuestion` call with ≤4 batched axis questions
   (Tier / Builder / Loop-rounds / Codex), first option "Recommended".
 
@@ -121,7 +123,7 @@ after Claude loop converges.
 - **Preconditions**: loop exited, `task verify` green, working tree
   clean except intended diff.
 - **Invocation**: delegate to `codex-adversary` with `--scope code-diff
-  --base main --model <tier model>` (high→`terra`, max→`sol`;
+--base main --model <tier model>` (high→`terra`, max→`sol`;
   `--codex-model=luna|terra|sol` overrides — see `overlays.md`). Codex
   loads repo context (`AGENTS.md` when present) automatically — do not
   inject project context.
@@ -141,16 +143,16 @@ after Claude loop converges.
 See `.claude/rules/workflow-swarm.md` for worker types, models, tools,
 focus modes.
 
-| Phase | Worker | Model |
-|---|---|---|
-| Stub | `worker-builder` (focus: `stubbing`) | sonnet / opus |
-| Verify arch (high/max) | `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`) | sonnet |
-| Verify arch (max) | `worker-architect` | opus |
-| Specify | `worker-tester` (focus: `specification`) | sonnet |
-| Implement | `worker-builder` (focus: `implementation`) | sonnet / opus |
-| Review Stage 1 | `worker-reviewer` (spec-compliance + test-coverage) | sonnet |
-| Review Stage 2 | `worker-reviewer` / `worker-doc-reviewer` / `worker-architect` / `worker-researcher` | per role |
-| Cross-model | `codex-adversary` (code-diff) | — |
+| Phase                  | Worker                                                                               | Model         |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------------- |
+| Stub                   | `worker-builder` (focus: `stubbing`)                                                 | sonnet / opus |
+| Verify arch (high/max) | `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`)                     | sonnet        |
+| Verify arch (max)      | `worker-architect`                                                                   | opus          |
+| Specify                | `worker-tester` (focus: `specification`)                                             | sonnet        |
+| Implement              | `worker-builder` (focus: `implementation`)                                           | sonnet / opus |
+| Review Stage 1         | `worker-reviewer` (spec-compliance + test-coverage)                                  | sonnet        |
+| Review Stage 2         | `worker-reviewer` / `worker-doc-reviewer` / `worker-architect` / `worker-researcher` | per role      |
+| Cross-model            | `codex-adversary` (code-diff)                                                        | —             |
 
 Max concurrent workers: 8 (per `workflow-swarm.md`).
 

@@ -111,17 +111,26 @@ suite('ref helpers', () => {
 suite('computeUpdateAvailable', () => {
   test('authoritative --check result wins over the lock-state proxy', () => {
     // true → update offered regardless of state.
-    assert.strictEqual(computeUpdateAvailable({ update_available: true, state: 'installed' }), true);
+    assert.strictEqual(
+      computeUpdateAvailable({ update_available: true, state: 'installed' }),
+      true,
+    );
     // false suppresses the update even when the local lock reads outdated/stale
     // (the network check is the authority; stale is still handled on Update click).
-    assert.strictEqual(computeUpdateAvailable({ update_available: false, state: 'outdated' }), false);
+    assert.strictEqual(
+      computeUpdateAvailable({ update_available: false, state: 'outdated' }),
+      false,
+    );
     assert.strictEqual(computeUpdateAvailable({ update_available: false, state: 'stale' }), false);
   });
 
   test('null/absent (unchecked) falls back to the outdated/stale proxy', () => {
     assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'outdated' }), true);
     assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'stale' }), true);
-    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'installed' }), false);
+    assert.strictEqual(
+      computeUpdateAvailable({ update_available: null, state: 'installed' }),
+      false,
+    );
     // Field omitted entirely (a fixture / older wire item) behaves like null.
     assert.strictEqual(computeUpdateAvailable({ state: 'stale' }), true);
     assert.strictEqual(computeUpdateAvailable({ state: 'installed' }), false);
@@ -238,21 +247,27 @@ suite('card building', () => {
   });
 
   test('install is flagged floating when pinned is null, pinned otherwise (item 18)', () => {
-    const floating = buildCards([searchItem()], [
-      {
-        scope: 'project',
-        status: [statusItem({ pinned: null, state: 'outdated' })],
-        declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
-      },
-    ]);
+    const floating = buildCards(
+      [searchItem()],
+      [
+        {
+          scope: 'project',
+          status: [statusItem({ pinned: null, state: 'outdated' })],
+          declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
+        },
+      ],
+    );
     assert.strictEqual(floating[0]?.installs[0]?.floating, true);
-    const pinned = buildCards([searchItem()], [
-      {
-        scope: 'project',
-        status: [statusItem({ state: 'outdated' })],
-        declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
-      },
-    ]);
+    const pinned = buildCards(
+      [searchItem()],
+      [
+        {
+          scope: 'project',
+          status: [statusItem({ state: 'outdated' })],
+          declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+        },
+      ],
+    );
     assert.strictEqual(pinned[0]?.installs[0]?.floating, false);
   });
 
@@ -296,10 +311,7 @@ suite('card building', () => {
 suite('client drift', () => {
   test('hasClientDrift is false with no drift (absent or empty arrays), true when either side is non-empty', () => {
     assert.strictEqual(hasClientDrift(install({})), false, 'absent fields default to no drift');
-    assert.strictEqual(
-      hasClientDrift(install({ clientsMissing: [], clientsExtra: [] })),
-      false,
-    );
+    assert.strictEqual(hasClientDrift(install({ clientsMissing: [], clientsExtra: [] })), false);
     assert.strictEqual(hasClientDrift(install({ clientsMissing: ['opencode'] })), true);
     assert.strictEqual(hasClientDrift(install({ clientsExtra: ['copilot'] })), true);
   });
@@ -313,7 +325,10 @@ suite('client drift', () => {
       clientDriftTooltip(install({ clientsMissing: ['opencode', 'copilot'] })),
       'Missing: opencode, copilot',
     );
-    assert.strictEqual(clientDriftTooltip(install({ clientsExtra: ['copilot'] })), 'Extra: copilot');
+    assert.strictEqual(
+      clientDriftTooltip(install({ clientsExtra: ['copilot'] })),
+      'Extra: copilot',
+    );
     assert.strictEqual(clientDriftTooltip(install({})), '');
   });
 
@@ -462,7 +477,10 @@ suite('filters', () => {
   test('kind filter', () => {
     assert.strictEqual(filterCards(cards, { ...DEFAULT_FILTER, kinds: ['bundle'] }).length, 1);
     // Multi-kind: union across selected kinds; empty = all.
-    assert.strictEqual(filterCards(cards, { ...DEFAULT_FILTER, kinds: ['rule', 'bundle'] }).length, 2);
+    assert.strictEqual(
+      filterCards(cards, { ...DEFAULT_FILTER, kinds: ['rule', 'bundle'] }).length,
+      2,
+    );
     assert.strictEqual(filterCards(cards, DEFAULT_FILTER).length, cards.length);
   });
 
@@ -882,7 +900,10 @@ suite('scope row menu entries (item 7: Copy repo path dropped)', () => {
 
   test('outdated via-bundle install keeps only Update (its button is Bundle, not Update)', () => {
     const entries = scopeRowMenuEntries(
-      install({ updateAvailable: true, viaBundles: ['ghcr.io/grimoire-rs/bundles/grim-essentials'] }),
+      install({
+        updateAvailable: true,
+        viaBundles: ['ghcr.io/grimoire-rs/bundles/grim-essentials'],
+      }),
     );
     assert.deepStrictEqual(names(entries), ['Update']);
     const update = entries.find((e): e is MenuItem => e !== 'separator');
@@ -980,7 +1001,10 @@ suite('share links', () => {
 
   test('build/parse round-trips through urlencoding', () => {
     const link = buildShareLink('vscode', repo);
-    assert.strictEqual(link, `vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`);
+    assert.strictEqual(
+      link,
+      `vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`,
+    );
     assert.strictEqual(parseShareLink(new URL(link).search.slice(1)), repo);
   });
 
@@ -1169,7 +1193,12 @@ suite('isInteractiveTarget', () => {
 });
 
 suite('resolveCompanionAssets', () => {
-  const pngB64 = (content: string) => ({ path: 'pic.png', size: content.length, content, encoding: 'base64' });
+  const pngB64 = (content: string) => ({
+    path: 'pic.png',
+    size: content.length,
+    content,
+    encoding: 'base64',
+  });
 
   test('rewrites a matching image ref to a data: URI (base64 passthrough)', () => {
     const out = resolveCompanionAssets('![shot](pic.png)', [pngB64('QUJD')]);
@@ -1185,12 +1214,17 @@ suite('resolveCompanionAssets', () => {
   });
 
   test('leaves an unknown path untouched', () => {
-    assert.strictEqual(resolveCompanionAssets('![a](nope.png)', [pngB64('QUJD')]), '![a](nope.png)');
+    assert.strictEqual(
+      resolveCompanionAssets('![a](nope.png)', [pngB64('QUJD')]),
+      '![a](nope.png)',
+    );
   });
 
   test('a utf8 svg is base64-encoded (no encoding field)', () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-    const out = resolveCompanionAssets('![d](d.svg)', [{ path: 'd.svg', size: svg.length, content: svg }]);
+    const out = resolveCompanionAssets('![d](d.svg)', [
+      { path: 'd.svg', size: svg.length, content: svg },
+    ]);
     assert.strictEqual(
       out,
       `![d](data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')})`,

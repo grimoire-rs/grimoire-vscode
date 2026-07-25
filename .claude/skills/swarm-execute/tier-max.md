@@ -13,6 +13,7 @@ Load via `Read` from `SKILL.md` after config announced.
 Read plan artifact. Parse classification, all phases, Subsystems Touched. Read the Architecture section of `CLAUDE.md` for **all** touched areas + any adjacent ones possibly affected.
 
 In parallel, re-read:
+
 - ADR (`.claude/artifacts/adr_*.md`) if exists for this feature
 - Related research artifacts (`.claude/artifacts/research_*.md`)
 - `CLAUDE.md` conventions (plan may imply UX/contract constraints implementation must not violate)
@@ -28,6 +29,7 @@ Launch **1** `worker-builder` (focus: `stubbing`, model: **opus** — mandatory 
 ## Phase 3: Verify Architecture (reviewer + architect)
 
 Launch **in single message with multiple Agent tool calls** so run concurrently:
+
 - **1** `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`)
 - **1** `worker-architect` — reviews stubs against ADR: boundaries honored? Trade-offs implemented as ADR specified? Any subsystem boundary violations?
 
@@ -54,6 +56,7 @@ Protocol: see canonical in [`workflow-swarm.md`](../../rules/workflow-swarm.md#r
 > **Reviewer model**: every `worker-reviewer` launch in this tier uses resolved `--reviewer` overlay value (tier=max default `sonnet`; escalated to `opus` when `--breadth=adversarial` fires). See `overlays.md` reviewer axis.
 
 Stage 1 matches tier-high: `worker-reviewer` (spec-compliance, post-implementation) + `worker-reviewer` (quality, lens: test-coverage). Stage 2 adds to `full` set:
+
 - `worker-reviewer` (focus: `quality`) — CLI-UX lens when touching command surface
 - `worker-reviewer` (focus: `security`)
 - `worker-reviewer` (focus: `performance`)

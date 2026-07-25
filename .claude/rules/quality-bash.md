@@ -1,7 +1,7 @@
 ---
 paths:
-  - "**/*.sh"
-  - "**/*.bash"
+  - '**/*.sh'
+  - '**/*.bash'
 ---
 
 # Bash Script Quality
@@ -104,11 +104,11 @@ cmd "${args[@]}"
 
 ## POSIX sh vs Bash
 
-| Use POSIX sh (`#!/bin/sh`) when... | Use Bash when... |
-|------------------------------------|------------------|
-| Minimal containers (Alpine, distroless) | Need arrays, associative arrays, `[[ ]]`, `(( ))` |
-| Cross-platform portability (BSD, macOS `/bin/sh` is dash) | Need process substitution, `mapfile`, `nameref` |
-| Short glue scripts, no complex logic | Long-lived scripts benefit from Bash-specific safety features |
+| Use POSIX sh (`#!/bin/sh`) when...                        | Use Bash when...                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------- |
+| Minimal containers (Alpine, distroless)                   | Need arrays, associative arrays, `[[ ]]`, `(( ))`             |
+| Cross-platform portability (BSD, macOS `/bin/sh` is dash) | Need process substitution, `mapfile`, `nameref`               |
+| Short glue scripts, no complex logic                      | Long-lived scripts benefit from Bash-specific safety features |
 
 CI/CD (GitHub Actions): Bash always available — use it. Docker `ENTRYPOINT` in minimal images: use POSIX sh or install Bash explicitly.
 

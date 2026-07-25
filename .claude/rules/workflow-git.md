@@ -13,10 +13,10 @@ Shared branch-and-commit hygiene. Used by the `/finalize` skill (rebasing phase)
 
 Branch commit history goes through two phases:
 
-| Phase | Goal | Rule |
-|---|---|---|
-| **Working** (default on feature branches) | Save progress while iterating. Bundle freely. Amend rolling Checkpoints. | One concern per commit **relaxed**. Honest bundle message better than fake narrative. |
-| **Rebasing** (explicit, before landing — `/finalize`) | Produce the exact commits that appear in the changelog | Strict Conventional Commits v1.0.0. One concern per commit. Reword/squash/split as needed. |
+| Phase                                                 | Goal                                                                     | Rule                                                                                       |
+| ----------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| **Working** (default on feature branches)             | Save progress while iterating. Bundle freely. Amend rolling Checkpoints. | One concern per commit **relaxed**. Honest bundle message better than fake narrative.      |
+| **Rebasing** (explicit, before landing — `/finalize`) | Produce the exact commits that appear in the changelog                   | Strict Conventional Commits v1.0.0. One concern per commit. Reword/squash/split as needed. |
 
 ## Checkpoint Convention
 

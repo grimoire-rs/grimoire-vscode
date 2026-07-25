@@ -16,12 +16,14 @@ tokens burn.
 ## Phase 1: Discover (parallel, full)
 
 Same as tier-high:
+
 - **1** `worker-architecture-explorer` (sonnet) — map current
   architecture, trace deps, find reusable code/patterns
 - **2–4** `worker-explorer` agents (haiku) — each scoped to relevant
   subsystem
 
 **Parallel, read direct:**
+
 - `CLAUDE.md` — architecture + conventions for every area touched
 - `.claude/artifacts/` — related ADRs, plans, prior research
 
@@ -34,6 +36,7 @@ in domain enumerated.
 ## Phase 2: Research (parallel, 3 axes — mandatory)
 
 Launch **3** `worker-researcher` agents **in a single message with multiple Agent tool calls** so concurrent, one per axis:
+
 - **Technology / tools** — trending libraries, competing tools
 - **Design patterns** — emerging approaches, industry best practices,
   known pitfalls
@@ -56,6 +59,7 @@ and re-run: `/swarm-plan high "…"`. No silent underspec Large
 feature, no silent overspec Medium one.
 
 Required artifacts this tier:
+
 - `pr_faq_[feature].md` (customer narrative)
 - `prd_[feature].md` (product requirements)
 - `adr_[decision].md` (architecture decision record — mandatory)
@@ -73,6 +77,7 @@ tier — override any `--architect=` flag to weaker model). Produce
 both ADR and (when scope warrants) system-design doc.
 
 **Design must include:**
+
 - **Component contracts**: public API (types, traits, function
   signatures) + expected behavior per component
 - **User experience scenarios**: action → expected outcome → error
@@ -102,6 +107,7 @@ further decomposition.
 ## Phase 6: Review (parallel Claude panel + mandatory Codex)
 
 **Round 1 — full Claude panel (launched in single message with multiple Agent tool calls, concurrent):**
+
 - `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`) —
   Contracts testable? Match user experience section?
 - `worker-architect` — Trade-offs honest? Alternatives considered?

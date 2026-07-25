@@ -261,12 +261,7 @@ export type HostToDetails =
  *  (a read-only row) rather than throwing — same split as ArtifactKind (closed,
  *  webview) vs SearchItem.kind (open, wire). */
 export type SettingsControlType =
-  | 'string'
-  | 'boolean'
-  | 'enum'
-  | 'string-list'
-  | 'string-set'
-  | 'integer';
+  'string' | 'boolean' | 'enum' | 'string-list' | 'string-set' | 'integer';
 
 /** Per-row transient UI state the webview overlays locally around a write —
  *  mirrors details/main.ts's `vm.busy` direct-mutation pattern; not part of
@@ -344,13 +339,7 @@ export interface SettingsRegistryVM {
 }
 
 export type SettingsPhase =
-  | 'loading'
-  | 'ready'
-  | 'error'
-  | 'no-grim'
-  | 'no-folder'
-  | 'project-no-toml'
-  | 'global-no-toml';
+  'loading' | 'ready' | 'error' | 'no-grim' | 'no-folder' | 'project-no-toml' | 'global-no-toml';
 
 export interface SettingsState {
   scope: Scope;

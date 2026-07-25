@@ -178,14 +178,24 @@ suite('installer update check', () => {
   });
 
   test('updateDecision offers an in-place update for a managed binary', () => {
-    const p = updateDecision({ latest: '0.10.0', current: '0.9.0', skipped: undefined, managed: true });
+    const p = updateDecision({
+      latest: '0.10.0',
+      current: '0.9.0',
+      skipped: undefined,
+      managed: true,
+    });
     assert.ok(p);
     assert.deepStrictEqual(p.buttons, [UPDATE_GRIM, SKIP_VERSION]);
     assert.ok(p.message.includes('0.10.0') && p.message.includes('0.9.0'));
   });
 
   test('updateDecision links the release page for a user-managed binary', () => {
-    const p = updateDecision({ latest: '0.10.0', current: '0.9.0', skipped: undefined, managed: false });
+    const p = updateDecision({
+      latest: '0.10.0',
+      current: '0.9.0',
+      skipped: undefined,
+      managed: false,
+    });
     assert.ok(p);
     // Never "Update grim" — the extension must not overwrite a binary it doesn't own.
     assert.deepStrictEqual(p.buttons, [VIEW_RELEASE, SKIP_VERSION]);

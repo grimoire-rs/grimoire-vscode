@@ -91,8 +91,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // Last ready result, kept so a prefetch-driven logo repost can re-render without
   // the loading flash (and without a fresh grim round-trip).
   private lastReady:
-    | { cards: CardVM[]; installed: CardVM[]; snap: Snapshot; syncedAt: number | null }
-    | undefined;
+    { cards: CardVM[]; installed: CardVM[]; snap: Snapshot; syncedAt: number | null } | undefined;
   // Last-known install-state trust, updated the moment a snapshot lands and
   // stamped onto EVERY post by postState. Kept on the provider rather than
   // passed per post because the two posts that most need it don't have a
@@ -172,11 +171,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // run `grim init` then `grim add` as one step — mirrors the details
         // host (item 2). projectNeedsInit (not !projectConfigured): a FAILED
         // probe must not trigger init — see the method's doc.
-        const needsInit =
-          message.scope === 'project' && (await this.scopes.projectNeedsInit());
-        const steps = needsInit
-          ? [initArgs(), addArgs(message.ref)]
-          : [addArgs(message.ref)];
+        const needsInit = message.scope === 'project' && (await this.scopes.projectNeedsInit());
+        const steps = needsInit ? [initArgs(), addArgs(message.ref)] : [addArgs(message.ref)];
         await this.runAction(steps, message.scope, `Installing ${message.ref}…`);
         return;
       }

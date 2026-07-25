@@ -9,6 +9,7 @@ Load file via `Read` from `SKILL.md` after config announced.
 Launch **1** `worker-explorer` (haiku) scoped to single subsystem target touches. No `worker-architecture-explorer` — scope small, one focused explorer enough.
 
 **In parallel, read directly:**
+
 - The Architecture section of `CLAUDE.md` for the feature area
 - Specific code region named in target (if obvious from prompt)
 
@@ -24,7 +25,7 @@ No `worker-researcher` launched. Orchestrator may inline a brief `CLAUDE.md` con
 
 ## Phase 3: Classify (inline)
 
-Confirm Two-Way Door scope inline in plan header. If discovery phase revealed feature *not* Two-Way Door (e.g., touches public API surface), **stop and re-run** with `/swarm-plan high "…"` — do not silently upgrade mid-pipeline.
+Confirm Two-Way Door scope inline in plan header. If discovery phase revealed feature _not_ Two-Way Door (e.g., touches public API surface), **stop and re-run** with `/swarm-plan high "…"` — do not silently upgrade mid-pipeline.
 
 ## Phase 4: Design (inline)
 
@@ -46,6 +47,7 @@ Produce single Stub → Specify → Implement → Review cycle in plan. For ≤3
 Launch **1** `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`) on draft plan. No parallel adversarial panel. Single pass — no Round 2 loop.
 
 Findings triaged:
+
 - **Actionable** → orchestrator edits plan, re-runs reviewer once more (max total: 2 passes)
 - **Deferred** → surfaced in handoff
 

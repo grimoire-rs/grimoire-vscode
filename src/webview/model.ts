@@ -250,9 +250,7 @@ export function effectiveInstall(installs: InstallVM[]): InstallVM | undefined {
  *  floating "latest" tag (grim's own pick_highest_version special-cases only
  *  that literal). Falls back to the first non-null candidate — so a header
  *  with nothing concrete still shows "latest" instead of going blank. */
-export function concreteVersion(
-  ...candidates: Array<string | null | undefined>
-): string | null {
+export function concreteVersion(...candidates: Array<string | null | undefined>): string | null {
   const present = candidates.filter((c): c is string => c !== null && c !== undefined);
   return present.find((c) => c !== 'latest') ?? present[0] ?? null;
 }
@@ -938,9 +936,7 @@ export const INTERACTIVE_SELECTOR = '[data-action], a, button, .tab';
  *  so the body-dblclick promote should be suppressed. Structurally typed on
  *  `closest` — the DOM does the ancestor walk; this stays unit-testable with a
  *  fake element and no DOM lib. */
-export function isInteractiveTarget(
-  el: { closest(selector: string): unknown } | null,
-): boolean {
+export function isInteractiveTarget(el: { closest(selector: string): unknown } | null): boolean {
   return (el?.closest(INTERACTIVE_SELECTOR) ?? null) !== null;
 }
 

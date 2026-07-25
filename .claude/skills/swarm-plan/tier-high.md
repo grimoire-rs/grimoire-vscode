@@ -7,10 +7,12 @@ Load file via `Read` from `SKILL.md` after config announced.
 ## Phase 1: Discover (parallel)
 
 Launch **in single message with multiple Agent tool calls** so run concurrent:
+
 - **1** `worker-architecture-explorer` (sonnet) — map current architecture, trace dependencies, find reusable code + patterns
 - **2–4** `worker-explorer` agents (haiku) — each scope to relevant module; first identify scope from the Architecture section of `CLAUDE.md`
 
 **In parallel, read direct:**
+
 - `CLAUDE.md` — architecture + conventions for the feature area
 - `.claude/artifacts/` — related ADRs, plans, prior research
 
@@ -32,11 +34,11 @@ Override: `--research=3` launch all three axes **in single message with multiple
 
 Determine reversibility + scope. Record in plan header:
 
-| Scope | Reversibility | Artifacts Required |
-|-------|---------------|--------------------|
-| Small (1-3 days) | Two-Way Door | `plan_[feature].md` |
-| Medium (1-2 weeks) | One-Way Door (Medium) | `prd_[feature].md` + `plan_[feature].md` |
-| Large (2+ weeks) | One-Way Door (High) | `pr_faq_[feature].md` + `prd_[feature].md` + `adr_[decision].md` + `plan_[feature].md` |
+| Scope              | Reversibility         | Artifacts Required                                                                     |
+| ------------------ | --------------------- | -------------------------------------------------------------------------------------- |
+| Small (1-3 days)   | Two-Way Door          | `plan_[feature].md`                                                                    |
+| Medium (1-2 weeks) | One-Way Door (Medium) | `prd_[feature].md` + `plan_[feature].md`                                               |
+| Large (2+ weeks)   | One-Way Door (High)   | `pr_faq_[feature].md` + `prd_[feature].md` + `adr_[decision].md` + `plan_[feature].md` |
 
 Templates at `.claude/templates/artifacts/`. If classify resolve to Large, **stop and re-run** with `/swarm-plan max "…"` — no silent upgrade mid-pipeline.
 
@@ -47,6 +49,7 @@ Templates at `.claude/templates/artifacts/`. If classify resolve to Large, **sto
 For **One-Way Door Medium** or cross-subsystem features, launch `worker-architect` (sonnet default, opus if `--architect=opus` overlay fires) to produce ADR or system design. For Two-Way Door features design inline in plan artifact.
 
 **Design must include:**
+
 - **Component contracts**: public API (types, traits, function signatures) + expected behavior per component
 - **User experience scenarios**: action → expected outcome → error cases for each user-facing behavior
 - **Error taxonomy**: all documented failure modes with remediation guidance
@@ -71,17 +74,19 @@ Break design into right-sized tasks that support contract-first TDD execution:
 Launch parallel adversarial reviewers on draft plan. Loop **scope-gated** (plan artifact only) + **severity-gated** (only actionable findings drive iterations).
 
 **Round 1 — full review (parallel):**
+
 - `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`) — Contracts testable? Match user experience section?
-- `worker-architect` — Trade-offs honest? Alternatives considered? Any subsystem boundary violations? *— required for One-Way Door decisions*
+- `worker-architect` — Trade-offs honest? Alternatives considered? Any subsystem boundary violations? _— required for One-Way Door decisions_
 - `worker-researcher` — Plan miss trending patterns, known pitfalls, SOTA approaches in domain?
 
 Each reviewer classify findings as:
+
 - **Actionable** — Plan author fix + re-run affected reviewers in Round 2
 - **Deferred** — Need human decision; surface in handoff summary
 
 **Round 2 (selective):** Re-run only perspectives with actionable findings. Stop when no actionable findings remain or after 2 rounds total (plan reviews converge fast).
 
-**Codex plan review (optional at this tier):** if `--codex` overlay fires (user flag or classifier-inferred for One-Way Door signals), run single `codex-adversary` pass in `plan-artifact` scope mode (`--model terra`, `gpt-5.6-terra`; `--codex-model` overrides) against plan file *after* Claude panel converges. One-shot, no loop. Triage findings per `overlays.md`:
+**Codex plan review (optional at this tier):** if `--codex` overlay fires (user flag or classifier-inferred for One-Way Door signals), run single `codex-adversary` pass in `plan-artifact` scope mode (`--model terra`, `gpt-5.6-terra`; `--codex-model` overrides) against plan file _after_ Claude panel converges. One-shot, no loop. Triage findings per `overlays.md`:
 
 - Actionable → orchestrator edit plan, re-run one `worker-reviewer` (spec-compliance) pass to validate
 - Deferred → add to handoff Deferred Findings

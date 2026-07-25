@@ -84,14 +84,14 @@ the `vscode://` deep link, not run from the Command Palette.
 
 ## Settings
 
-| Setting                    | Default   | Does                                                                                                                                                                                   |
-| -------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `grimoire.path.executable` | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                  |
+| Setting                    | Default   | Does                                                                                                                                                                                  |
+| -------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grimoire.path.executable` | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                 |
 | `grimoire.defaultScope`    | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
-| `grimoire.watchForChanges` | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                            |
-| `grimoire.prefetchDetails` | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                            |
-| `grimoire.checkForUpdates` | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                     |
-| `grimoire.extraEnv`        | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                      |
+| `grimoire.watchForChanges` | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
+| `grimoire.prefetchDetails` | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
+| `grimoire.checkForUpdates` | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
+| `grimoire.extraEnv`        | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
 
 ## Requirements
 

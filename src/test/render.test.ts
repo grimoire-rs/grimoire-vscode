@@ -23,7 +23,14 @@ import {
 import type { GrimOrigin } from '../webview/protocol';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
-import { bothInstalled, card, detailsVM, installedScope, searchItem, sidebarState } from './fixtures/vms';
+import {
+  bothInstalled,
+  card,
+  detailsVM,
+  installedScope,
+  searchItem,
+  sidebarState,
+} from './fixtures/vms';
 
 /** Renders a lit template (or the `nothing` sentinel) to its normalized-HTML
  *  string form so the `.includes`/regex/indexOf assertions below can run
@@ -125,8 +132,13 @@ suite('card rendering', () => {
   });
 
   test('deprecated card demotes to a single secondary Install (no split chevron)', async () => {
-    const html = await litHtml(renderCard(card({ state: 'deprecated', deprecated: 'use x instead' })));
-    assert.ok(html.includes('class="card-btn secondary" data-action="install"'), 'native secondary button');
+    const html = await litHtml(
+      renderCard(card({ state: 'deprecated', deprecated: 'use x instead' })),
+    );
+    assert.ok(
+      html.includes('class="card-btn secondary" data-action="install"'),
+      'native secondary button',
+    );
     assert.ok(!html.includes('split-arrow'), 'no split chevron on deprecated cards');
     assert.ok(!html.includes('codicon-chevron-down'));
   });
@@ -167,7 +179,10 @@ suite('card rendering', () => {
         }),
       ),
     );
-    assert.ok(html.includes('class="card-btn" data-action="update"'), 'native card button, not a web component');
+    assert.ok(
+      html.includes('class="card-btn" data-action="update"'),
+      'native card button, not a web component',
+    );
     assert.ok(html.includes('→ 1.5.0'));
   });
 
@@ -192,7 +207,10 @@ suite('card rendering', () => {
       ),
     );
     assert.ok(html.includes('installed-chip'));
-    assert.ok(html.includes('installed-chip-check'), 'leading check on the installed chip (item 10)');
+    assert.ok(
+      html.includes('installed-chip-check'),
+      'leading check on the installed chip (item 10)',
+    );
     assert.ok(html.includes('codicon-globe')); // global scope icon
     assert.ok(html.includes('Global'));
     assert.ok(!html.includes('installed-chip-version'), 'chip is scope-only, no version (user)');
@@ -366,7 +384,10 @@ suite('card rendering', () => {
     assert.ok(html.includes('client-chip'));
     assert.ok(html.includes('codicon-check'));
     assert.ok(html.includes('data-action="menu"'));
-    assert.ok(!html.includes('drift-badge'), 'no drift on an install with no clients_missing/clients_extra');
+    assert.ok(
+      !html.includes('drift-badge'),
+      'no drift on an install with no clients_missing/clients_extra',
+    );
   });
 
   test('scope-variant card shows a client-drift badge iff clients_missing/clients_extra is non-empty', async () => {
@@ -416,11 +437,16 @@ suite('card rendering', () => {
   });
 
   test('deprecated card struck through with warning', async () => {
-    const html = await litHtml(renderCard(card({ state: 'deprecated', deprecated: 'use x instead' })));
+    const html = await litHtml(
+      renderCard(card({ state: 'deprecated', deprecated: 'use x instead' })),
+    );
     assert.ok(html.includes('class="card deprecated"'));
     assert.ok(html.includes('codicon-warning'));
     assert.ok(html.includes('use x instead'));
-    assert.ok(!html.includes('data-action="open-details"'), 'no replacement link when replacedBy is null');
+    assert.ok(
+      !html.includes('data-action="open-details"'),
+      'no replacement link when replacedBy is null',
+    );
   });
 
   test('deprecated card with replacedBy gains a "use <replacedBy>" switch-to-replacement link', async () => {
@@ -608,18 +634,13 @@ suite('sidebar rendering', () => {
 
   test('loading footer names the default registry (item 13)', async () => {
     const html = await litHtml(
-      renderSidebar(
-        sidebarState({ phase: 'loading', defaultRegistry: 'ghcr.io' }),
-        DEFAULT_FILTER,
-      ),
+      renderSidebar(sidebarState({ phase: 'loading', defaultRegistry: 'ghcr.io' }), DEFAULT_FILTER),
     );
     assert.ok(html.includes('Refreshing from ghcr.io'));
     assert.ok(html.includes('codicon-sync'));
     // Unknown default registry still shows a footer — plain "Refreshing…",
     // never "null" and never an empty swap (#38).
-    const noHost = await litHtml(
-      renderSidebar(sidebarState({ phase: 'loading' }), DEFAULT_FILTER),
-    );
+    const noHost = await litHtml(renderSidebar(sidebarState({ phase: 'loading' }), DEFAULT_FILTER));
     assert.ok(!noHost.includes('Refreshing from'));
     assert.ok(noHost.includes('Refreshing…'));
   });
@@ -662,7 +683,10 @@ suite('sidebar rendering', () => {
     const items = buildCards([searchItem()], []);
     const html = await litHtml(renderSidebar(sidebarState({ items }), DEFAULT_FILTER));
     assert.ok(html.includes('kind-chips'));
-    assert.ok(!html.includes('filter-registry'), 'search spans all registries — no registry filter');
+    assert.ok(
+      !html.includes('filter-registry'),
+      'search spans all registries — no registry filter',
+    );
     assert.ok(html.includes('1 result in 1 registry'));
     assert.ok(html.includes('class="footer"'), 'catalog status line pinned below the results');
   });
@@ -685,7 +709,10 @@ suite('sidebar rendering', () => {
     const loadingHtml = await litHtml(renderSidebarFooter(sidebarState({ phase: 'loading' })));
     assert.ok(loadingHtml.includes('class="footer loading-footer"'));
     assert.ok(!loadingHtml.includes('Catalog cache ·'));
-    assert.strictEqual(await litString(renderSidebarFooter(sidebarState({ phase: 'no-grim' }))), '');
+    assert.strictEqual(
+      await litString(renderSidebarFooter(sidebarState({ phase: 'no-grim' }))),
+      '',
+    );
   });
 
   test('tab bar: three tabs, active underline, updates count, hidden on no-grim', async () => {
@@ -698,7 +725,10 @@ suite('sidebar rendering', () => {
       assert.ok(html.includes(`data-action="set-tab" data-tab="${tab}"`), tab);
     }
     assert.match(html, /class="tab active"[^>]*data-tab="updates"/);
-    assert.ok(html.includes('<span class="tab-count">1</span>'), 'outdated count on the Updates tab');
+    assert.ok(
+      html.includes('<span class="tab-count">1</span>'),
+      'outdated count on the Updates tab',
+    );
     // No outdated installs → no count pill.
     const clean = await litHtml(renderSidebarTabs(sidebarState()));
     assert.ok(!clean.includes('tab-count'));
@@ -851,13 +881,20 @@ suite('sidebar rendering', () => {
       declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const items = buildCards([searchItem()], [scope]);
-    const html = await litHtml(renderSidebar(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER));
+    const html = await litHtml(
+      renderSidebar(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER),
+    );
     assert.ok(html.includes('card-delta'), 'update-row variant');
     assert.ok(!html.includes('section-header'), 'no in-webview sections — the workbench owns them');
-    assert.ok(!html.includes('data-action="update-all"'), 'Update All is a native view/title button');
+    assert.ok(
+      !html.includes('data-action="update-all"'),
+      'Update All is a native view/title button',
+    );
     assert.ok(!html.includes('id="search"'), 'Updates view has no search box');
     assert.strictEqual(
-      await litString(renderSidebarFilters(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER)),
+      await litString(
+        renderSidebarFilters(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER),
+      ),
       '',
       'Updates has no filters',
     );
@@ -866,7 +903,9 @@ suite('sidebar rendering', () => {
   test('installed view: scope cards + Kind chips + SCOPE toggle, no sections (item 8)', async () => {
     const items = buildCards([searchItem()], [installedScope('project')]);
     // Default (configured project) resolves to the project scope.
-    const html = await litHtml(renderSidebar(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER));
+    const html = await litHtml(
+      renderSidebar(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER),
+    );
     assert.ok(html.includes('data-action="menu"'), 'scope-variant card (manage gear)');
     assert.ok(!html.includes('section-header') && !html.includes('data-section-id'), 'no sections');
     assert.ok(html.includes('<span class="chip-group-label">KIND</span>'));
@@ -893,7 +932,10 @@ suite('sidebar rendering', () => {
         DEFAULT_FILTER,
       ),
     );
-    assert.ok(noProject.includes('data-scope="project" disabled'), 'Project disabled, no workspace');
+    assert.ok(
+      noProject.includes('data-scope="project" disabled'),
+      'Project disabled, no workspace',
+    );
     assert.ok(
       noProject.includes('class="kind-chip active" data-action="set-scope" data-scope="global"'),
       'Global forced active',
@@ -902,7 +944,9 @@ suite('sidebar rendering', () => {
 
   test('installed view shows only the selected scope’s installs (item 8)', async () => {
     const items = buildCards([searchItem()], [installedScope('project')]); // project install only
-    const proj = await litHtml(renderSidebarResults(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER));
+    const proj = await litHtml(
+      renderSidebarResults(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER),
+    );
     assert.ok(proj.includes('data-action="menu"'), 'project install shows under Project');
     const glob = await litHtml(
       renderSidebarResults(sidebarState({ mode: 'installed', items }), {
@@ -910,7 +954,10 @@ suite('sidebar rendering', () => {
         scope: 'global',
       }),
     );
-    assert.ok(glob.includes('Nothing installed globally.'), 'project-only install hidden under Global');
+    assert.ok(
+      glob.includes('Nothing installed globally.'),
+      'project-only install hidden under Global',
+    );
   });
 
   test('empty installed view: scope-appropriate message; Updates its own (item 8)', async () => {
@@ -936,7 +983,10 @@ suite('sidebar rendering', () => {
       renderSidebar(sidebarState({ items: buildCards([searchItem()], []) }), DEFAULT_FILTER),
     );
     assert.ok(html.includes('kind-chips'));
-    assert.ok(!html.includes('data-action="toggle-installed"'), 'no Installed filter chip (item 4)');
+    assert.ok(
+      !html.includes('data-action="toggle-installed"'),
+      'no Installed filter chip (item 4)',
+    );
     assert.ok(!html.includes('data-action="set-scope"'), 'no scope filter in browse');
     assert.ok(!html.includes('filter-registry'), 'search spans all registries');
   });
@@ -944,7 +994,9 @@ suite('sidebar rendering', () => {
 
 suite('sidebar split rendering (item 3)', () => {
   test('search row carries only the textfield, no filters or cards', async () => {
-    const html = await litHtml(renderSidebarSearch(sidebarState({ items: buildCards([searchItem()], []) })));
+    const html = await litHtml(
+      renderSidebarSearch(sidebarState({ items: buildCards([searchItem()], []) })),
+    );
     assert.ok(html.includes('vscode-textfield id="search"'));
     assert.ok(!html.includes('kind-chips'));
     assert.ok(!html.includes('class="card'));
@@ -952,10 +1004,15 @@ suite('sidebar split rendering (item 3)', () => {
 
   test('search row placeholder tracks the mode; withheld in no-grim and Updates', async () => {
     assert.ok(
-      (await litHtml(renderSidebarSearch(sidebarState({ mode: 'installed' })))).includes('Search installed…'),
+      (await litHtml(renderSidebarSearch(sidebarState({ mode: 'installed' })))).includes(
+        'Search installed…',
+      ),
     );
     assert.ok((await litHtml(renderSidebarSearch(sidebarState()))).includes('Search artifacts…'));
-    assert.strictEqual(await litString(renderSidebarSearch(sidebarState({ phase: 'no-grim' }))), '');
+    assert.strictEqual(
+      await litString(renderSidebarSearch(sidebarState({ phase: 'no-grim' }))),
+      '',
+    );
     assert.strictEqual(
       await litString(renderSidebarSearch(sidebarState({ mode: 'updates' }))),
       '',
@@ -970,7 +1027,10 @@ suite('sidebar split rendering (item 3)', () => {
     assert.ok(html.includes('kind-chips'));
     assert.ok(html.includes('data-action="toggle-kind"'));
     assert.ok(html.includes('<span class="chip-group-label">KIND</span>'), 'kind row is labeled');
-    assert.ok(!html.includes('data-action="toggle-installed"'), 'no Installed filter chip (item 4)');
+    assert.ok(
+      !html.includes('data-action="toggle-installed"'),
+      'no Installed filter chip (item 4)',
+    );
     assert.ok(!html.includes('filter-registry'), 'no registry filter');
     assert.ok(!html.includes('id="search"'));
     assert.ok(!html.includes('class="card'));
@@ -985,9 +1045,15 @@ suite('sidebar split rendering (item 3)', () => {
     );
     assert.ok(allActive.includes('codicon-sparkle'), 'skill chip carries its codicon');
     // Two kinds selected → those chips active, All inactive.
-    const multi = await litHtml(renderSidebarFilters(st, { ...DEFAULT_FILTER, kinds: ['skill', 'bundle'] }));
-    assert.ok(multi.includes('class="kind-chip active" data-action="toggle-kind" data-kind="skill"'));
-    assert.ok(multi.includes('class="kind-chip active" data-action="toggle-kind" data-kind="bundle"'));
+    const multi = await litHtml(
+      renderSidebarFilters(st, { ...DEFAULT_FILTER, kinds: ['skill', 'bundle'] }),
+    );
+    assert.ok(
+      multi.includes('class="kind-chip active" data-action="toggle-kind" data-kind="skill"'),
+    );
+    assert.ok(
+      multi.includes('class="kind-chip active" data-action="toggle-kind" data-kind="bundle"'),
+    );
     assert.ok(multi.includes('class="kind-chip" data-action="toggle-kind" data-kind="all"'));
     assert.ok(multi.includes('class="kind-chip" data-action="toggle-kind" data-kind="rule"'));
   });
@@ -1066,7 +1132,10 @@ suite('sidebar split rendering (item 3)', () => {
       (await litHtml(renderSidebarFilters(unconfigured, DEFAULT_FILTER))) +
       (await litHtml(renderSidebarResults(unconfigured, DEFAULT_FILTER))) +
       (await litHtml(renderSidebarFooter(unconfigured)));
-    assert.strictEqual(composedUnconfigured, await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER)));
+    assert.strictEqual(
+      composedUnconfigured,
+      await litHtml(renderSidebar(unconfigured, DEFAULT_FILTER)),
+    );
   });
 
   test('refreshing footer escapes the registry host; plain fallback without one', async () => {
@@ -1093,11 +1162,12 @@ suite('sidebar split rendering (item 3)', () => {
   });
 
   test('a hostile query stays escaped in the search row value (item 4)', async () => {
-    const html = await litHtml(renderSidebarSearch(sidebarState({ query: '"><img src=x onerror=alert(1)>' })));
+    const html = await litHtml(
+      renderSidebarSearch(sidebarState({ query: '"><img src=x onerror=alert(1)>' })),
+    );
     assert.ok(!html.includes('<img src=x'));
     assert.ok(html.includes('&lt;img src=x'));
   });
-
 });
 
 suite('details rendering', () => {
@@ -1114,7 +1184,9 @@ suite('details rendering', () => {
 
   test('header description renders inline markdown (no <p> wrapper)', async () => {
     const html = await litHtml(
-      renderDetails(detailsVM({ description: 'Drive the `grim` **CLI** — see [docs](https://grim.rs).' })),
+      renderDetails(
+        detailsVM({ description: 'Drive the `grim` **CLI** — see [docs](https://grim.rs).' }),
+      ),
     );
     assert.ok(html.includes('<code>grim</code>'), 'code span renders');
     assert.ok(html.includes('<strong>CLI</strong>'), 'emphasis renders');
@@ -1439,7 +1511,9 @@ suite('details rendering', () => {
   });
 
   test('no VERSIONS tab anywhere (removed — the PACKAGE rail shows the tags)', async () => {
-    const html = await litHtml(renderDetails(detailsVM({ latestVersion: '1.5.0', tags: ['1.5.0', '1.4.2'] })));
+    const html = await litHtml(
+      renderDetails(detailsVM({ latestVersion: '1.5.0', tags: ['1.5.0', '1.4.2'] })),
+    );
     assert.ok(!html.includes('data-tab="versions"'));
     assert.ok(!html.includes('panel-versions'));
     assert.ok(!html.toUpperCase().includes('>VERSIONS<'));
@@ -1469,7 +1543,9 @@ suite('details rendering', () => {
     assert.ok(html.includes('rail-skeleton-line'), 'rail placeholder panels present');
     // The version slot is reserved (item 4c) when the version is unknown.
     const noVersion = await litHtml(
-      renderDetails(detailsVM({ loading: true, scopesPending: true, latestVersion: null, installs: [] })),
+      renderDetails(
+        detailsVM({ loading: true, scopesPending: true, latestVersion: null, installs: [] }),
+      ),
     );
     assert.ok(noVersion.includes('header-version-pending'), 'version slot reserved');
   });
@@ -1479,7 +1555,11 @@ suite('details rendering', () => {
     // so its one dynamic value — the repo — must be escaped like every render path.
     const html = await litHtml(
       renderDetails(
-        detailsVM({ loading: true, scopesPending: true, repo: '"><img src=x onerror=alert(1)>/skills/evil' }),
+        detailsVM({
+          loading: true,
+          scopesPending: true,
+          repo: '"><img src=x onerror=alert(1)>/skills/evil',
+        }),
       ),
     );
     assert.ok(!html.includes('"><img src=x onerror=alert(1)>'), 'raw payload not injected');
@@ -1508,7 +1588,11 @@ suite('details rendering', () => {
     );
     // scopesPending absent -> real rows: the global install shows in-box.
     assert.ok(html.includes('scope-box'));
-    assert.ok(html.includes('data-action="uninstall" data-kind="skill" data-name="grim-usage" data-scope="global"'));
+    assert.ok(
+      html.includes(
+        'data-action="uninstall" data-kind="skill" data-name="grim-usage" data-scope="global"',
+      ),
+    );
     assert.ok(!html.includes('Checking…'), 'known state is not a pending shell');
   });
 
@@ -1558,7 +1642,11 @@ suite('details rendering', () => {
         }),
       ),
     );
-    assert.ok(html.includes('data-action="uninstall" data-kind="skill" data-name="grim-usage" data-scope="global"'));
+    assert.ok(
+      html.includes(
+        'data-action="uninstall" data-kind="skill" data-name="grim-usage" data-scope="global"',
+      ),
+    );
     // The project scope (still free) keeps an active Install split button.
     assert.ok(html.includes('data-action="install" data-scope="project"'));
   });
@@ -1732,13 +1820,17 @@ suite('details rendering', () => {
 
   test('keyword chips are clickable search-tag buttons (item 2)', async () => {
     const html = await litHtml(renderDetails(detailsVM({ keywords: ['cli', 'oci'] })));
-    assert.ok(html.includes('<button class="keyword-chip" data-action="search-tag" data-tag="cli"'));
+    assert.ok(
+      html.includes('<button class="keyword-chip" data-action="search-tag" data-tag="cli"'),
+    );
     assert.ok(html.includes('>cli</button>'));
     assert.ok(html.includes('data-tag="oci"'));
   });
 
   test('a hostile keyword stays inert in the tag button and its data attribute (item 2)', async () => {
-    const html = await litHtml(renderDetails(detailsVM({ keywords: ['"><img src=x onerror=alert(1)>'] })));
+    const html = await litHtml(
+      renderDetails(detailsVM({ keywords: ['"><img src=x onerror=alert(1)>'] })),
+    );
     assert.ok(!html.includes('<img src=x'));
     assert.ok(!html.includes('"><img'));
     assert.ok(html.includes('&lt;img src=x'));
@@ -1779,14 +1871,20 @@ suite('details rendering', () => {
     assert.strictEqual((actionsCell.match(/class="via-bundle-btn"/g) ?? []).length, 1);
     assert.ok(!actionsCell.includes('split-button'));
     assert.strictEqual((actionsCell.match(/class="scope-menu hidden"/g) ?? []).length, 1);
-    assert.ok(actionsCell.indexOf('data-action="scope-gear"') < actionsCell.indexOf('via-bundle-btn'));
+    assert.ok(
+      actionsCell.indexOf('data-action="scope-gear"') < actionsCell.indexOf('via-bundle-btn'),
+    );
     assert.ok(
       html.includes(
         '<button class="via-bundle-btn" data-action="open-details" data-repo="ghcr.io/grimoire-rs/bundles/grim-essentials"',
       ),
     );
     assert.ok(html.includes('Bundle<span class="codicon codicon-package"></span></button>'));
-    assert.ok(html.includes('title="Installed via bundle ghcr.io/grimoire-rs/bundles/grim-essentials — uninstall the bundle to remove it"'));
+    assert.ok(
+      html.includes(
+        'title="Installed via bundle ghcr.io/grimoire-rs/bundles/grim-essentials — uninstall the bundle to remove it"',
+      ),
+    );
   });
 
   test('outdated direct install: Update leads the split button, menu carries Switch + Uninstall, gear drops Update (item 1)', async () => {
@@ -1827,7 +1925,11 @@ suite('details rendering', () => {
       'Uninstall lives in the Update menu',
     );
     // Update appears exactly once (the split-main) — no duplicate in the gear.
-    assert.strictEqual((html.match(/data-action="update"/g) ?? []).length, 1, 'Update once, not duplicated in the gear');
+    assert.strictEqual(
+      (html.match(/data-action="update"/g) ?? []).length,
+      1,
+      'Update once, not duplicated in the gear',
+    );
     assert.strictEqual(html.match(/class="split-button sm"/g)?.length, 1, 'exactly one row button');
   });
 
@@ -2112,7 +2214,9 @@ suite('details rendering', () => {
   });
 
   test('tag list past six chips collapses behind +N more', async () => {
-    const html = await litHtml(renderDetails(detailsVM({ tags: ['1', '2', '3', '4', '5', '6', '7', '8'] })));
+    const html = await litHtml(
+      renderDetails(detailsVM({ tags: ['1', '2', '3', '4', '5', '6', '7', '8'] })),
+    );
     assert.ok(html.includes('tag-overflow'));
     assert.ok(html.includes('data-action="toggle-tags"'));
     assert.ok(html.includes('+2 more'));
@@ -2120,7 +2224,9 @@ suite('details rendering', () => {
 
   test('mcp CONTENTS renders a full-width highlighted JSON block, no markdown (item 6)', async () => {
     const html = await litHtml(
-      renderDetails(detailsVM({ kind: 'mcp', contentMarkdown: null, contentJson: '{"command": "grim"}' })),
+      renderDetails(
+        detailsVM({ kind: 'mcp', contentMarkdown: null, contentJson: '{"command": "grim"}' }),
+      ),
     );
     assert.ok(html.includes('class="json-code"'), 'full-width json block present');
     assert.ok(html.includes('json-key'), 'keys are tokenized');
@@ -2215,6 +2321,10 @@ suite('revalidate indicator', () => {
 
   test('renderDetails always carries the empty host container (survives re-render)', async () => {
     assert.ok((await litHtml(renderDetails(detailsVM()))).includes('id="revalidate-indicator"'));
-    assert.ok((await litHtml(renderDetails(detailsVM({ loading: true })))).includes('id="revalidate-indicator"'));
+    assert.ok(
+      (await litHtml(renderDetails(detailsVM({ loading: true })))).includes(
+        'id="revalidate-indicator"',
+      ),
+    );
   });
 });

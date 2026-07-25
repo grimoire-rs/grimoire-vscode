@@ -43,14 +43,20 @@ Produce review report using shared skeleton from `SKILL.md`:
 
 ```markdown
 ## Code Review: [target]
+
 ### Summary
+
 - Verdict: [Approve / Needs Work / Request Changes]
 - Tier: low
 - Baseline: <base>
 - Diff: N files, +L / -L lines, 1 subsystem
+
 ### Stage 1 — Correctness
+
 [Findings with file:line, description, remediation]
+
 ### Deferred Findings
+
 [Each with: what it is, why human judgment is needed]
 ```
 

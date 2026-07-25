@@ -15,24 +15,26 @@ Read-only review agent. Detects doc drift. Input: changed source files. Output: 
 
 Cross-reference every changed file against table. If source change match, verify doc accurate + complete.
 
-| Source change pattern | Documentation file | Section to check |
-|---|---|---|
-| `package.json` `contributes` (new/changed command, setting, view) | `README.md` | Commands / settings tables |
-| User-visible behavior change in `src/views/**` or `src/webview/**` | `README.md` | Feature walkthrough |
-| `src/installer.ts` (install/update flow) | `README.md` | grim installation section |
-| grim version floor / new grim subcommand use in `src/grim.ts` | `README.md`, `CHANGELOG.md` | Requirements |
-| Breaking change | `CHANGELOG.md` | Breaking changes marked |
-| Any new user-visible feature or fix | `CHANGELOG.md` | Unreleased/next-version entry |
+| Source change pattern                                              | Documentation file          | Section to check              |
+| ------------------------------------------------------------------ | --------------------------- | ----------------------------- |
+| `package.json` `contributes` (new/changed command, setting, view)  | `README.md`                 | Commands / settings tables    |
+| User-visible behavior change in `src/views/**` or `src/webview/**` | `README.md`                 | Feature walkthrough           |
+| `src/installer.ts` (install/update flow)                           | `README.md`                 | grim installation section     |
+| grim version floor / new grim subcommand use in `src/grim.ts`      | `README.md`, `CHANGELOG.md` | Requirements                  |
+| Breaking change                                                    | `CHANGELOG.md`              | Breaking changes marked       |
+| Any new user-visible feature or fix                                | `CHANGELOG.md`              | Unreleased/next-version entry |
 
 ## Review Checklist
 
 ### 1. Trigger Audit (Critical)
+
 - [ ] List all changed source files from diff
 - [ ] Cross-reference each against trigger matrix
 - [ ] For each match: verify doc section exists, accurate, reflects current code
 - [ ] Flag unaddressed triggers: **Critical** if user-visible, **Medium** if edge case
 
 ### 2. Accuracy
+
 - [ ] Behavior claims verified against TypeScript source (grep, not memory)
 - [ ] Command/setting IDs match `package.json` `contributes` exactly
 - [ ] Install/update claims match `src/installer.ts`
@@ -40,10 +42,12 @@ Cross-reference every changed file against table. If source change match, verify
 - [ ] Code examples (shell commands) runnable as shown
 
 ### 3. Link Integrity
+
 - [ ] Internal anchors resolve
 - [ ] No broken relative links
 
 ### 4. Changelog
+
 - [ ] New user-visible behavior has changelog entry
 - [ ] Breaking changes clearly marked
 

@@ -24,18 +24,18 @@ Press <kbd>F5</kbd> in VS Code (`Run Extension`) to launch the **Extension
 Development Host** with the extension loaded. Run `npm run watch` alongside so
 the esbuild bundle rebuilds on save; reload the dev host window to pick it up.
 
-| Script | Purpose |
-| --- | --- |
-| `npm run build` | Bundle via `node esbuild.js` |
-| `npm run build:prod` | Production bundle (minified; runs on `vscode:prepublish`) |
-| `npm run watch` | Rebuild on change (use during F5 debugging) |
-| `npm run check-types` | `tsc --noEmit` (esbuild does not type-check) |
-| `npm run lint` | ESLint over `src` |
-| `npm run format` | Format everything with `prettier --write .` |
-| `npm run format:check` | Verify formatting with `prettier --check .` (no writes) |
-| `npm run check` | Full gate: lint + type-check + build |
-| `npm test` | `@vscode/test-cli` suite (unit + integration) with coverage |
-| `npm run package` | Build a `.vsix` via `vsce package --no-dependencies` |
+| Script                 | Purpose                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `npm run build`        | Bundle via `node esbuild.js`                                |
+| `npm run build:prod`   | Production bundle (minified; runs on `vscode:prepublish`)   |
+| `npm run watch`        | Rebuild on change (use during F5 debugging)                 |
+| `npm run check-types`  | `tsc --noEmit` (esbuild does not type-check)                |
+| `npm run lint`         | ESLint over `src`                                           |
+| `npm run format`       | Format everything with `prettier --write .`                 |
+| `npm run format:check` | Verify formatting with `prettier --check .` (no writes)     |
+| `npm run check`        | Full gate: lint + type-check + build                        |
+| `npm test`             | `@vscode/test-cli` suite (unit + integration) with coverage |
+| `npm run package`      | Build a `.vsix` via `vsce package --no-dependencies`        |
 
 Prettier is **not** run by `npm run check` or CI — run `npm run format` yourself
 before committing. ESLint pulls in `eslint-config-prettier`, which only turns off
@@ -64,7 +64,7 @@ xvfb-run -a npm test
 - `src/extension.ts` — entry point (`activate`/`deactivate`); thin wiring only.
 - `src/grim.ts` — the only place that spawns the `grim` binary. Pure argv
   builders plus envelope parsing (`execFile`, no shell, always `--format
-  json`); grim's JSON interface is frozen/additive, so nullable fields are
+json`); grim's JSON interface is frozen/additive, so nullable fields are
   treated as honestly nullable, never assumed present.
 - `src/scopes.ts` — scope discovery via `grim context` (project = the
   workspace folder, global = `--global`) and declared-reference parsing from

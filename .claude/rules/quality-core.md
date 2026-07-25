@@ -8,13 +8,13 @@ Canonical design principles for **all languages**. Shareable, project-independen
 
 ### SOLID
 
-| Principle | Meaning | Violation Signal |
-|-----------|---------|------------------|
-| **SRP** | One responsibility per module/class/struct | Module with methods spanning unrelated concerns |
-| **OCP** | Extend behavior without modifying existing code | Editing existing branches to add new cases |
-| **LSP** | Subtypes/implementations honor the parent contract | Implementation that panics/throws where contract promises success |
-| **ISP** | Depend on the narrowest interface needed | Requiring capabilities the consumer never uses |
-| **DIP** | High-level modules depend on abstractions, not concretions | Constructor takes a concrete implementation instead of an interface/trait/protocol |
+| Principle | Meaning                                                    | Violation Signal                                                                   |
+| --------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| **SRP**   | One responsibility per module/class/struct                 | Module with methods spanning unrelated concerns                                    |
+| **OCP**   | Extend behavior without modifying existing code            | Editing existing branches to add new cases                                         |
+| **LSP**   | Subtypes/implementations honor the parent contract         | Implementation that panics/throws where contract promises success                  |
+| **ISP**   | Depend on the narrowest interface needed                   | Requiring capabilities the consumer never uses                                     |
+| **DIP**   | High-level modules depend on abstractions, not concretions | Constructor takes a concrete implementation instead of an interface/trait/protocol |
 
 ### DRY
 
@@ -34,7 +34,7 @@ Simplicity = prerequisite for reliability. Every line, abstraction, indirection 
 
 ### Choose Boring Technology
 
-Teams have finite "innovation tokens" (Dan McKinley, 2015). Boring tech mature, battle-tested, *known* failure modes — novel tech introduces unknown unknowns that compound operational cost.
+Teams have finite "innovation tokens" (Dan McKinley, 2015). Boring tech mature, battle-tested, _known_ failure modes — novel tech introduces unknown unknowns that compound operational cost.
 
 - Default to established option; save novelty for genuine differentiation
 - "Best tool for job" = local optimization — actual job is keeping system running
@@ -53,19 +53,21 @@ Teams have finite "innovation tokens" (Dan McKinley, 2015). Boring tech mature, 
 
 ## Anti-Pattern Severity
 
-| Tier | Meaning | Action |
-|------|---------|--------|
-| **Block** | Correctness or security risk | Must fix before merge |
-| **Warn** | Design smell, performance issue, maintainability risk | Should fix, can negotiate |
-| **Suggest** | Improvement opportunity | Could fix, optional |
+| Tier        | Meaning                                               | Action                    |
+| ----------- | ----------------------------------------------------- | ------------------------- |
+| **Block**   | Correctness or security risk                          | Must fix before merge     |
+| **Warn**    | Design smell, performance issue, maintainability risk | Should fix, can negotiate |
+| **Suggest** | Improvement opportunity                               | Could fix, optional       |
 
 ### Universal Block-tier Anti-Patterns
+
 - Hardcoded secrets or credentials
 - Unvalidated external input at system boundaries
 - Catching/swallowing errors silently (no log, no re-raise)
 - God objects/modules with 15+ fields/methods spanning unrelated concerns
 
 ### Universal Warn-tier Anti-Patterns
+
 - Boolean parameters where enum/literal type clearer
 - Stringly-typed APIs where structured types prevent typos at compile/type-check time
 - Unnecessary copies/clones in hot paths
@@ -76,11 +78,13 @@ Teams have finite "innovation tokens" (Dan McKinley, 2015). Boring tech mature, 
 ## Reusability Assessment
 
 Before writing new code, ask:
+
 - "Could second caller use this, or copy-paste?"
 - "Right layer?" (generic utility vs. domain logic vs. command-specific glue)
 - "Generic capability dressed up as specific feature?"
 
 **Signals of misplaced code:**
+
 - Cross-cutting concern inline (progress, retry, rate-limiting, path sanitization)
 - Platform-specific logic in library instead of application layer
 - Generic utility mixed into command-specific code
@@ -130,11 +134,11 @@ Switching hats? Commit first, then switch context.
 
 ## Red Flags — Two Hats Rationalizations
 
-| Rationalization | Red flag | Correct action |
-|---|---|---|
-| "I'll optimize this loop while I refactor it" | Hat 1 and Hat 2 mixed in one pass | Commit the refactor first. Then put on Hat 2. |
-| "The benchmark runs fine locally, I'll skip it" | No benchmark output in the commit | Put on Hat 2 = benchmarks are required. Record the before/after. |
-| "This refactor is small, I don't need a test" | No tests cover the changed code | If no safety net exists, write characterization tests first — that's Hat 1 prep, not optional. |
+| Rationalization                                 | Red flag                          | Correct action                                                                                 |
+| ----------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| "I'll optimize this loop while I refactor it"   | Hat 1 and Hat 2 mixed in one pass | Commit the refactor first. Then put on Hat 2.                                                  |
+| "The benchmark runs fine locally, I'll skip it" | No benchmark output in the commit | Put on Hat 2 = benchmarks are required. Record the before/after.                               |
+| "This refactor is small, I don't need a test"   | No tests cover the changed code   | If no safety net exists, write characterization tests first — that's Hat 1 prep, not optional. |
 
 ---
 
@@ -144,11 +148,11 @@ Verification claims must be evidence-backed. Hedging in review verdicts, commit 
 
 ### Banned Phrases
 
-| Phrase | Replace With |
-|--------|-------------|
-| "should work" | "verified by [test name / command output]" |
-| "probably", "likely" | state what was checked and what the result was |
-| "seems to" | "confirmed that [X] by [method]" |
+| Phrase                        | Replace With                                                |
+| ----------------------------- | ----------------------------------------------------------- |
+| "should work"                 | "verified by [test name / command output]"                  |
+| "probably", "likely"          | state what was checked and what the result was              |
+| "seems to"                    | "confirmed that [X] by [method]"                            |
 | "Great!", "Perfect!", "Done!" | evidence of completion (test pass, clean diff, gate output) |
 
 ### Classification
@@ -162,7 +166,6 @@ Verification claims must be evidence-backed. Hedging in review verdicts, commit 
 ## See Also — Language-Specific Quality Rules
 
 Each path-scoped — loads automatically when editing files of that language:
-
 
 - `quality-typescript.md` — TypeScript-specific quality (strict mode, ESM, narrowing)
 - `quality-bash.md` — Bash script safety (`set -euo pipefail`, quoting, shellcheck)

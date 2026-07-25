@@ -6,11 +6,11 @@ Classifier reads free-text target + GitHub context (PR/issue title, body, labels
 
 ## Tier signal table
 
-| Tier | Signals | Examples |
-|---|---|---|
-| **low** | Two-Way Door; flag/option change; doc edit; fixture addition; single subsystem; ≤3 files estimated; label `small`, `docs`, `chore` | `add --format yaml flag`, `update installation docs`, `add fixture for archive unit test` |
-| **high** | One-Way Door Medium; new view/panel; new protocol message; new cache/storage layout; 1–2 modules; label `enhancement`, `feature` | `new bulk-update flow`, `add version-pinning UI`, `introduce search result cache` |
-| **max** | One-Way Door High; new top-level module; breaking API; cross-module refactor; webview protocol change; label `breaking-change`, `epic` | `rework host↔webview protocol`, `new details-panel architecture`, `replace snapshot pipeline` |
+| Tier     | Signals                                                                                                                                | Examples                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| **low**  | Two-Way Door; flag/option change; doc edit; fixture addition; single subsystem; ≤3 files estimated; label `small`, `docs`, `chore`     | `add --format yaml flag`, `update installation docs`, `add fixture for archive unit test`     |
+| **high** | One-Way Door Medium; new view/panel; new protocol message; new cache/storage layout; 1–2 modules; label `enhancement`, `feature`       | `new bulk-update flow`, `add version-pinning UI`, `introduce search result cache`             |
+| **max**  | One-Way Door High; new top-level module; breaking API; cross-module refactor; webview protocol change; label `breaking-change`, `epic` | `rework host↔webview protocol`, `new details-panel architecture`, `replace snapshot pipeline` |
 
 Prompt may match multiple rows — pick **highest** tier with ≥1 clear signal. Single `low` keyword no demote feature whose body describes high-effort change.
 
@@ -19,27 +19,27 @@ Prompt may match multiple rows — pick **highest** tier with ≥1 clear signal.
 - **Confident**: one tier ≥2 matching signals, no competing signals from adjacent tier. Proceed without meta-plan gate.
 - **Low-confidence**: signals split across adjacent tiers (e.g., one `low` + one `high`), or target terse with no discriminating cues. Flag classification; SKILL.md routes into meta-plan gate.
 
-Never manufacture question when confident. Rule: *announce and proceed*, or *let meta-plan gate handle it*.
+Never manufacture question when confident. Rule: _announce and proceed_, or _let meta-plan gate handle it_.
 
 ## Overlay triggers
 
 Overlays adjust single axis on top of chosen tier. Stack — multiple triggers may fire. Axis definitions + effects in `overlays.md`.
 
-| Overlay | Triggered by signals |
-|---|---|
-| `--architect=opus` | "new trait hierarchy", "novel algorithm", "cross-subsystem", "protocol change", "content-addressed storage layout change" |
-| `--research=3` | "new dependency category", "SOTA comparison", "compliance requirement", "security-sensitive area", "cryptographic primitive" |
-| `--researcher=haiku` | `--research=1` (single-axis) AND prompt is narrow single-concept factual lookup (e.g., "check if crate X has a CVE", "find the current version of tool Y", "does library Z support feature W"); NO cross-subsystem keywords; NO multi-source synthesis signal. Context-cap guard: if projected research prompt + sources exceeds 150k tokens, stay `sonnet`. |
-| `--codex` (plan review) | One-Way Door Medium/High; "public API change"; "breaking change"; "security-sensitive"; "novel algorithm"; label `breaking-change`; label `security`; any One-Way Door costly to reverse |
+| Overlay                 | Triggered by signals                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--architect=opus`      | "new trait hierarchy", "novel algorithm", "cross-subsystem", "protocol change", "content-addressed storage layout change"                                                                                                                                                                                                                                    |
+| `--research=3`          | "new dependency category", "SOTA comparison", "compliance requirement", "security-sensitive area", "cryptographic primitive"                                                                                                                                                                                                                                 |
+| `--researcher=haiku`    | `--research=1` (single-axis) AND prompt is narrow single-concept factual lookup (e.g., "check if crate X has a CVE", "find the current version of tool Y", "does library Z support feature W"); NO cross-subsystem keywords; NO multi-source synthesis signal. Context-cap guard: if projected research prompt + sources exceeds 150k tokens, stay `sonnet`. |
+| `--codex` (plan review) | One-Way Door Medium/High; "public API change"; "breaking change"; "security-sensitive"; "novel algorithm"; label `breaking-change`; label `security`; any One-Way Door costly to reverse                                                                                                                                                                     |
 
 Defaults per tier (before overlays apply):
 
-| Axis | low | high | max |
-|---|---|---|---|
-| architect | inline | inline (Two-Way) / sonnet (One-Way) | opus |
-| research | skip | 1 | 3 |
-| researcher | sonnet | sonnet (→ haiku on narrow-scope trigger) | sonnet |
-| codex plan review | off | off (auto-on for One-Way Door) | on (mandatory) |
+| Axis              | low    | high                                     | max            |
+| ----------------- | ------ | ---------------------------------------- | -------------- |
+| architect         | inline | inline (Two-Way) / sonnet (One-Way)      | opus           |
+| research          | skip   | 1                                        | 3              |
+| researcher        | sonnet | sonnet (→ haiku on narrow-scope trigger) | sonnet         |
+| codex plan review | off    | off (auto-on for One-Way Door)           | on (mandatory) |
 
 ## GitHub context as a classification input
 

@@ -169,7 +169,9 @@ export function isProjectNotDiscovered(probe: GrimResult<ContextInfo>): boolean 
  *  (see `projectProbeFailed`'s doc comment) — it reads as plain unconfigured
  *  here, which is what drives the global fallback. Pure; exported for tests. */
 export function projectSearchable(snapshot: Snapshot): boolean {
-  return (snapshot.project?.context.config_exists ?? false) || (snapshot.projectProbeFailed ?? false);
+  return (
+    (snapshot.project?.context.config_exists ?? false) || (snapshot.projectProbeFailed ?? false)
+  );
 }
 
 /** The scope a browse/search actually targets: project only when a folder is
@@ -351,20 +353,18 @@ export class ScopeService {
     // argument"). See withGlobalFlag.
     const scoped = scope === 'global' ? withGlobalFlag(args) : args;
     this.output.appendLine(`> ${executable} ${scoped.join(' ')} (${scope})`);
-    return runJson<T>(executable, scoped, options).then(
-      (result) => {
-        // Name the spawned binary on the two stale/missing-binary signals, so the
-        // log self-diagnoses instead of costing a debugging round.
-        if (!result.ok && (result.kind === 'not-found' || result.exitCode === 64)) {
-          const why =
-            result.kind === 'not-found'
-              ? 'not found (ENOENT)'
-              : 'exited 64 (unrecognized subcommand/argument — stale binary?)';
-          this.output.appendLine(`  grim executable '${executable}' ${why}`);
-        }
-        return result;
-      },
-    );
+    return runJson<T>(executable, scoped, options).then((result) => {
+      // Name the spawned binary on the two stale/missing-binary signals, so the
+      // log self-diagnoses instead of costing a debugging round.
+      if (!result.ok && (result.kind === 'not-found' || result.exitCode === 64)) {
+        const why =
+          result.kind === 'not-found'
+            ? 'not found (ENOENT)'
+            : 'exited 64 (unrecognized subcommand/argument — stale binary?)';
+        this.output.appendLine(`  grim executable '${executable}' ${why}`);
+      }
+      return result;
+    });
   }
 
   /** One scope's chain: context probe → status (only when configured). Returns
@@ -436,8 +436,7 @@ export class ScopeService {
       },
       ...(status && !status.ok
         ? {
-            statusError:
-              status.kind === 'not-found' ? 'grim executable not found' : status.message,
+            statusError: status.kind === 'not-found' ? 'grim executable not found' : status.message,
           }
         : {}),
     };

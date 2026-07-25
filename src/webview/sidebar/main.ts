@@ -159,8 +159,7 @@ function setActiveFilter(next: CardFilter): void {
 function cardByRepo(repo: string): CardVM | undefined {
   // Menus open from any tab; browse and installed card lists both resolve.
   return (
-    state?.items.find((c) => c.repo === repo) ??
-    state?.installedItems.find((c) => c.repo === repo)
+    state?.items.find((c) => c.repo === repo) ?? state?.installedItems.find((c) => c.repo === repo)
   );
 }
 

@@ -77,14 +77,18 @@ function kindClass(kind: string | null): string {
 }
 
 function kindTile(kind: string | null, extra = ''): TemplateResult {
-  return html`<div class="kind-tile ${kindClass(kind)}${extra ? ` ${extra}` : ''}"><span class="codicon codicon-${kindIcon(kind)}"></span></div>`;
+  return html`<div class="kind-tile ${kindClass(kind)}${extra ? ` ${extra}` : ''}">
+    <span class="codicon codicon-${kindIcon(kind)}"></span>
+  </div>`;
 }
 
 /** A browse card's leading tile: the cached logo (prefetched) when present, else
  *  the kind-tinted codicon tile. lit escapes the data: URI like any binding. */
 function cardTile(card: CardVM): TemplateResult {
   return card.logoUri
-    ? html`<div class="kind-tile has-logo ${kindClass(card.kind)}"><img class="card-logo" src="${card.logoUri}" alt=""/></div>`
+    ? html`<div class="kind-tile has-logo ${kindClass(card.kind)}">
+        <img class="card-logo" src="${card.logoUri}" alt="" />
+      </div>`
     : kindTile(card.kind);
 }
 
@@ -119,7 +123,11 @@ function installedChip(install: InstallVM): TemplateResult {
   const icon = install.scope === 'project' ? 'root-folder' : 'globe';
   const label = install.scope === 'project' ? 'Project' : 'Global';
   // Leading check per the 1g installed-state matrix.
-  return html`<span class="installed-chip"><span class="codicon codicon-check installed-chip-check"></span><span class="codicon codicon-${icon}"></span><span class="installed-chip-scope">${label}</span></span>`;
+  return html`<span class="installed-chip"
+    ><span class="codicon codicon-check installed-chip-check"></span
+    ><span class="codicon codicon-${icon}"></span
+    ><span class="installed-chip-scope">${label}</span></span
+  >`;
 }
 
 /** Install split button on browse cards: main installs the default scope, the
@@ -128,9 +136,16 @@ function installedChip(install: InstallVM): TemplateResult {
  *  matrix 1g) — the version picker stays reachable via the right-click menu. */
 function cardInstallButton(card: CardVM): TemplateResult {
   if (card.state === 'deprecated') {
-    return html`<button class="card-btn secondary" data-action="install" data-repo="${card.repo}">Install</button>`;
+    return html`<button class="card-btn secondary" data-action="install" data-repo="${card.repo}">
+      Install
+    </button>`;
   }
-  return html`<div class="split-button sm"><button class="split-main" data-action="install" data-repo="${card.repo}">Install</button><button class="split-arrow" data-action="menu" title="Install options"><span class="codicon codicon-chevron-down"></span></button></div>`;
+  return html`<div class="split-button sm">
+    <button class="split-main" data-action="install" data-repo="${card.repo}">Install</button
+    ><button class="split-arrow" data-action="menu" title="Install options">
+      <span class="codicon codicon-chevron-down"></span>
+    </button>
+  </div>`;
 }
 
 /** Right-aligned action cluster on the card meta line (state matrix, 1g). */
@@ -140,11 +155,25 @@ function cardAction(card: CardVM): TemplateResult {
     const to = card.latestVersion
       ? html`<span class="update-hint mono">→ ${card.latestVersion}</span>`
       : nothing;
-    return html`${to}<button class="card-btn" data-action="update" data-kind="${target?.kind ?? ''}" data-name="${target?.name ?? ''}" data-scope="${target?.scope ?? 'project'}">Update</button>`;
+    return html`${to}<button
+        class="card-btn"
+        data-action="update"
+        data-kind="${target?.kind ?? ''}"
+        data-name="${target?.name ?? ''}"
+        data-scope="${target?.scope ?? 'project'}"
+      >
+        Update
+      </button>`;
   }
   const install = effectiveInstall(card.installs);
   if (install) {
-    return html`${installedChip(install)}<button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button>`;
+    return html`${installedChip(install)}<button
+        class="icon-button"
+        data-action="menu"
+        title="Manage"
+      >
+        <span class="codicon codicon-gear"></span>
+      </button>`;
   }
   return cardInstallButton(card);
 }
@@ -160,21 +189,37 @@ function renderMenuEntries(entries: MenuEntry[]): TemplateResult[] {
     }
     const hint = entry.hint ? html`<span class="menu-hint">${entry.hint}</span>` : nothing;
     if (!entry.action) {
-      return html`<button class="menu-item" disabled title="${ifDefined(entry.title)}">${entry.label}${hint}</button>`;
+      return html`<button class="menu-item" disabled title="${ifDefined(entry.title)}">
+        ${entry.label}${hint}
+      </button>`;
     }
     const d = entry.data ?? {};
-    return html`<button class="menu-item" data-action="${entry.action}" data-repo="${ifDefined(d.repo)}" data-scope="${ifDefined(d.scope)}" data-kind="${ifDefined(d.kind)}" data-name="${ifDefined(d.name)}" data-replaced-by="${ifDefined(d.replacedBy)}">${entry.label}${hint}</button>`;
+    return html`<button
+      class="menu-item"
+      data-action="${entry.action}"
+      data-repo="${ifDefined(d.repo)}"
+      data-scope="${ifDefined(d.scope)}"
+      data-kind="${ifDefined(d.kind)}"
+      data-name="${ifDefined(d.name)}"
+      data-replaced-by="${ifDefined(d.replacedBy)}"
+    >
+      ${entry.label}${hint}
+    </button>`;
   });
 }
 
 /** Gear menu for an installed card (design 2b). */
 export function renderCardMenu(card: CardVM, projectOpen: boolean): TemplateResult {
-  return html`<div class="card-menu">${renderMenuEntries(cardMenuEntries(card, { projectOpen, context: false }))}</div>`;
+  return html`<div class="card-menu">
+    ${renderMenuEntries(cardMenuEntries(card, { projectOpen, context: false }))}
+  </div>`;
 }
 
 /** Right-click context menu — same builder, positioned at the cursor by main.ts. */
 export function renderCardContextMenu(card: CardVM, projectOpen: boolean): TemplateResult {
-  return html`<div class="card-menu card-context-menu">${renderMenuEntries(cardMenuEntries(card, { projectOpen, context: true }))}</div>`;
+  return html`<div class="card-menu card-context-menu">
+    ${renderMenuEntries(cardMenuEntries(card, { projectOpen, context: true }))}
+  </div>`;
 }
 
 export interface CardVariant {
@@ -190,7 +235,10 @@ export interface CardVariant {
  *  deprecation banner's replacement link (renderDeprecationBanner below). */
 function cardReplacementLink(replacedBy: string | null): TemplateResult | typeof nothing {
   return replacedBy
-    ? html` → use <a href="#" data-action="open-details" data-repo="${replacedBy}" class="mono">${replacedBy}</a>`
+    ? html` → use
+        <a href="#" data-action="open-details" data-repo="${replacedBy}" class="mono"
+          >${replacedBy}</a
+        >`
     : nothing;
 }
 
@@ -201,7 +249,9 @@ function clientDriftBadge(install: InstallVM | undefined): TemplateResult | type
   if (!install || !hasClientDrift(install)) {
     return nothing;
   }
-  return html`<span class="drift-badge" title="${clientDriftTooltip(install)}"><span class="codicon codicon-warning"></span>Client drift</span>`;
+  return html`<span class="drift-badge" title="${clientDriftTooltip(install)}"
+    ><span class="codicon codicon-warning"></span>Client drift</span
+  >`;
 }
 
 export function renderCard(card: CardVM, options: CardVariant = {}): TemplateResult {
@@ -211,14 +261,15 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     ? html`<span class="version mono">${card.latestVersion}</span>`
     : nothing;
   const deprecatedLine = card.deprecated
-    ? html`<div class="card-desc deprecated-msg"><span class="codicon codicon-warning"></span> ${card.deprecated}${cardReplacementLink(card.replacedBy)}</div>`
+    ? html`<div class="card-desc deprecated-msg">
+        <span class="codicon codicon-warning"></span>
+        ${card.deprecated}${cardReplacementLink(card.replacedBy)}
+      </div>`
     : nothing;
-  const title = html`
-    <div class="card-title">
-      <span class="card-name">${card.name}</span>
-      ${version}
-      ${kindBadge(card.kind)}
-    </div>`;
+  const title = html` <div class="card-title">
+    <span class="card-name">${card.name}</span>
+    ${version} ${kindBadge(card.kind)}
+  </div>`;
   let body: TemplateResult;
   if (variant === 'updates') {
     const install = card.installs.find((i) => i.updateAvailable) ?? card.installs[0];
@@ -227,24 +278,45 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     const floating = install?.floating
       ? html` <span class="floating-note">· floating tag</span>`
       : nothing;
-    const delta = html`<div class="card-delta mono">${install?.version ?? ''} <span class="codicon codicon-arrow-right"></span> <span class="delta-to">${card.latestVersion ?? ''}</span>${floating}</div>`;
+    const delta = html`<div class="card-delta mono">
+      ${install?.version ?? ''} <span class="codicon codicon-arrow-right"></span>
+      <span class="delta-to">${card.latestVersion ?? ''}</span>${floating}
+    </div>`;
     const where = install
       ? `${install.scope === 'project' ? 'Project' : 'Global'}${install.clients.length > 0 ? ` · ${install.clients.join(', ')}` : ''}`
       : '';
     body = html`${title}${delta}
-    <div class="card-meta"><span class="card-where">${where}</span>
-      <span class="card-actions"><button class="card-btn" data-action="update" data-kind="${install?.kind ?? ''}" data-name="${install?.name ?? ''}" data-scope="${install?.scope ?? 'project'}">Update</button></span>
-    </div>`;
+      <div class="card-meta">
+        <span class="card-where">${where}</span>
+        <span class="card-actions"
+          ><button
+            class="card-btn"
+            data-action="update"
+            data-kind="${install?.kind ?? ''}"
+            data-name="${install?.name ?? ''}"
+            data-scope="${install?.scope ?? 'project'}"
+          >
+            Update
+          </button></span
+        >
+      </div>`;
   } else if (variant === 'scope') {
     const install = card.installs.find((i) => i.scope === options.scope) ?? card.installs[0];
     const extras =
       card.kind === 'bundle'
-        ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
+        ? html`<span class="card-where"
+            >${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span
+          >`
         : nothing;
     body = html`${title}${deprecatedLine}
-    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}
-      <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button></span>
-    </div>`;
+      <div class="card-meta">
+        ${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}
+        <span class="card-actions"
+          ><span class="codicon codicon-check installed-check" title="Installed"></span
+          ><button class="icon-button" data-action="menu" title="Manage">
+            <span class="codicon codicon-gear"></span></button
+        ></span>
+      </div>`;
   } else {
     const description = card.deprecated
       ? deprecatedLine
@@ -255,16 +327,17 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
       ? html`<span class="codicon codicon-lock registry-lock"></span>`
       : nothing;
     body = html`${title}${description}
-    <div class="card-meta">
-      <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
-      <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card)}</span>
-    </div>`;
+      <div class="card-meta">
+        <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
+        <span class="card-actions"
+          >${options.installStateUnknown ? nothing : cardAction(card)}</span
+        >
+      </div>`;
   }
-  return html`
-<div class="card${deprecatedClass}" data-repo="${card.repo}">
-  ${cardTile(card)}
-  <div class="card-body">${body}</div>
-</div>`;
+  return html` <div class="card${deprecatedClass}" data-repo="${card.repo}">
+    ${cardTile(card)}
+    <div class="card-body">${body}</div>
+  </div>`;
 }
 
 const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
@@ -281,8 +354,16 @@ const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
 function kindChips(filter: CardFilter): TemplateResult {
   const chips = KIND_CHIPS.map(({ id, label }) => {
     const active = id === 'all' ? filter.kinds.length === 0 : filter.kinds.includes(id);
-    const icon = id === 'all' ? nothing : html`<span class="codicon codicon-${kindIcon(id)}"></span>`;
-    return html`<button class="kind-chip${active ? ' active' : ''}" data-action="toggle-kind" data-kind="${id}" aria-pressed="${active}">${icon}${label}</button>`;
+    const icon =
+      id === 'all' ? nothing : html`<span class="codicon codicon-${kindIcon(id)}"></span>`;
+    return html`<button
+      class="kind-chip${active ? ' active' : ''}"
+      data-action="toggle-kind"
+      data-kind="${id}"
+      aria-pressed="${active}"
+    >
+      ${icon}${label}
+    </button>`;
   });
   return html`<div class="kind-chips">${chipGroupLabel('KIND')}${chips}</div>`;
 }
@@ -296,20 +377,13 @@ function chipGroupLabel(text: string): TemplateResult {
 function renderFilters(filter: CardFilter): TemplateResult {
   // Search always spans every configured registry — no registry filter. Installed
   // artifacts live in their own views now, so no "Installed" filter chip here.
-  return html`
-<div class="filters">
-  ${kindChips(filter)}
-</div>`;
+  return html` <div class="filters">${kindChips(filter)}</div>`;
 }
 
 /** Installed view: Kind chips + the SCOPE toggle (which scope's list to show).
  *  Updates gets no filters. */
 function renderInstalledFilters(state: SidebarState, filter: CardFilter): TemplateResult {
-  return html`
-<div class="filters">
-  ${kindChips(filter)}
-  ${scopeChips(state, filter)}
-</div>`;
+  return html` <div class="filters">${kindChips(filter)} ${scopeChips(state, filter)}</div>`;
 }
 
 /** Installed view SCOPE toggle: folder=Project / globe=Global, exactly one active
@@ -318,10 +392,23 @@ function renderInstalledFilters(state: SidebarState, filter: CardFilter): Templa
 function scopeChips(state: SidebarState, filter: CardFilter): TemplateResult {
   const active = resolveInstalledScope(filter.scope, state.scopes);
   const chip = (target: Scope, label: string, icon: string, disabled: boolean): TemplateResult => {
-    const title = disabled ? 'No workspace folder open — Project scope unavailable' : `Show ${label}`;
-    return html`<button class="kind-chip${active === target ? ' active' : ''}" data-action="set-scope" data-scope="${target}" ?disabled="${disabled}" aria-pressed="${active === target}" title="${title}"><span class="codicon codicon-${icon}"></span>${label}</button>`;
+    const title = disabled
+      ? 'No workspace folder open — Project scope unavailable'
+      : `Show ${label}`;
+    return html`<button
+      class="kind-chip${active === target ? ' active' : ''}"
+      data-action="set-scope"
+      data-scope="${target}"
+      ?disabled="${disabled}"
+      aria-pressed="${active === target}"
+      title="${title}"
+    >
+      <span class="codicon codicon-${icon}"></span>${label}
+    </button>`;
   };
-  return html`<div class="kind-chips scope-chips">${chipGroupLabel('SCOPE')}${chip('project', 'Project', 'root-folder', !state.scopes.projectOpen)}${chip('global', 'Global', 'globe', false)}</div>`;
+  return html`<div class="kind-chips scope-chips">
+    ${chipGroupLabel('SCOPE')}${chip('project', 'Project', 'root-folder', !state.scopes.projectOpen)}${chip('global', 'Global', 'globe', false)}
+  </div>`;
 }
 
 function renderFooter(state: SidebarState): TemplateResult {
@@ -330,24 +417,28 @@ function renderFooter(state: SidebarState): TemplateResult {
   // sidebar/main.ts can re-render just that text node, not the whole footer.
   const synced =
     state.syncedAt !== null
-      ? html`Catalog cache · <span class="footer-ts">synced ${relativeTime(state.syncedAt, state.now)}</span>`
+      ? html`Catalog cache ·
+          <span class="footer-ts">synced ${relativeTime(state.syncedAt, state.now)}</span>`
       : '';
   const suffix =
     registries > 0
-      ? html`<span class="footer-right">${registries} ${registries === 1 ? 'registry' : 'registries'}</span>`
+      ? html`<span class="footer-right"
+          >${registries} ${registries === 1 ? 'registry' : 'registries'}</span
+        >`
       : nothing;
-  return html`<div class="footer"><span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>`;
+  return html`<div class="footer">
+    <span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}
+  </div>`;
 }
 
 function renderNoGrim(): TemplateResult {
-  return html`
-<div class="empty-state">
-  <span class="codicon codicon-warning empty-icon"></span>
-  <p class="title">grim was not found</p>
-  <p>The <code>grim</code> CLI is not on your PATH.</p>
-  <vscode-button data-action="install-grim">Install grim</vscode-button>
-  <p class="hint">Or set <code>grimoire.path.executable</code> in Settings.</p>
-</div>`;
+  return html` <div class="empty-state">
+    <span class="codicon codicon-warning empty-icon"></span>
+    <p class="title">grim was not found</p>
+    <p>The <code>grim</code> CLI is not on your PATH.</p>
+    <vscode-button data-action="install-grim">Install grim</vscode-button>
+    <p class="hint">Or set <code>grimoire.path.executable</code> in Settings.</p>
+  </div>`;
 }
 
 function renderEmpty(state: SidebarState): TemplateResult {
@@ -356,16 +447,18 @@ function renderEmpty(state: SidebarState): TemplateResult {
     state.syncedAt !== null
       ? ` The catalog was last synced ${relativeTime(state.syncedAt, state.now)}.`
       : '';
-  return html`
-<div class="empty-state">
-  <span class="codicon codicon-search empty-icon"></span>
-  <p class="title">No artifacts found</p>
-  <p>Nothing matches “${state.query}” across ${registries} ${registries === 1 ? 'registry' : 'registries'}.${synced}</p>
-  <div class="empty-links">
-    <button class="link-button" data-action="clear-search">Clear search</button>
-    <button class="link-button" data-action="refresh">Refresh catalog</button>
-  </div>
-</div>`;
+  return html` <div class="empty-state">
+    <span class="codicon codicon-search empty-icon"></span>
+    <p class="title">No artifacts found</p>
+    <p>
+      Nothing matches “${state.query}” across ${registries}
+      ${registries === 1 ? 'registry' : 'registries'}.${synced}
+    </p>
+    <div class="empty-links">
+      <button class="link-button" data-action="clear-search">Clear search</button>
+      <button class="link-button" data-action="refresh">Refresh catalog</button>
+    </div>
+  </div>`;
 }
 
 function renderLoading(): TemplateResult {
@@ -377,12 +470,17 @@ function renderLoading(): TemplateResult {
   // (item 1: a loading footer embedded here sits wherever the short skeleton
   // ends, which visually detaches it from the view's bottom edge until the
   // first real footer lands).
-  const skeleton = (w1: string, w2: string, w3: string, fade: string): TemplateResult => html`
-  <div class="skeleton-row${fade ? ` ${fade}` : ''}">
-    <div class="skeleton-tile"></div>
-    <div class="skeleton-lines"><div class="skeleton-line ${w1}"></div><div class="skeleton-line thin ${w2}"></div><div class="skeleton-line thin ${w3}"></div></div>
-  </div>`;
-  return html`<vscode-progress-bar></vscode-progress-bar>${skeleton('w55', 'w92', 'w70', '')}${skeleton('w44', 'w88', 'w62', 'skeleton-row-2')}${skeleton('w60', 'w80', 'w74', 'skeleton-row-3')}${skeleton('w50', 'w85', 'w58', 'skeleton-row-4')}`;
+  const skeleton = (w1: string, w2: string, w3: string, fade: string): TemplateResult =>
+    html` <div class="skeleton-row${fade ? ` ${fade}` : ''}">
+      <div class="skeleton-tile"></div>
+      <div class="skeleton-lines">
+        <div class="skeleton-line ${w1}"></div>
+        <div class="skeleton-line thin ${w2}"></div>
+        <div class="skeleton-line thin ${w3}"></div>
+      </div>
+    </div>`;
+  return html`<vscode-progress-bar></vscode-progress-bar
+    >${skeleton('w55', 'w92', 'w70', '')}${skeleton('w44', 'w88', 'w62', 'skeleton-row-2')}${skeleton('w60', 'w80', 'w74', 'skeleton-row-3')}${skeleton('w50', 'w85', 'w58', 'skeleton-row-4')}`;
 }
 
 /** The "Refreshing from <host>…" line. Standalone so a background refresh over
@@ -390,9 +488,10 @@ function renderLoading(): TemplateResult {
  *  Falls back to a plain "Refreshing…" when the registry host is not known
  *  yet (first refresh of a session) — never an empty footer. */
 export function renderRefreshingFooter(defaultRegistry: string | null): TemplateResult {
-  return html`<div class="footer loading-footer"><span class="codicon codicon-sync"></span><span>${
-    defaultRegistry ? `Refreshing from ${defaultRegistry}…` : 'Refreshing…'
-  }</span></div>`;
+  return html`<div class="footer loading-footer">
+    <span class="codicon codicon-sync"></span
+    ><span>${defaultRegistry ? `Refreshing from ${defaultRegistry}…` : 'Refreshing…'}</span>
+  </div>`;
 }
 
 /** Workspace-level notice slot at the very top of the view, ABOVE the tab bar
@@ -422,31 +521,31 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
     const remedy = canInstall
       ? html`<vscode-button class="sm" data-action="install-grim">Install grim</vscode-button>`
       : state.installStateUnknownReason !== undefined
-        ? html`<vscode-button class="sm secondary" data-action="show-grim-info">Show grim Info</vscode-button>`
+        ? html`<vscode-button class="sm secondary" data-action="show-grim-info"
+            >Show grim Info</vscode-button
+          >`
         : nothing;
     // grim's raw message and our sentence are two separate statements — one
     // text node ran them together ("…'--check' found Install state is…").
-    return html`
-<div class="init-notification">
-  <span class="codicon codicon-warning init-icon"></span>
-  <div class="init-body">
-    <span>${state.installStateUnknown}</span>
-    <span class="init-hint">Install state is unavailable until this is resolved.</span>
-    ${remedy}
-  </div>
-</div>`;
+    return html` <div class="init-notification">
+      <span class="codicon codicon-warning init-icon"></span>
+      <div class="init-body">
+        <span>${state.installStateUnknown}</span>
+        <span class="init-hint">Install state is unavailable until this is resolved.</span>
+        ${remedy}
+      </div>
+    </div>`;
   }
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
     return nothing;
   }
-  return html`
-<div class="init-notification">
-  <span class="codicon codicon-info init-icon"></span>
-  <div class="init-body">
-    <span>No grimoire.toml in this workspace — showing the global catalog instead.</span>
-    <vscode-button class="sm" data-action="init-project">Initialize Project Config</vscode-button>
-  </div>
-</div>`;
+  return html` <div class="init-notification">
+    <span class="codicon codicon-info init-icon"></span>
+    <div class="init-body">
+      <span>No grimoire.toml in this workspace — showing the global catalog instead.</span>
+      <vscode-button class="sm" data-action="init-project">Initialize Project Config</vscode-button>
+    </div>
+  </div>`;
 }
 
 /** One installed view's flat card list (native-views split — the workbench owns
@@ -456,7 +555,11 @@ function renderInstalledResults(state: SidebarState, filter: CardFilter): Templa
   if (state.mode === 'updates') {
     const named = searchCards(filterCards(state.items, filter), state.query);
     return named.length
-      ? html`${repeat(named, (c) => c.repo, (c) => renderCard(c, { variant: 'updates' }))}`
+      ? html`${repeat(
+          named,
+          (c) => c.repo,
+          (c) => renderCard(c, { variant: 'updates' }),
+        )}`
       : installedEmpty('Everything is up to date.');
   }
   // Installed view: the SCOPE toggle picks which scope's list shows (the host
@@ -471,7 +574,11 @@ function renderInstalledResults(state: SidebarState, filter: CardFilter): Templa
   // The initialize-project notice lives in the top #sb-notice slot (above the
   // tabs, all modes) — no inline copy here.
   return cards.length
-    ? html`${repeat(cards, (c) => `${scope}:${c.repo}`, (c) => renderCard(c, { variant: 'scope', scope }))}`
+    ? html`${repeat(
+        cards,
+        (c) => `${scope}:${c.repo}`,
+        (c) => renderCard(c, { variant: 'scope', scope }),
+      )}`
     : installedEmpty(emptyText);
 }
 
@@ -494,9 +601,23 @@ export function renderSidebarSearch(state: SidebarState): TemplateResult | typeo
   // renders it as a real, accessible button. Shown only when there's text —
   // toggled via the .hidden class so typing never rebuilds the textfield.
   const clearHidden = state.query ? '' : ' hidden';
-  return html`<div class="search-row"><vscode-textfield id="search" placeholder="${
-    state.mode === 'browse' ? 'Search artifacts…' : 'Search installed…'
-  }" value="${state.query}"><vscode-icon slot="content-after" id="search-clear" class="clear-icon${clearHidden}" name="close" action-icon label="Clear search" title="Clear search" data-action="clear-search"></vscode-icon></vscode-textfield></div>`;
+  return html`<div class="search-row">
+    <vscode-textfield
+      id="search"
+      placeholder="${state.mode === 'browse' ? 'Search artifacts…' : 'Search installed…'}"
+      value="${state.query}"
+      ><vscode-icon
+        slot="content-after"
+        id="search-clear"
+        class="clear-icon${clearHidden}"
+        name="close"
+        action-icon
+        label="Clear search"
+        title="Clear search"
+        data-action="clear-search"
+      ></vscode-icon
+    ></vscode-textfield>
+  </div>`;
 }
 
 export function renderSidebarFilters(
@@ -521,7 +642,9 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     return renderLoading();
   }
   if (state.phase === 'error') {
-    return html`<div class="error-state"><span class="codicon codicon-error"></span> ${state.error ?? 'Unknown error'}</div>`;
+    return html`<div class="error-state">
+      <span class="codicon codicon-error"></span> ${state.error ?? 'Unknown error'}
+    </div>`;
   }
   if (state.mode !== 'browse') {
     // Both installed-side tabs derive from status; with status unknown their
@@ -536,7 +659,10 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
   const registries = registriesOf(state.items).length;
   const summary =
     filtered.length > 0
-      ? html`<div class="result-summary">${filtered.length} result${filtered.length === 1 ? '' : 's'} in ${registries} ${registries === 1 ? 'registry' : 'registries'}</div>`
+      ? html`<div class="result-summary">
+          ${filtered.length} result${filtered.length === 1 ? '' : 's'} in ${registries}
+          ${registries === 1 ? 'registry' : 'registries'}
+        </div>`
       : nothing;
   const body =
     filtered.length === 0
@@ -546,7 +672,8 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
           (c) => c.repo,
           (c) => renderCard(c, { installStateUnknown: state.installStateUnknown !== undefined }),
         )}`;
-  return html`${summary}<div class="cards">${body}</div>`;
+  return html`${summary}
+    <div class="cards">${body}</div>`;
 }
 
 const SIDEBAR_TABS: ReadonlyArray<{ id: SidebarState['mode']; label: string }> = [
@@ -569,13 +696,25 @@ export function renderSidebarTabs(state: SidebarState): TemplateResult | typeof 
   // read as zero and contradict it. Say "unknown" instead of a count.
   const updatesCount =
     state.installStateUnknown !== undefined
-      ? html`<span class="tab-count" title="Update count unavailable — install state is unknown" aria-label="update count unavailable">?</span>`
+      ? html`<span
+          class="tab-count"
+          title="Update count unavailable — install state is unknown"
+          aria-label="update count unavailable"
+          >?</span
+        >`
       : outdated > 0
         ? html`<span class="tab-count">${outdated}</span>`
         : nothing;
   const tabs = SIDEBAR_TABS.map(({ id, label }) => {
     const count = id === 'updates' ? updatesCount : nothing;
-    return html`<button class="tab${state.mode === id ? ' active' : ''}" data-action="set-tab" data-tab="${id}" aria-pressed="${state.mode === id}">${label}${count}</button>`;
+    return html`<button
+      class="tab${state.mode === id ? ' active' : ''}"
+      data-action="set-tab"
+      data-tab="${id}"
+      aria-pressed="${state.mode === id}"
+    >
+      ${label}${count}
+    </button>`;
   });
   return html`<div class="tabs sidebar-tabs">${tabs}</div>`;
 }
@@ -609,28 +748,35 @@ export function renderSidebar(state: SidebarState, filter: CardFilter): Template
 // --- Details page ---
 
 function railRow(label: string, value: unknown): TemplateResult {
-  return html`<div class="rail-row"><span class="rail-label">${label}</span><span class="rail-value">${value}</span></div>`;
+  return html`<div class="rail-row">
+    <span class="rail-label">${label}</span><span class="rail-value">${value}</span>
+  </div>`;
 }
 
 function statusCell(updateAvailable: boolean): TemplateResult {
   return updateAvailable
     ? html`<span class="status-inline"><span class="status-dot"></span>Update available</span>`
-    : html`<span class="status-inline"><span class="codicon codicon-check ok-check"></span>Up to date</span>`;
+    : html`<span class="status-inline"
+        ><span class="codicon codicon-check ok-check"></span>Up to date</span
+      >`;
 }
 
 function renderInstallationPanel(vm: DetailsVM): TemplateResult {
   if (vm.installs.length === 0) {
-    return html`
-<div class="rail-panel">
-  <div class="rail-title">INSTALLATION</div>
-  ${railRow(
-    'Status',
-    html`<span class="status-inline"><span class="status-dot muted"></span>Not installed</span>`,
-  )}
-  ${vm.kind === 'bundle' && vm.members.length > 0
-    ? railRow('Unit', `${vm.members.length} artifacts, installed together`)
-    : nothing}
-</div>`;
+    return html` <div class="rail-panel">
+      <div class="rail-title">INSTALLATION</div>
+      ${railRow(
+        'Status',
+        html`<span class="status-inline"
+          ><span class="status-dot muted"></span>Not installed</span
+        >`,
+      )}
+      ${
+        vm.kind === 'bundle' && vm.members.length > 0
+          ? railRow('Unit', `${vm.members.length} artifacts, installed together`)
+          : nothing
+      }
+    </div>`;
   }
   const multi = vm.installs.length > 1;
   const panels = vm.installs.map((install, index) => {
@@ -663,12 +809,20 @@ function renderInstallationPanel(vm: DetailsVM): TemplateResult {
       ),
     );
     const subheader = multi
-      ? html`<div class="rail-subtitle${index > 0 ? ' rail-subtitle-divided' : ''}"><span class="codicon codicon-${install.scope === 'project' ? 'root-folder' : 'globe'}"></span>${scopeLabel(install.scope, vm.scopes.projectName)}</div>`
+      ? html`<div class="rail-subtitle${index > 0 ? ' rail-subtitle-divided' : ''}">
+          <span
+            class="codicon codicon-${install.scope === 'project' ? 'root-folder' : 'globe'}"
+          ></span
+          >${scopeLabel(install.scope, vm.scopes.projectName)}
+        </div>`
       : nothing;
     return html`<div class="rail-subsection">${subheader}${rows}</div>`;
   });
   const title = multi ? `INSTALLATIONS (${vm.installs.length})` : 'INSTALLATION';
-  return html`<div class="rail-panel"><div class="rail-title">${title}</div>${panels}</div>`;
+  return html`<div class="rail-panel">
+    <div class="rail-title">${title}</div>
+    ${panels}
+  </div>`;
 }
 
 /** Members render as fully clickable boxes/rows: the whole container carries
@@ -688,37 +842,52 @@ function renderContentsPanel(vm: DetailsVM): TemplateResult | typeof nothing {
   }
   const rows = vm.members.map(
     (m) =>
-      html`<div class="member-row" data-action="${ifDefined(m.repo ? 'open-details' : undefined)}" data-repo="${ifDefined(m.repo ?? undefined)}" role="${ifDefined(m.repo ? 'button' : undefined)}" tabindex="${ifDefined(m.repo ? '0' : undefined)}"><span class="codicon codicon-${kindIcon(m.kind)} ${kindClass(m.kind)}"></span>${memberNameEl(m.name, m.repo !== null)}${m.version ? html`<span class="mono member-version">${m.version}</span>` : nothing}</div>`,
+      html`<div
+        class="member-row"
+        data-action="${ifDefined(m.repo ? 'open-details' : undefined)}"
+        data-repo="${ifDefined(m.repo ?? undefined)}"
+        role="${ifDefined(m.repo ? 'button' : undefined)}"
+        tabindex="${ifDefined(m.repo ? '0' : undefined)}"
+      >
+        <span class="codicon codicon-${kindIcon(m.kind)} ${kindClass(m.kind)}"></span
+        >${memberNameEl(m.name, m.repo !== null)}${m.version ? html`<span class="mono member-version">${m.version}</span>` : nothing}
+      </div>`,
   );
-  return html`<div class="rail-panel"><div class="rail-title">CONTENTS</div>${rows}</div>`;
+  return html`<div class="rail-panel">
+    <div class="rail-title">CONTENTS</div>
+    ${rows}
+  </div>`;
 }
 
 function renderPackagePanel(vm: DetailsVM): TemplateResult {
   const repoPath = vm.repo.split('/').slice(1).join('/');
   const tags =
     vm.tags && vm.tags.length > 0
-      ? html`<span class="chip-list rail-tags">${vm.tags.map(
-          (t, i) => html`<span class="tag-chip mono${i >= 6 ? ' tag-overflow' : ''}">${t}</span>`,
-        )}${vm.tags.length > 6 ? html`<button class="link-button tag-more" data-action="toggle-tags">+${vm.tags.length - 6} more</button>` : nothing}</span>`
+      ? html`<span class="chip-list rail-tags"
+          >${vm.tags.map(
+            (t, i) => html`<span class="tag-chip mono${i >= 6 ? ' tag-overflow' : ''}">${t}</span>`,
+          )}${vm.tags.length > 6 ? html`<button class="link-button tag-more" data-action="toggle-tags">+${vm.tags.length - 6} more</button>` : nothing}</span
+        >`
       : null;
-  return html`
-<div class="rail-panel">
-  <div class="rail-title">PACKAGE</div>
-  ${railRow(
-    'Registry',
-    html`<span class="registry-cell"><span class="codicon codicon-globe"></span>${vm.registryHost}</span>`,
-  )}
-  ${railRow('Repository', html`<span class="mono">${repoPath}</span>`)}
-  ${railRow('Tags', tags ?? html`<span class="null-value">Not provided</span>`)}
-  ${railRow(
-    'Published',
-    valueOr(vm.published, (v) => formatDate(v)),
-  )}
-  ${railRow(
-    'Revision',
-    valueOr(vm.revision, (v) => html`<span class="mono">${v.slice(0, 7)}</span>`),
-  )}
-</div>`;
+  return html` <div class="rail-panel">
+    <div class="rail-title">PACKAGE</div>
+    ${railRow(
+      'Registry',
+      html`<span class="registry-cell"
+        ><span class="codicon codicon-globe"></span>${vm.registryHost}</span
+      >`,
+    )}
+    ${railRow('Repository', html`<span class="mono">${repoPath}</span>`)}
+    ${railRow('Tags', tags ?? html`<span class="null-value">Not provided</span>`)}
+    ${railRow(
+      'Published',
+      valueOr(vm.published, (v) => formatDate(v)),
+    )}
+    ${railRow(
+      'Revision',
+      valueOr(vm.revision, (v) => html`<span class="mono">${v.slice(0, 7)}</span>`),
+    )}
+  </div>`;
 }
 
 function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
@@ -728,7 +897,12 @@ function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
   const rows: TemplateResult[] = [];
   if (vm.sourceRepository) {
     rows.push(
-      html`<div class="rail-link-row"><a href="#" class="resource-link" data-action="open" data-url="${vm.sourceRepository}"><span class="codicon codicon-github"></span><span class="resource-label">Source repository</span></a></div>`,
+      html`<div class="rail-link-row">
+        <a href="#" class="resource-link" data-action="open" data-url="${vm.sourceRepository}"
+          ><span class="codicon codicon-github"></span
+          ><span class="resource-label">Source repository</span></a
+        >
+      </div>`,
     );
   }
   // Text is wrapped in its own span (.resource-label) so hover-underline CSS
@@ -736,13 +910,24 @@ function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
   // an inline-flex link, and decoration on the link itself paints under the
   // codicon glyph too.
   rows.push(
-    html`<div class="rail-link-row">${
-      vm.license
-        ? html`<span class="resource-link static"><span class="codicon codicon-law"></span><span class="resource-label">License: ${vm.license}</span></span>`
-        : html`<span class="null-value resource-null"><span class="codicon codicon-law"></span><span class="resource-label">License not provided</span></span>`
-    }</div>`,
+    html`<div class="rail-link-row">
+      ${
+        vm.license
+          ? html`<span class="resource-link static"
+              ><span class="codicon codicon-law"></span
+              ><span class="resource-label">License: ${vm.license}</span></span
+            >`
+          : html`<span class="null-value resource-null"
+              ><span class="codicon codicon-law"></span
+              ><span class="resource-label">License not provided</span></span
+            >`
+      }
+    </div>`,
   );
-  return html`<div class="rail-panel"><div class="rail-title">RESOURCES</div>${rows}</div>`;
+  return html`<div class="rail-panel">
+    <div class="rail-title">RESOURCES</div>
+    ${rows}
+  </div>`;
 }
 
 /** Keyword chips are buttons: clicking one seeds the Browse search with that
@@ -751,12 +936,24 @@ function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
 function renderTagsPanel(vm: DetailsVM): TemplateResult {
   const chips =
     vm.keywords && vm.keywords.length > 0
-      ? html`<div class="chip-list">${vm.keywords.map(
-          (k) =>
-            html`<button class="keyword-chip" data-action="search-tag" data-tag="${k}" title="Search for ${k}">${k}</button>`,
-        )}</div>`
+      ? html`<div class="chip-list">
+          ${vm.keywords.map(
+            (k) =>
+              html`<button
+                class="keyword-chip"
+                data-action="search-tag"
+                data-tag="${k}"
+                title="Search for ${k}"
+              >
+                ${k}
+              </button>`,
+          )}
+        </div>`
       : html`<span class="null-value">No keywords</span>`;
-  return html`<div class="rail-panel"><div class="rail-title">TAGS</div>${chips}</div>`;
+  return html`<div class="rail-panel">
+    <div class="rail-title">TAGS</div>
+    ${chips}
+  </div>`;
 }
 
 export function formatDate(iso: string): string {
@@ -772,7 +969,11 @@ function renderDeprecationBanner(vm: DetailsVM): TemplateResult | typeof nothing
     return nothing;
   }
   const replacement = vm.replacedBy
-    ? html` — use <a href="#" data-action="open-details" data-repo="${vm.replacedBy}" class="mono">${vm.replacedBy}</a> instead`
+    ? html` — use
+        <a href="#" data-action="open-details" data-repo="${vm.replacedBy}" class="mono"
+          >${vm.replacedBy}</a
+        >
+        instead`
     : nothing;
   const extra =
     vm.deprecated !== 'deprecated'
@@ -782,17 +983,18 @@ function renderDeprecationBanner(vm: DetailsVM): TemplateResult | typeof nothing
   // in every installed scope, then uninstall this one). The host derives the
   // scope set + identity; the read-only preview link above stays. Bundle-held
   // installs can't be torn down here, so they don't count as switchable.
-  const switchable =
-    vm.replacedBy !== null && vm.installs.some((i) => i.viaBundles.length === 0);
+  const switchable = vm.replacedBy !== null && vm.installs.some((i) => i.viaBundles.length === 0);
   const switchButton = switchable
     ? html`<button class="deprecation-switch" data-action="switch">Switch to replacement</button>`
     : nothing;
-  return html`
-<div class="deprecation-banner">
-  <span class="codicon codicon-warning"></span>
-  <span>This artifact is deprecated${replacement}. It can still be installed, but will not receive updates.${extra}</span>
-  ${switchButton}
-</div>`;
+  return html` <div class="deprecation-banner">
+    <span class="codicon codicon-warning"></span>
+    <span
+      >This artifact is deprecated${replacement}. It can still be installed, but will not receive
+      updates.${extra}</span
+    >
+    ${switchButton}
+  </div>`;
 }
 
 /** Per-scope Install split button (item 2): primary Install for that scope,
@@ -800,7 +1002,22 @@ function renderDeprecationBanner(vm: DetailsVM): TemplateResult | typeof nothing
  *  The nested `.scope-menu hidden` dropdown ships closed; the details webview
  *  toggles it open via its openScopeMenu state on re-render. */
 function scopeInstallButton(vm: DetailsVM, scope: Scope): TemplateResult {
-  return html`<div class="split-button sm"><button class="split-main" data-action="install" data-scope="${scope}">Install</button><button class="split-arrow" data-action="scope-menu" title="More install options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${scope}"><span class="menu-label">Install Version</span></button></div></div>`;
+  return html`<div class="split-button sm">
+    <button class="split-main" data-action="install" data-scope="${scope}">Install</button
+    ><button class="split-arrow" data-action="scope-menu" title="More install options">
+      <span class="codicon codicon-chevron-down"></span>
+    </button>
+    <div class="scope-menu hidden">
+      <button
+        class="menu-item"
+        data-action="pick-version"
+        data-repo="${vm.repo}"
+        data-scope="${scope}"
+      >
+        <span class="menu-label">Install Version</span>
+      </button>
+    </div>
+  </div>`;
 }
 
 /** Per-scope Uninstall split button (design 2a gear-first rework): main
@@ -814,9 +1031,38 @@ function scopeUninstallButton(vm: DetailsVM, install: InstallVM): TemplateResult
   if (install.viaBundles.length > 0) {
     // ponytail: multiple providing bundles open the first; a per-bundle
     // picker menu would need its own dropdown — add if that ceiling matters.
-    return html`<button class="via-bundle-btn" data-action="open-details" data-repo="${install.viaBundles[0] ?? ''}" title="${viaBundleTitle(install.viaBundles)}">Bundle<span class="codicon codicon-package"></span></button>`;
+    return html`<button
+      class="via-bundle-btn"
+      data-action="open-details"
+      data-repo="${install.viaBundles[0] ?? ''}"
+      title="${viaBundleTitle(install.viaBundles)}"
+    >
+      Bundle<span class="codicon codicon-package"></span>
+    </button>`;
   }
-  return html`<div class="split-button sm"><button class="split-main" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Uninstall</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button></div></div>`;
+  return html`<div class="split-button sm">
+    <button
+      class="split-main"
+      data-action="uninstall"
+      data-kind="${install.kind}"
+      data-name="${install.name}"
+      data-scope="${install.scope}"
+    >
+      Uninstall</button
+    ><button class="split-arrow" data-action="scope-menu" title="More options">
+      <span class="codicon codicon-chevron-down"></span>
+    </button>
+    <div class="scope-menu hidden">
+      <button
+        class="menu-item"
+        data-action="pick-version"
+        data-repo="${vm.repo}"
+        data-scope="${install.scope}"
+      >
+        <span class="menu-label">Switch Version</span>
+      </button>
+    </div>
+  </div>`;
 }
 
 /** Per-scope Update split button (item 1): when a direct install is outdated,
@@ -824,7 +1070,37 @@ function scopeUninstallButton(vm: DetailsVM, install: InstallVM): TemplateResult
  *  that scope, chevron opens "Switch to specific version…" (downgrade/pin) AND
  *  "Uninstall". Same geometry as the Install/Uninstall split buttons. */
 function scopeUpdateButton(vm: DetailsVM, install: InstallVM): TemplateResult {
-  return html`<div class="split-button sm"><button class="split-main" data-action="update" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Update</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}"><span class="menu-label">Uninstall</span></button></div></div>`;
+  return html`<div class="split-button sm">
+    <button
+      class="split-main"
+      data-action="update"
+      data-kind="${install.kind}"
+      data-name="${install.name}"
+      data-scope="${install.scope}"
+    >
+      Update</button
+    ><button class="split-arrow" data-action="scope-menu" title="More options">
+      <span class="codicon codicon-chevron-down"></span>
+    </button>
+    <div class="scope-menu hidden">
+      <button
+        class="menu-item"
+        data-action="pick-version"
+        data-repo="${vm.repo}"
+        data-scope="${install.scope}"
+      >
+        <span class="menu-label">Switch Version</span></button
+      ><button
+        class="menu-item"
+        data-action="uninstall"
+        data-kind="${install.kind}"
+        data-name="${install.name}"
+        data-scope="${install.scope}"
+      >
+        <span class="menu-label">Uninstall</span>
+      </button>
+    </div>
+  </div>`;
 }
 
 /** Row gear (design 2a gear-first rework): sits first in the actions cell on
@@ -837,7 +1113,12 @@ function scopeGear(entries: MenuEntry[]): TemplateResult | typeof nothing {
   if (entries.length === 0) {
     return nothing;
   }
-  return html`<span class="scope-gear"><button class="icon-button" data-action="scope-gear" title="More actions"><span class="codicon codicon-gear"></span></button><div class="scope-menu hidden">${renderMenuEntries(entries)}</div></span>`;
+  return html`<span class="scope-gear"
+    ><button class="icon-button" data-action="scope-gear" title="More actions">
+      <span class="codicon codicon-gear"></span>
+    </button>
+    <div class="scope-menu hidden">${renderMenuEntries(entries)}</div></span
+  >`;
 }
 
 function scopeRowShell(
@@ -847,24 +1128,30 @@ function scopeRowShell(
   cells: unknown,
 ): TemplateResult {
   const pathLabel = scope === 'project' ? '.grimoire/' : '~/.grimoire';
-  return html`
-<div class="scope-row${divided ? ' scope-row-divided' : ''}">
-  <span class="codicon codicon-${scope === 'project' ? 'root-folder' : 'globe'} scope-icon"></span>
-  <span class="scope-id">
-    <span class="scope-name">${scopeLabel(scope, vm.scopes.projectName)}</span>
-    <span class="scope-path mono">${pathLabel}</span>
-  </span>
-  ${cells}
-</div>`;
+  return html` <div class="scope-row${divided ? ' scope-row-divided' : ''}">
+    <span
+      class="codicon codicon-${scope === 'project' ? 'root-folder' : 'globe'} scope-icon"
+    ></span>
+    <span class="scope-id">
+      <span class="scope-name">${scopeLabel(scope, vm.scopes.projectName)}</span>
+      <span class="scope-path mono">${pathLabel}</span>
+    </span>
+    ${cells}
+  </div>`;
 }
 
 /** A scope row whose install state isn't known yet (skeleton, item 2): the same
  *  shell and column widths as a resolved row, with a spinner in the status cell,
  *  so the box holds its geometry and nothing shifts when the real state lands. */
 function pendingScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): TemplateResult {
-  const cells = html`<span class="scope-version scope-status-muted"><span class="mono scope-ver"></span><span class="scope-glyph"><span class="codicon codicon-loading codicon-modifier-spin"></span></span><span>Checking…</span></span>
-  <span class="scope-clients chip-list"></span>
-  <span class="scope-actions"></span>`;
+  const cells = html`<span class="scope-version scope-status-muted"
+      ><span class="mono scope-ver"></span
+      ><span class="scope-glyph"
+        ><span class="codicon codicon-loading codicon-modifier-spin"></span></span
+      ><span>Checking…</span></span
+    >
+    <span class="scope-clients chip-list"></span>
+    <span class="scope-actions"></span>`;
   return scopeRowShell(vm, scope, divided, cells);
 }
 
@@ -875,18 +1162,28 @@ function pendingScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): Templat
  *  we specifically cannot make — the artifact may well be installed. Per scope,
  *  unlike {@link pendingScopeRow}, which blanks the whole box. */
 function unknownScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): TemplateResult {
-  const cells = html`<span class="scope-version scope-status-muted"><span class="mono scope-ver"></span><span class="scope-glyph"><span class="codicon codicon-question"></span></span><span>Install state unknown</span></span>
-  <span class="scope-clients chip-list"></span>
-  <span class="scope-actions"></span>`;
+  const cells = html`<span class="scope-version scope-status-muted"
+      ><span class="mono scope-ver"></span
+      ><span class="scope-glyph"><span class="codicon codicon-question"></span></span
+      ><span>Install state unknown</span></span
+    >
+    <span class="scope-clients chip-list"></span>
+    <span class="scope-actions"></span>`;
   return scopeRowShell(vm, scope, divided, cells);
 }
 
 /** A scope with no install: muted "Not installed" cell + gear (Copy repo path
  *  only) + the Install split button. */
 function notInstalledScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): TemplateResult {
-  const cells = html`<span class="scope-version scope-status-muted"><span class="mono scope-ver"></span><span class="scope-glyph"><span class="status-dot muted"></span></span><span>Not installed</span></span>
-  <span class="scope-clients chip-list"></span>
-  <span class="scope-actions">${scopeGear(scopeRowMenuEntries(null))}${scopeInstallButton(vm, scope)}</span>`;
+  const cells = html`<span class="scope-version scope-status-muted"
+      ><span class="mono scope-ver"></span
+      ><span class="scope-glyph"><span class="status-dot muted"></span></span
+      ><span>Not installed</span></span
+    >
+    <span class="scope-clients chip-list"></span>
+    <span class="scope-actions"
+      >${scopeGear(scopeRowMenuEntries(null))}${scopeInstallButton(vm, scope)}</span
+    >`;
   return scopeRowShell(vm, scope, divided, cells);
 }
 
@@ -895,8 +1192,14 @@ function notInstalledScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): Te
  *  not-installed row so the two align (design 2a gear-first rework). */
 function installedScopeRow(vm: DetailsVM, install: InstallVM, divided: boolean): TemplateResult {
   const versionInfo = install.updateAvailable
-    ? html`<span class="mono scope-ver">${install.version ?? ''}</span><span class="scope-glyph"><span class="status-dot"></span></span><span class="scope-update-hint">${vm.latestVersion ? `${vm.latestVersion} available` : 'update available'}</span>`
-    : html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-check ok-check"></span></span><span class="scope-ok-hint">up to date</span>`;
+    ? html`<span class="mono scope-ver">${install.version ?? ''}</span
+        ><span class="scope-glyph"><span class="status-dot"></span></span
+        ><span class="scope-update-hint"
+          >${vm.latestVersion ? `${vm.latestVersion} available` : 'update available'}</span
+        >`
+    : html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span
+        ><span class="scope-glyph"><span class="codicon codicon-check ok-check"></span></span
+        ><span class="scope-ok-hint">up to date</span>`;
   // Update takes precedence on the one row button for a direct (non-bundle)
   // outdated install; via-bundle rows always show the Bundle nav button (its
   // update path stays in the gear), and up-to-date rows show Uninstall.
@@ -905,8 +1208,8 @@ function installedScopeRow(vm: DetailsVM, install: InstallVM, divided: boolean):
       ? scopeUpdateButton(vm, install)
       : scopeUninstallButton(vm, install);
   const cells = html`<span class="scope-version">${versionInfo}</span>
-  <span class="scope-clients chip-list">${clientChips(install.clients)}</span>
-  <span class="scope-actions">${scopeGear(scopeRowMenuEntries(install))}${button}</span>`;
+    <span class="scope-clients chip-list">${clientChips(install.clients)}</span>
+    <span class="scope-actions">${scopeGear(scopeRowMenuEntries(install))}${button}</span>`;
   return scopeRowShell(vm, install.scope, divided, cells);
 }
 
@@ -939,20 +1242,30 @@ function renderHeaderActions(vm: DetailsVM): TemplateResult {
 function renderRailSkeleton(): TemplateResult {
   const line = (w: string): TemplateResult => html`<div class="rail-skeleton-line ${w}"></div>`;
   const block = (rows: TemplateResult[]): TemplateResult =>
-    html`<div class="rail-panel"><div class="rail-skeleton-title"></div>${rows}</div>`;
+    html`<div class="rail-panel">
+      <div class="rail-skeleton-title"></div>
+      ${rows}
+    </div>`;
   return html`${block([line('w80'), line('w60'), line('w70')])}${block([line('w70'), line('w50')])}`;
 }
 
 /** A bundle member as a clickable "What's inside" box (CONTENTS tab, item 5). */
 function memberBox(m: BundleMemberVM): TemplateResult {
-  return html`
-<div class="member-box" data-action="${ifDefined(m.repo ? 'open-details' : undefined)}" data-repo="${ifDefined(m.repo ?? undefined)}" role="${ifDefined(m.repo ? 'button' : undefined)}" tabindex="${ifDefined(m.repo ? '0' : undefined)}">
-  ${kindTile(m.kind, 'member-tile')}
-  <div class="member-main">
-    <div class="member-head">${memberNameEl(m.name, m.repo !== null)}${m.version ? html`<span class="mono member-version">${m.version}</span>` : nothing}</div>
-    ${m.description ? html`<div class="member-desc">${m.description}</div>` : nothing}
-  </div>
-</div>`;
+  return html` <div
+    class="member-box"
+    data-action="${ifDefined(m.repo ? 'open-details' : undefined)}"
+    data-repo="${ifDefined(m.repo ?? undefined)}"
+    role="${ifDefined(m.repo ? 'button' : undefined)}"
+    tabindex="${ifDefined(m.repo ? '0' : undefined)}"
+  >
+    ${kindTile(m.kind, 'member-tile')}
+    <div class="member-main">
+      <div class="member-head">
+        ${memberNameEl(m.name, m.repo !== null)}${m.version ? html`<span class="mono member-version">${m.version}</span>` : nothing}
+      </div>
+      ${m.description ? html`<div class="member-desc">${m.description}</div>` : nothing}
+    </div>
+  </div>`;
 }
 
 /**
@@ -1005,7 +1318,10 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
   if (vm.kind === 'bundle') {
     const boxes = vm.members.map(memberBox);
     const manifest = vm.contentJson
-      ? html`<div class="contents-manifest"><div class="contents-manifest-label">Manifest</div>${renderJsonBlock(vm.contentJson)}</div>`
+      ? html`<div class="contents-manifest">
+          <div class="contents-manifest-label">Manifest</div>
+          ${renderJsonBlock(vm.contentJson)}
+        </div>`
       : nothing;
     return html`${boxes}${manifest}`;
   }
@@ -1047,7 +1363,9 @@ export function revalidateIndicator(
   }
   if (state === 'failed') {
     const title = message ?? 'Refresh failed — showing cached data';
-    return html`<span class="revalidate-icon" data-action="revalidate-error" title="${title}">${REVALIDATE_ICON.failed}</span>`;
+    return html`<span class="revalidate-icon" data-action="revalidate-error" title="${title}"
+      >${REVALIDATE_ICON.failed}</span
+    >`;
   }
   return html`<span class="revalidate-icon">${REVALIDATE_ICON[state]}</span>`;
 }
@@ -1058,34 +1376,54 @@ const revalidateHost = html`<div class="revalidate-indicator" id="revalidate-ind
 
 export function renderDetails(vm: DetailsVM): TemplateResult {
   const icon = vm.logoUri
-    ? html`<div class="header-icon"><img class="header-logo" src="${vm.logoUri}" alt=""/></div>`
+    ? html`<div class="header-icon"><img class="header-logo" src="${vm.logoUri}" alt="" /></div>`
     : kindTile(vm.kind, 'header-icon');
   const nameClass = vm.deprecated ? 'header-name struck' : 'header-name';
   // While an action runs, or before the real VM has landed, the header actions
   // are inert (CSS) — this stops a double click starting a second grim command
   // (e.g. a duplicate `grim init`) and stops clicks on a cached/stale loading
   // snapshot from firing against the wrong artifact.
-  const header = html`
-<div class="details-header${vm.busy ? ' busy' : ''}${vm.loading ? ' loading' : ''}">
-  ${icon}
-  <div class="header-main">
-    <div class="header-title">
-      <span class="${nameClass}">${vm.name}</span>
-      ${kindBadge(vm.kind)}
-      <span class="header-registry"><span class="codicon codicon-globe"></span>${vm.registryHost}</span>
-      ${headerVersionBadge(vm)}
+  const header = html` <div
+    class="details-header${vm.busy ? ' busy' : ''}${vm.loading ? ' loading' : ''}"
+  >
+    ${icon}
+    <div class="header-main">
+      <div class="header-title">
+        <span class="${nameClass}">${vm.name}</span>
+        ${kindBadge(vm.kind)}
+        <span class="header-registry"
+          ><span class="codicon codicon-globe"></span>${vm.registryHost}</span
+        >
+        ${headerVersionBadge(vm)}
+      </div>
+      <div class="header-repo-row">
+        <span
+          class="header-repo mono"
+          data-action="copy"
+          data-repo="${vm.repo}"
+          title="Copy repo path"
+          >${vm.repo}</span
+        >
+        <button
+          class="header-share"
+          data-action="copy-share"
+          data-repo="${vm.repo}"
+          title="Copy share link"
+        >
+          <span class="codicon codicon-link"></span>
+        </button>
+        ${
+          vm.isPreview
+            ? html`<button class="header-share header-pin" data-action="promote" title="Keep open">
+                <span class="codicon codicon-pin"></span>
+              </button>`
+            : nothing
+        }
+      </div>
+      <div class="header-desc">${headerDesc(vm.description)}</div>
+      ${renderHeaderActions(vm)}
     </div>
-    <div class="header-repo-row">
-      <span class="header-repo mono" data-action="copy" data-repo="${vm.repo}" title="Copy repo path">${vm.repo}</span>
-      <button class="header-share" data-action="copy-share" data-repo="${vm.repo}" title="Copy share link"><span class="codicon codicon-link"></span></button>
-      ${vm.isPreview
-        ? html`<button class="header-share header-pin" data-action="promote" title="Keep open"><span class="codicon codicon-pin"></span></button>`
-        : nothing}
-    </div>
-    <div class="header-desc">${headerDesc(vm.description)}</div>
-    ${renderHeaderActions(vm)}
-  </div>
-</div>`;
+  </div>`;
   // Skeleton (item 2): the FULL structure renders instantly — header with scope
   // boxes, the tab strip, and the 300px rail with placeholder panels. Header
   // geometry and the rail column are reserved up front (the header markup is
@@ -1095,18 +1433,38 @@ export function renderDetails(vm: DetailsVM): TemplateResult {
   // and rail placeholder heights are approximate, not exact matches.
   // Label is README; data-tab id stays 'details' internally (renaming it would
   // ripple to main.ts panel ids + #md-details + CSS for no user-visible gain).
-  const disabledDetailsTab = html`<button class="tab" data-tab="details" disabled title="No README available">README</button>`;
-  const disabledChangelogTab = html`<button class="tab" data-tab="changelog" disabled title="No changelog available">CHANGELOG</button>`;
+  const disabledDetailsTab = html`<button
+    class="tab"
+    data-tab="details"
+    disabled
+    title="No README available"
+  >
+    README
+  </button>`;
+  const disabledChangelogTab = html`<button
+    class="tab"
+    data-tab="changelog"
+    disabled
+    title="No changelog available"
+  >
+    CHANGELOG
+  </button>`;
   if (vm.loading) {
-    return html`${revalidateHost}${header}
-${renderDeprecationBanner(vm)}
-<div class="details-body">
-  <div class="reading-column"><div class="reading-content">
-    <div class="tabs">${disabledDetailsTab}<button class="tab active" data-tab="contents">CONTENTS</button>${disabledChangelogTab}</div>
-    <div class="tab-panel" id="panel-contents"><div class="details-loading"><vscode-progress-ring></vscode-progress-ring></div></div>
-  </div></div>
-  <div class="right-rail">${renderRailSkeleton()}</div>
-</div>`;
+    return html`${revalidateHost}${header} ${renderDeprecationBanner(vm)}
+      <div class="details-body">
+        <div class="reading-column">
+          <div class="reading-content">
+            <div class="tabs">
+              ${disabledDetailsTab}<button class="tab active" data-tab="contents">CONTENTS</button
+              >${disabledChangelogTab}
+            </div>
+            <div class="tab-panel" id="panel-contents">
+              <div class="details-loading"><vscode-progress-ring></vscode-progress-ring></div>
+            </div>
+          </div>
+        </div>
+        <div class="right-rail">${renderRailSkeleton()}</div>
+      </div>`;
   }
   // Tab semantics (item 5): DETAILS always leads the strip, CHANGELOG always
   // closes it. With their content they are enabled; without, they render
@@ -1130,20 +1488,13 @@ ${renderDeprecationBanner(vm)}
   const readingBody = vm.error
     ? html`<div class="error-state"><span class="codicon codicon-error"></span> ${vm.error}</div>`
     : html`<div class="tabs">${tabs}</div>
-    ${panels}`;
-  return html`${revalidateHost}
-${header}
-${renderDeprecationBanner(vm)}
-<div class="details-body">
-  <div class="reading-column"><div class="reading-content">
-    ${readingBody}
-  </div></div>
-  <div class="right-rail">
-    ${renderInstallationPanel(vm)}
-    ${renderContentsPanel(vm)}
-    ${renderPackagePanel(vm)}
-    ${renderResourcesPanel(vm)}
-    ${renderTagsPanel(vm)}
-  </div>
-</div>`;
+        ${panels}`;
+  return html`${revalidateHost} ${header} ${renderDeprecationBanner(vm)}
+    <div class="details-body">
+      <div class="reading-column"><div class="reading-content">${readingBody}</div></div>
+      <div class="right-rail">
+        ${renderInstallationPanel(vm)} ${renderContentsPanel(vm)} ${renderPackagePanel(vm)}
+        ${renderResourcesPanel(vm)} ${renderTagsPanel(vm)}
+      </div>
+    </div>`;
 }

@@ -154,7 +154,11 @@ suite('settings escaping', () => {
   test('hostile registry field title/description (grim config registry fields) stay inert', async () => {
     const state = settingsState({
       registryFields: [
-        { key: 'index', title: '<script>alert(1)</script>', description: '<img src=x onerror=alert(1)>' },
+        {
+          key: 'index',
+          title: '<script>alert(1)</script>',
+          description: '<img src=x onerror=alert(1)>',
+        },
       ],
     });
     const html = await litHtml(

@@ -388,11 +388,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   }
 
   /** Posts an already-built VM to a panel, syncing its title + icon. */
-  private async postBuilt(
-    repo: string,
-    panel: vscode.WebviewPanel,
-    vm: DetailsVM,
-  ): Promise<void> {
+  private async postBuilt(repo: string, panel: vscode.WebviewPanel, vm: DetailsVM): Promise<void> {
     // The preview slot can be retargeted while a build awaits; if this panel now
     // tracks a different repo, drop the stale VM so B's document isn't titled for
     // A. (undefined = untracked panel, e.g. a test double — post as asked.)
@@ -537,9 +533,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     /** Artifact name for stale-lock recovery; set only by per-name update. */
     staleLockName?: string,
   ): Promise<void> {
-    await this.suspendWhile(() =>
-      this.actionInner(repo, panel, steps, scope, busy, staleLockName),
-    );
+    await this.suspendWhile(() => this.actionInner(repo, panel, steps, scope, busy, staleLockName));
   }
 
   private async actionInner(
@@ -677,7 +671,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     const [logoUri, readme, changelog] = await Promise.all([
       want.logo ? this.fetchLogo(repo, fetchValue.files) : Promise.resolve(null),
       want.readme ? this.fetchDoc(repo, fetchValue.files, 'readme.md') : Promise.resolve(null),
-      want.changelog ? this.fetchDoc(repo, fetchValue.files, 'changelog.md') : Promise.resolve(null),
+      want.changelog
+        ? this.fetchDoc(repo, fetchValue.files, 'changelog.md')
+        : Promise.resolve(null),
     ]);
     return { logoUri, readme, changelog };
   }
@@ -1041,7 +1037,10 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
     // Content changed, no cache, or describe failed (offline): full pipeline.
     // ponytail: re-runs describe once here — one extra list_tags, fine.
-    const { vm, entry } = await this.buildPipeline(repo, snapshot ?? (await this.scopes.snapshot()));
+    const { vm, entry } = await this.buildPipeline(
+      repo,
+      snapshot ?? (await this.scopes.snapshot()),
+    );
     if (entry) {
       await this.saveEntry(repo, entry);
     }

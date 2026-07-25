@@ -1066,7 +1066,10 @@ vscode-button.sm {
 }
 
 .json-key {
-  color: var(--vscode-debugTokenExpression-name, var(--vscode-symbolIcon-propertyForeground, var(--vscode-textLink-foreground)));
+  color: var(
+    --vscode-debugTokenExpression-name,
+    var(--vscode-symbolIcon-propertyForeground, var(--vscode-textLink-foreground))
+  );
 }
 .json-string {
   color: var(--vscode-debugTokenExpression-string, var(--vscode-charts-orange, #ce9178));

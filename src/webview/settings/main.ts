@@ -105,7 +105,9 @@ function render(): void {
  *  source) from a freshly-arrived or freshly-cached ready state. Shared by
  *  handleState and the cache-hit scope-switch path so both keep it in sync
  *  with whatever `vm` is currently showing. */
-function snapshotLastGood(state: SettingsState): Map<string, { value: string | null; set: boolean }> {
+function snapshotLastGood(
+  state: SettingsState,
+): Map<string, { value: string | null; set: boolean }> {
   return new Map(allRows(state).map((r) => [r.key, { value: r.value, set: r.set }]));
 }
 
@@ -199,7 +201,11 @@ function submitAddRegistry(): void {
   const alias = draft.alias.trim();
   const locator = draftToLocator(draft);
   pendingRegistryAlias = alias;
-  addRegistry = { open: addRegistry.open, draft: addRegistry.draft, helpOpen: addRegistry.helpOpen };
+  addRegistry = {
+    open: addRegistry.open,
+    draft: addRegistry.draft,
+    helpOpen: addRegistry.helpOpen,
+  };
   post({ type: 'addRegistry', scope: currentScope, alias, locator, default: draft.default });
   render();
 }

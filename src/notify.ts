@@ -28,10 +28,7 @@ export function initNotify(context: vscode.ExtensionContext): void {
 /** Runs `fn` while a spinning `Grimoire: <title>` shows in the status bar.
  *  Refcounted: concurrent runs show the latest title; the item hides when the
  *  last settles. */
-export async function runWithStatusProgress<T>(
-  title: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+export async function runWithStatusProgress<T>(title: string, fn: () => Promise<T>): Promise<T> {
   const bar = statusItem();
   bar.text = `$(sync~spin) Grimoire: ${title}`;
   refs++;

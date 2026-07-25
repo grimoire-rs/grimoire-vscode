@@ -30,7 +30,11 @@ import {
   searchScopeFor,
   type ScopeService,
 } from '../scopes';
-import { buildSettingsVM, resolveSettingsPhase, type SettingsSource } from '../webview/settings/model';
+import {
+  buildSettingsVM,
+  resolveSettingsPhase,
+  type SettingsSource,
+} from '../webview/settings/model';
 import type {
   HostToSettings,
   SettingsRegistryFieldVM,
@@ -229,7 +233,11 @@ export class SettingsManager {
         .run<ItemsEnvelope<RegistryFieldEntry>>(registryFieldsArgs(), 'global')
         .then((result) =>
           result.ok
-            ? result.value.items.map((f) => ({ key: f.key, title: f.title, description: f.description }))
+            ? result.value.items.map((f) => ({
+                key: f.key,
+                title: f.title,
+                description: f.description,
+              }))
             : [],
         );
     }
@@ -327,7 +335,10 @@ export class SettingsManager {
     // 79); an unconfigured global would otherwise silently list in-memory
     // defaults as a fully "ready" form — no different from the panel writing
     // the very first control edit against a config that never existed.
-    if (resolveSettingsPhase({ scope, scopes: scopesVM, grimMissing: false, configExists }) !== 'ready') {
+    if (
+      resolveSettingsPhase({ scope, scopes: scopesVM, grimMissing: false, configExists }) !==
+      'ready'
+    ) {
       return buildSettingsVM({
         scope,
         scopes: { ...scopesVM, projectConfigured: false },

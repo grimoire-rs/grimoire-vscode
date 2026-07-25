@@ -147,7 +147,7 @@ suite('grim arg builders', () => {
     ]);
   });
 
-  test('configSetArgs forces a leading-hyphen value positional (no allow_hyphen_values on grim\'s `set`)', () => {
+  test("configSetArgs forces a leading-hyphen value positional (no allow_hyphen_values on grim's `set`)", () => {
     assert.deepStrictEqual(configSetArgs('options.tui.tree_separators', '--'), [
       'config',
       'set',
@@ -161,10 +161,14 @@ suite('grim arg builders', () => {
     // --dry-run is a flag, not a positional: it must land before the `--`
     // that forces key/value to parse positionally, or it would itself be
     // swallowed as a third positional.
-    assert.deepStrictEqual(
-      configSetArgs('options.tui.default_view', 'tree', { dryRun: true }),
-      ['config', 'set', '--dry-run', '--', 'options.tui.default_view', 'tree'],
-    );
+    assert.deepStrictEqual(configSetArgs('options.tui.default_view', 'tree', { dryRun: true }), [
+      'config',
+      'set',
+      '--dry-run',
+      '--',
+      'options.tui.default_view',
+      'tree',
+    ]);
   });
 
   test('configSetArgs({dryRun: false}) matches the no-options form', () => {
@@ -250,7 +254,8 @@ suite('grim report parsing', () => {
   });
 
   test('error reason is surfaced when present', () => {
-    const doc = '{"error":{"code":"data","exit":65,"message":"partial-resolve refused","reason":"stale-lock"}}';
+    const doc =
+      '{"error":{"code":"data","exit":65,"message":"partial-resolve refused","reason":"stale-lock"}}';
     const result = parseReport(doc, 65, '');
     assert.ok(!result.ok && result.kind === 'error');
     assert.strictEqual(result.reason, 'stale-lock');
@@ -381,7 +386,10 @@ suite('grim report parsing', () => {
     });
     const result = parseReport<ConfigEntry>(doc, 0, '');
     assert.ok(result.ok);
-    assert.deepStrictEqual(result.value.constraints, { item_pattern: '^[^\\s\\p{C}]$', item_width: 1 });
+    assert.deepStrictEqual(result.value.constraints, {
+      item_pattern: '^[^\\s\\p{C}]$',
+      item_width: 1,
+    });
   });
 
   test('ConfigEntry: enum type carries its values list and a non-null default', () => {

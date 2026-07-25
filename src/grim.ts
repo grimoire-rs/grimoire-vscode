@@ -257,11 +257,7 @@ export interface RegistryFieldEntry {
 /** The write confirmation shared by `config set`, `config unset`, and every
  *  `config registry add|rm|use` — one report shape, discriminated by `action`. */
 export type ConfigWriteAction =
-  | 'set'
-  | 'unset'
-  | 'registry-added'
-  | 'registry-removed'
-  | 'registry-default';
+  'set' | 'unset' | 'registry-added' | 'registry-removed' | 'registry-default';
 
 export interface ConfigWriteResult {
   action: ConfigWriteAction;
@@ -582,7 +578,11 @@ export function configListArgs(options: { all?: boolean } = {}): string[] {
  *  not a positional) must land BEFORE the `--` separator, or it would be
  *  swallowed as a third positional instead of parsed as a flag. `--dry-run`
  *  is `set`-only in grim: validates and reports without writing. */
-export function configSetArgs(key: string, value: string, options: { dryRun?: boolean } = {}): string[] {
+export function configSetArgs(
+  key: string,
+  value: string,
+  options: { dryRun?: boolean } = {},
+): string[] {
   const args = ['config', 'set'];
   if (options.dryRun) {
     args.push('--dry-run');

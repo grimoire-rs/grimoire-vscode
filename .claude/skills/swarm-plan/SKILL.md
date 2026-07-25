@@ -3,13 +3,13 @@ name: swarm-plan
 description: Use for feature planning, task decomposition, multi-perspective research, or ADR scaffolding. Tier (`low | auto | high | max`) scales research depth, architect model, and review breadth. Canonical research primitive for AI config / ADR work.
 user-invocable: true
 disable-model-invocation: false
-argument-hint: "[tier] <target> [--flags]"
+argument-hint: '[tier] <target> [--flags]'
 triggers:
-  - "plan the"
-  - "plan a new"
-  - "research and decide"
-  - "how should we approach"
-  - "decompose the feature"
+  - 'plan the'
+  - 'plan a new'
+  - 'research and decide'
+  - 'how should we approach'
+  - 'decompose the feature'
 ---
 
 # Planning Orchestrator — Tiered
@@ -45,6 +45,7 @@ never duplicated across tier files.
 ### 1. Parse arguments and detect GitHub target
 
 Detect GitHub refs (ordered, first match win):
+
 1. Full `https://github.com/<owner>/<repo>/(pull|issues)/<N>` URL
 2. `PR <N>` / `pull/<N>` / `pulls/<N>` → PR
 3. `issue <N>` / `issues/<N>` → issue
@@ -83,9 +84,10 @@ I Would Launch (per phase), Artifacts I Would Produce, Estimated Cost
 (implementation, PR creation).
 
 **Approval UI** (always single interaction):
+
 - Default: `EnterPlanMode` with meta-plan path; resume on approve.
-  *If skill resume after `ExitPlanMode` unreliable in practice,
-  fall back to `AskUserQuestion` with Approve / Edit / Cancel options.*
+  _If skill resume after `ExitPlanMode` unreliable in practice,
+  fall back to `AskUserQuestion` with Approve / Edit / Cancel options._
 - `--form`: ONE `AskUserQuestion` call with ≤4 batched axis questions
   (Tier / Architect / Research / Codex), first option "Recommended".
   Never sequential prompts. Form IS preview — do not also
@@ -117,16 +119,16 @@ phase content duplicated here.
 
 See `workflow-swarm.md` for worker types, models, tools, focus modes.
 
-| Phase | Worker | Count | Role |
-|---|---|---|---|
-| Discover | `worker-architecture-explorer` | 0–1 | Current-state mapping |
-| Discover | `worker-explorer` | 1–4 | Subsystem deep-dive |
-| Research | `worker-researcher` | 0–3 | Technology landscape |
-| Design (complex) | `worker-architect` | 0–1 | ADR / system design |
-| Review | `worker-reviewer` (spec-compliance) | 1 | Plan consistency |
-| Review (One-Way Door) | `worker-architect` | 0–1 | Trade-off honesty |
-| Review | `worker-researcher` | 0–1 | SOTA gap check |
-| Cross-model | `codex-adversary` (plan-artifact) | 0–1 | Cross-family review |
+| Phase                 | Worker                              | Count | Role                  |
+| --------------------- | ----------------------------------- | ----- | --------------------- |
+| Discover              | `worker-architecture-explorer`      | 0–1   | Current-state mapping |
+| Discover              | `worker-explorer`                   | 1–4   | Subsystem deep-dive   |
+| Research              | `worker-researcher`                 | 0–3   | Technology landscape  |
+| Design (complex)      | `worker-architect`                  | 0–1   | ADR / system design   |
+| Review                | `worker-reviewer` (spec-compliance) | 1     | Plan consistency      |
+| Review (One-Way Door) | `worker-architect`                  | 0–1   | Trade-off honesty     |
+| Review                | `worker-researcher`                 | 0–1   | SOTA gap check        |
+| Cross-model           | `codex-adversary` (plan-artifact)   | 0–1   | Cross-family review   |
 
 Max concurrent workers: 8 (per `workflow-swarm.md`).
 
@@ -166,28 +168,33 @@ ground external findings in local code.
 ## Plan Complete: [Feature or "Resolves #N"]
 
 ### Classification
+
 - **Scope**: Small | Medium | Large
 - **Reversibility**: Two-Way | One-Way Medium | One-Way High
 - **Tier**: low | high | max
 - **Overlays**: architect=X, research=Y, codex=Z
 
 ### Artifacts
+
 - `.claude/state/plans/plan_[feature].md` (with `## Status` block initialized)
 - `.claude/state/current_plan.md` (pointer)
 - `.claude/artifacts/research_[topic].md`
 - `.claude/artifacts/adr_[decision].md` (One-Way Door High)
 
 ### Executable Phases (for /swarm-execute)
+
 - **Stub**: components to create with `throw new Error('unimplemented')`
 - **Specify**: tests to write from the design record
 - **Implement**: stub bodies to fill
 - **Review**: perspectives to run
 
 ### Deferred Findings (require human judgment)
+
 - Claude panel: ...
 - Codex plan review: ...
 
 ### Next Step
+
     /swarm-execute .claude/state/plans/plan_[feature].md
 ```
 

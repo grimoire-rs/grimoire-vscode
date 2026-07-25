@@ -13,7 +13,7 @@ Focused test agent for swarm. Write tests, validate impl.
 
 ### Specification (contract-first TDD)
 
-Write tests from **design record** (plan artifact), NOT impl or stubs. Mode runs *before* impl — tests encode expected behavior as executable spec.
+Write tests from **design record** (plan artifact), NOT impl or stubs. Mode runs _before_ impl — tests encode expected behavior as executable spec.
 
 **Process:**
 
@@ -27,7 +27,7 @@ Write tests from **design record** (plan artifact), NOT impl or stubs. Mode runs
 
 - Tests describe WHAT, not HOW — test observable behavior, not internals
 - Each test trace to specific requirement in design record
-- Do NOT read impl code or stub bodies — only design record for behavior, stub *signatures* (types, params, return types) for compile
+- Do NOT read impl code or stub bodies — only design record for behavior, stub _signatures_ (types, params, return types) for compile
 - Prefer black-box: call public API, assert output/side effects
 - Name tests after behavior: `'install into unconfigured project shows init notice'`, not `'test install helper'`
 - If design record missing behavior/edge case needed for test, flag as design gap — do NOT invent requirements

@@ -1,7 +1,7 @@
 ---
 paths:
-  - ".claude/skills/**"
-  - ".claude/state/**"
+  - '.claude/skills/**'
+  - '.claude/state/**'
 ---
 
 # Plan Status Protocol
@@ -20,6 +20,7 @@ Every plan in `.claude/state/plans/plan_*.md` carries a `## Status` block at the
 ```
 
 Allowed `Step` values:
+
 - `/swarm-plan → plan-approved`
 - `/swarm-execute → <stage>` (Stub, Specify, Implement, Review-Fix Loop)
 - `/swarm-review → round N`
@@ -42,12 +43,12 @@ Allowed `Step` values:
 
 ## Per-skill mutation table
 
-| Skill | Reads | Writes |
-|---|---|---|
-| `/swarm-plan` | — | Init Status in new plan; write `current_plan.md` |
-| `/swarm-execute` | Status | Flip `Step` on phase entry/advance; bump `Last update` |
-| `/swarm-review` | Status | Flip `Step` on round entry; set `awaiting /finalize` or `awaiting /swarm-execute` on verdict |
-| `/finalize` | Status | **Refuse if Step ≠ `finalized` and `Active phase` not last** (`--force` overrides); on success set `Step: finalized`, delete `current_plan.md` |
+| Skill            | Reads  | Writes                                                                                                                                         |
+| ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/swarm-plan`    | —      | Init Status in new plan; write `current_plan.md`                                                                                               |
+| `/swarm-execute` | Status | Flip `Step` on phase entry/advance; bump `Last update`                                                                                         |
+| `/swarm-review`  | Status | Flip `Step` on round entry; set `awaiting /finalize` or `awaiting /swarm-execute` on verdict                                                   |
+| `/finalize`      | Status | **Refuse if Step ≠ `finalized` and `Active phase` not last** (`--force` overrides); on success set `Step: finalized`, delete `current_plan.md` |
 
 Phase advancement (`Active phase: N → N+1`) is the orchestrator/plan-author decision encoded as a Step transition — never an automatic side-effect of commits.
 

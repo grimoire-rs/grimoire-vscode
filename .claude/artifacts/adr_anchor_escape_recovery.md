@@ -58,7 +58,7 @@ direct a recursive delete outside the anchor root**, which is a materially large
 primitive than the write it was assumed to be. Read paths alone are sufficient to fix
 #57.
 
-*Corrected 2026-07-21 (Phase 3 architect review).* An earlier draft of this ADR
+_Corrected 2026-07-21 (Phase 3 architect review)._ An earlier draft of this ADR
 claimed the relax would give grim a delete-outside-the-root capability it did not
 already have. That is false, and the looser claim "grim never deletes outside the
 anchor root" was never an invariant: the install path already does it. `remove_path`
@@ -77,7 +77,7 @@ the user's own directory layout is not.
 
 **Why the leaf stays strict.** Layer 1 (`path_anchor.rs:336-342`) already rejects
 non-`Normal` components, so an escape with a non-symlink leaf can only originate
-from a symlinked ancestor *inside* the anchor root — the user's own layout. A
+from a symlinked ancestor _inside_ the anchor root — the user's own layout. A
 symlinked leaf is the CWE-59 shape and is where the installer writes
 (`installer.rs:649-659`).
 
@@ -88,7 +88,7 @@ no-wildcard match at `prune.rs:81-88`.
 
 **Threat-model honesty.** An earlier draft justified this by citing
 `path_anchor.rs:300-313` as already excluding the adversary. That citation is wrong:
-the doc excludes only a *racing* adversary ("swapped between this call and the
+the doc excludes only a _racing_ adversary ("swapped between this call and the
 caller's filesystem op"). A **pre-planted** symlink is precisely what Layer 2's own
 comment at `:346-348` says the guard exists for. This ADR narrows that guard on read
 paths as a deliberate, documented trade-off — not as something the existing doc

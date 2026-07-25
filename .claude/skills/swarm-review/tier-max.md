@@ -81,34 +81,52 @@ Produce review report using shared skeleton from `SKILL.md`:
 
 ```markdown
 ## Code Review: [target]
+
 ### Summary
+
 - Verdict: [Approve / Needs Work / Request Changes]
 - Tier: max
 - Baseline: <base>
 - Diff: N files, +L / -L lines, S subsystems
 - Cross-model: [ran | skipped: <reason>]
+
 ### Stage 1 — Correctness
+
 #### Spec-compliance (post-Implement traceability)
+
 #### Test Coverage (Specify-phase adequacy)
+
 ### Stage 2 — Adversarial panel
+
 #### Quality
+
 #### Security
+
 #### Performance
+
 #### Documentation
+
 #### Architecture
+
 #### SOTA / Technical Soundness
+
 ### Cross-Model Adversarial (Codex)
+
 ### Root-Cause Analysis
+
 [Clusters with systemic fixes]
+
 ### Deferred Findings
 ```
 
 **Verdict rules**:
+
 - **Request Changes** if any Block-tier finding unresolved; any security vulnerability; any architect-flagged boundary violation; breaking changes lack migration plan; tests absent for new behavior; systemic cause affecting ≥3 findings
 - **Needs Work** if Warn-tier findings exist or Cross-model pass surfaced actionable findings not yet addressed
 - **Approve** otherwise
 
 At max-tier, explicitly surface in Summary:
+
 - Whether Codex gate ran or skipped (with reason)
 - Architect-flagged boundary or ADR-compliance concerns
 - SOTA gaps researcher flagged

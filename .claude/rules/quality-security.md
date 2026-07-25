@@ -1,10 +1,10 @@
 ---
 paths:
-  - ".github/workflows/**"
-  - ".github/actions/**"
-  - "src/webview/**"
-  - "src/installer.ts"
-  - "src/grim.ts"
+  - '.github/workflows/**'
+  - '.github/actions/**'
+  - 'src/webview/**'
+  - 'src/installer.ts'
+  - 'src/grim.ts'
 ---
 
 # Security Standards
@@ -23,27 +23,27 @@ Deep-dive reference for security reviews.
 
 ## OWASP Top 10 2021
 
-| Category | Check For |
-|----------|-----------|
-| Broken Access Control | Missing authorization checks |
-| Cryptographic Failures | Unencrypted sensitive data |
-| Injection | SQL, Command, XSS vulnerabilities |
-| Insecure Design | Missing threat modeling |
-| Security Misconfiguration | Default credentials, debug enabled |
-| Vulnerable Components | Outdated/CVE-affected packages |
-| Auth Failures | Weak passwords, session issues |
-| Integrity Failures | Unsigned updates, untrusted deserialization |
-| Logging Failures | Missing audit trails |
-| SSRF | Unvalidated URLs in server requests |
+| Category                  | Check For                                   |
+| ------------------------- | ------------------------------------------- |
+| Broken Access Control     | Missing authorization checks                |
+| Cryptographic Failures    | Unencrypted sensitive data                  |
+| Injection                 | SQL, Command, XSS vulnerabilities           |
+| Insecure Design           | Missing threat modeling                     |
+| Security Misconfiguration | Default credentials, debug enabled          |
+| Vulnerable Components     | Outdated/CVE-affected packages              |
+| Auth Failures             | Weak passwords, session issues              |
+| Integrity Failures        | Unsigned updates, untrusted deserialization |
+| Logging Failures          | Missing audit trails                        |
+| SSRF                      | Unvalidated URLs in server requests         |
 
 ## Severity Classification
 
-| Severity | Definition | Action |
-|----------|------------|--------|
-| Critical | Exploitable vulnerability, data loss risk, high impact | MUST fix before merge |
-| High | Exploitable vulnerability, breaking change, moderate impact, major bug | MUST fix before merge |
-| Medium | Requires conditions to exploit, performance issue, code smell | SHOULD fix, can negotiate |
-| Low | Best practice violation, style, minor improvement | COULD fix, optional |
+| Severity | Definition                                                             | Action                    |
+| -------- | ---------------------------------------------------------------------- | ------------------------- |
+| Critical | Exploitable vulnerability, data loss risk, high impact                 | MUST fix before merge     |
+| High     | Exploitable vulnerability, breaking change, moderate impact, major bug | MUST fix before merge     |
+| Medium   | Requires conditions to exploit, performance issue, code smell          | SHOULD fix, can negotiate |
+| Low      | Best practice violation, style, minor improvement                      | COULD fix, optional       |
 
 ## CWE References
 
@@ -68,6 +68,7 @@ Reference CWE (Common Weakness Enumeration) IDs for standardized vuln classifica
 Recurring attack surfaces in this extension. Use as STRIDE scoping checklist for any audit.
 
 ### Webview Content Injection (XSS)
+
 - Strict CSP: nonce scripts only, no remote content
 - markdown-it configured `html:false` — never relax
 - lit-html auto-escapes bindings; `unsafeHTML` reserved for markdown-it output and highlightJson's self-escaped spans — nothing else, ever
@@ -75,15 +76,18 @@ Recurring attack surfaces in this extension. Use as STRIDE scoping checklist for
 - Registry-sourced metadata (names, descriptions, READMEs) is untrusted input
 
 ### Process Spawning
+
 - grim spawned only via `execFile` in `src/grim.ts` — no shell, no string interpolation into argv
 - Never pass user/registry-controlled data as flags (argument injection); positional args after `--`
 
 ### Binary Auto-Install (`src/installer.ts`)
+
 - Release assets resolved via dist-manifest.json from the official GitHub repo only
 - Archive extraction via system `tar -xf` into extension storage — watch path traversal, symlink injection
 - Downloaded binary path never derived from untrusted input
 
 ### Message Protocol
+
 - Host validates webview messages (shape + expected values) before acting — a compromised webview must not gain arbitrary command execution
 
 ## Audit Checklist

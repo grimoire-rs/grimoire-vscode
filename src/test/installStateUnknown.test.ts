@@ -217,10 +217,7 @@ suite('unknown install state: sidebar', () => {
       !afterRepost.includes('data-action="install"'),
       'no Install button reappears on a card we can no longer vouch for',
     );
-    assert.ok(
-      !afterRepost.includes('data-action="update"'),
-      'no Update button reappears either',
-    );
+    assert.ok(!afterRepost.includes('data-action="update"'), 'no Update button reappears either');
     // The discriminating check (rev-tests#3): lastReady's card is `installed`,
     // which renders a manage gear (data-action="menu"), NOT Install/Update — so
     // the two assertions above pass even with the repost's installStateUnknown
@@ -276,7 +273,10 @@ suite('unknown install state: sidebar', () => {
       bundledHtml.includes('data-action="install-grim"'),
       'a too-old bundled binary is fixed by installing a current one',
     );
-    assert.ok(!bundledHtml.includes('data-action="show-grim-info"'), 'Install grim, not diagnostics');
+    assert.ok(
+      !bundledHtml.includes('data-action="show-grim-info"'),
+      'Install grim, not diagnostics',
+    );
 
     // too-old but the resolved binary is on PATH: resolveExecutable keeps
     // preferring the PATH copy, so a download changes nothing — offer diagnostics
@@ -469,7 +469,10 @@ suite('unknown install state: details panel', () => {
       !html.includes('Not installed'),
       'the live paint makes no "not installed" claim about the unknown scope',
     );
-    assert.ok(html.includes('Install state unknown'), 'the unknown project row is labelled as such');
+    assert.ok(
+      html.includes('Install state unknown'),
+      'the unknown project row is labelled as such',
+    );
     // Global stays honest — the suppression is per scope.
     assert.ok(html.includes('data-action="uninstall"'), 'the known global install still renders');
     assert.ok(html.includes('1.5.0'), 'with its version');

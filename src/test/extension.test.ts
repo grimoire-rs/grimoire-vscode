@@ -165,7 +165,13 @@ function contextDoc(overrides: Record<string, unknown> = {}): Record<string, unk
     clients: ['claude'],
     registries: [
       // `authenticated` is the additive private-registry flag (item 8).
-      { alias: null, url: 'https://index.grimoire.rs', kind: 'index', default: true, authenticated: true },
+      {
+        alias: null,
+        url: 'https://index.grimoire.rs',
+        kind: 'index',
+        default: true,
+        authenticated: true,
+      },
     ],
     default_registry: 'ghcr.io/grimoire-rs',
     ...overrides,
@@ -174,7 +180,10 @@ function contextDoc(overrides: Record<string, unknown> = {}): Record<string, unk
 
 /** A full describe report. `has_description` is added only via overrides — absent
  *  by default (a grim predating the v2 surface → no companion). */
-function describeDoc(repo: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function describeDoc(
+  repo: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     ref: `${repo}:latest`,
     digest: 'sha256:desc',
@@ -204,9 +213,19 @@ const LOGO_B64 =
 /** Cans a repo that ships an in-tree logo.png: describe, the descriptor fetch
  *  (whose files[] advertises it) and the `--path logo.png` fetch. */
 function cannedWithLogo(stub: Stub, repo: string, digest: string): void {
-  const base = { ref: `${repo}:latest`, digest, kind: 'skill', name: artifactName(repo), vendor: 'canonical' };
+  const base = {
+    ref: `${repo}:latest`,
+    digest,
+    kind: 'skill',
+    name: artifactName(repo),
+    vendor: 'canonical',
+  };
   canned(stub, 'describe', describeDoc(repo, { has_description: false, digest }));
-  canned(stub, 'fetch', { ...base, content: '# Descriptor', files: [{ path: 'logo.png', size: 70 }] });
+  canned(stub, 'fetch', {
+    ...base,
+    content: '# Descriptor',
+    files: [{ path: 'logo.png', size: 70 }],
+  });
   canned(stub, 'fetch-logo', { ...base, path: 'logo.png', content: LOGO_B64, encoding: 'base64' });
 }
 
@@ -419,7 +438,11 @@ suite('extension integration', () => {
       assert.deepStrictEqual(searchCalls, ['global'], 'browse falls back to global scope');
       const last = states.at(-1);
       assert.ok(last, 'no state was posted');
-      assert.notStrictEqual(last.phase, 'error', 'no raw grim error state — the NotDiscovered probe failure must not surface as a search error');
+      assert.notStrictEqual(
+        last.phase,
+        'error',
+        'no raw grim error state — the NotDiscovered probe failure must not surface as a search error',
+      );
       assert.strictEqual(last.scopes.projectConfigured, false);
       // projectOpen:true + projectConfigured:false is exactly
       // renderSidebarNotice's trigger condition (the init-offer banner is
@@ -783,7 +806,12 @@ suite('extension integration', () => {
   test('sidebar switch installs the replacement, then uninstalls the old, in that order', async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'add', { kind: 'skill', name: 'new-skill', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'new-skill',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     canned(stub, 'uninstall', { kind: 'skill', name: 'grim-usage', status: 'uninstalled' });
     const dialogs = stubSwitchDialogs('Switch');
     fs.rmSync(stub.argvLog, { force: true });
@@ -817,7 +845,10 @@ suite('extension integration', () => {
       dialogs.restore();
       restoreAddUninstall();
     }
-    assert.ok(argvLines(stub).some((l) => l.startsWith('add ')), 'the add was attempted');
+    assert.ok(
+      argvLines(stub).some((l) => l.startsWith('add ')),
+      'the add was attempted',
+    );
     assert.ok(
       !argvLines(stub).some((l) => l.startsWith('uninstall ')),
       'nothing is torn down after an add failure',
@@ -828,7 +859,12 @@ suite('extension integration', () => {
   test('switch shows a partial toast when the old artifact cannot be removed', async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'add', { kind: 'skill', name: 'new-skill', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'new-skill',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     canned(stub, 'uninstall', { error: { code: 'io', exit: 74, message: 'disk full' } });
     const dialogs = stubSwitchDialogs('Switch');
     fs.rmSync(stub.argvLog, { force: true });
@@ -838,8 +874,14 @@ suite('extension integration', () => {
       dialogs.restore();
       restoreAddUninstall();
     }
-    assert.ok(argvLines(stub).some((l) => l.startsWith('add ')), 'the replacement was installed');
-    assert.ok(argvLines(stub).some((l) => l.startsWith('uninstall ')), 'the remove was attempted');
+    assert.ok(
+      argvLines(stub).some((l) => l.startsWith('add ')),
+      'the replacement was installed',
+    );
+    assert.ok(
+      argvLines(stub).some((l) => l.startsWith('uninstall ')),
+      'the remove was attempted',
+    );
     const error = dialogs.lastError();
     assert.ok(
       error.includes('installed ghcr.io/grimoire-rs/skills/new-skill'),
@@ -872,7 +914,10 @@ suite('extension integration', () => {
       error.includes('already installed under a different source'),
       `collision toast is distinct: ${error}`,
     );
-    assert.ok(error.includes('Resolve it manually'), `collision toast points at manual fix: ${error}`);
+    assert.ok(
+      error.includes('Resolve it manually'),
+      `collision toast points at manual fix: ${error}`,
+    );
   });
 
   test('a declined switch modal runs no grim at all', async function () {
@@ -1015,7 +1060,12 @@ suite('extension integration', () => {
         forceable: true,
       },
     });
-    canned(stub, 'add-force', { kind: 'skill', name: 'grim-usage', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add-force', {
+      kind: 'skill',
+      name: 'grim-usage',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     const window = vscode.window as unknown as { showQuickPick: unknown };
     const originalQuickPick = window.showQuickPick;
     window.showQuickPick = async () => '1.4.2';
@@ -1034,7 +1084,10 @@ suite('extension integration', () => {
       restoreAddUninstall();
     }
     const adds = argvLines(stub).filter((l) => l.startsWith('add'));
-    assert.ok(adds.some((l) => l.includes('--force')), `a forced retry ran: ${adds.join(' | ')}`);
+    assert.ok(
+      adds.some((l) => l.includes('--force')),
+      `a forced retry ran: ${adds.join(' | ')}`,
+    );
     assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
   });
@@ -1171,7 +1224,11 @@ suite('extension integration', () => {
       window.showInformationMessage = original;
       canned(stub, 'update', { items: [] });
     }
-    assert.strictEqual(called, false, 'no toast when every row has empty reaped/kept-modified arrays');
+    assert.strictEqual(
+      called,
+      false,
+      'no toast when every row has empty reaped/kept-modified arrays',
+    );
   });
 
   test('stale-lock update offers a full re-resolve, runs it in the same scope, no error toast', async function () {
@@ -1201,7 +1258,12 @@ suite('extension integration', () => {
     };
     fs.rmSync(stub.argvLog, { force: true });
     try {
-      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
       await waitFor(() => argvLines(stub).some((l) => /^update (--global|--format)/.test(l)));
     } finally {
       window.showWarningMessage = originalWarn;
@@ -1209,7 +1271,10 @@ suite('extension integration', () => {
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
-    assert.ok(updates.some((l) => l.startsWith('update demo')), `per-name update ran: ${updates.join(' | ')}`);
+    assert.ok(
+      updates.some((l) => l.startsWith('update demo')),
+      `per-name update ran: ${updates.join(' | ')}`,
+    );
     const full = updates.find((l) => /^update (--global|--format)/.test(l));
     assert.ok(full, `a bare full update ran: ${updates.join(' | ')}`);
     assert.ok(full.includes('--global'), `full update stays in the same scope: ${full}`);
@@ -1241,7 +1306,12 @@ suite('extension integration', () => {
     };
     fs.rmSync(stub.argvLog, { force: true });
     try {
-      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
       await waitFor(() => argvLines(stub).some((l) => l.startsWith('update demo')));
     } finally {
       window.showWarningMessage = originalWarn;
@@ -1249,7 +1319,10 @@ suite('extension integration', () => {
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
-    assert.ok(updates.some((l) => l.startsWith('update demo')), 'the per-name update ran');
+    assert.ok(
+      updates.some((l) => l.startsWith('update demo')),
+      'the per-name update ran',
+    );
     assert.ok(
       !updates.some((l) => /^update (--global|--format)/.test(l)),
       `no full update ran: ${updates.join(' | ')}`,
@@ -1317,7 +1390,10 @@ suite('extension integration', () => {
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
-    assert.ok(updates.some((l) => /^update (--global|--format)/.test(l)), 'a bare full update ran');
+    assert.ok(
+      updates.some((l) => /^update (--global|--format)/.test(l)),
+      'a bare full update ran',
+    );
     assert.ok(warned, 'the stale-lock warning was shown');
     assert.ok(!errored, 'no error toast for the stale-lock refusal');
     assert.ok(
@@ -1421,7 +1497,12 @@ suite('extension integration', () => {
   test('force-confirm: confirming re-issues the original argv with --force appended, modal, Overwrite only', async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'code-review',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     const refusal = forceableRefusal();
@@ -1469,7 +1550,12 @@ suite('extension integration', () => {
   test('force-confirm: retrying preserves project scope (no --global)', async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'update-name', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    canned(stub, 'update-name', {
+      kind: 'skill',
+      name: 'demo',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -1525,10 +1611,15 @@ suite('extension integration', () => {
     assert.strictEqual(onDoneCalled, false, 'nothing changed, so no refresh is triggered');
   });
 
-  test('force-confirm dialog names the artifact by the ref\'s last path segment, not the full path', async function () {
+  test("force-confirm dialog names the artifact by the ref's last path segment, not the full path", async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'code-review',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -1556,7 +1647,12 @@ suite('extension integration', () => {
   test('force-confirm dialog names the artifact directly for a bare-name ref (grim update)', async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'update-name', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    canned(stub, 'update-name', {
+      kind: 'skill',
+      name: 'demo',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -1577,10 +1673,15 @@ suite('extension integration', () => {
     assert.ok(call.message.includes('demo'), `dialog names the artifact: ${call.message}`);
   });
 
-  test('force-confirm dialog strips a trailing tag from the ref, matching grim\'s id.name() rule', async function () {
+  test("force-confirm dialog strips a trailing tag from the ref, matching grim's id.name() rule", async function () {
     this.timeout(15000);
     const api = await activateExtension();
-    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'code-review',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -1631,8 +1732,16 @@ suite('extension integration', () => {
       dialogs.restore();
       fs.rmSync(path.join(stub.dir, 'uninstall.json'), { force: true });
     }
-    assert.strictEqual(handled, false, 'a forceable refusal on a non-add/update subcommand falls through');
-    assert.strictEqual(dialogs.warningCalls.length, 0, '--force is only ever appended for add/update');
+    assert.strictEqual(
+      handled,
+      false,
+      'a forceable refusal on a non-add/update subcommand falls through',
+    );
+    assert.strictEqual(
+      dialogs.warningCalls.length,
+      0,
+      '--force is only ever appended for add/update',
+    );
     assert.strictEqual(argvLines(stub).length, 0, 'no retry is issued for an unhandled refusal');
   });
 
@@ -1655,7 +1764,11 @@ suite('extension integration', () => {
       dialogs.restore();
     }
     assert.strictEqual(handled, true, 'an anchor-escape refusal is handled, not a fall-through');
-    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm — this is a security refusal');
+    assert.strictEqual(
+      dialogs.warningCalls.length,
+      0,
+      'no modal confirm — this is a security refusal',
+    );
     assert.strictEqual(dialogs.errorCalls.length, 1, 'a non-modal error notice was shown');
     const call = dialogs.errorCalls[0];
     assert.ok(call, 'the notice was shown');
@@ -1721,7 +1834,11 @@ suite('extension integration', () => {
     } finally {
       dialogs.restore();
     }
-    assert.strictEqual(handled, false, 'a not-found result is never a refusal offerForcedRetry can act on');
+    assert.strictEqual(
+      handled,
+      false,
+      'a not-found result is never a refusal offerForcedRetry can act on',
+    );
     assert.strictEqual(dialogs.warningCalls.length, 0);
     assert.strictEqual(dialogs.errorCalls.length, 0);
     assert.strictEqual(argvLines(stub).length, 0);
@@ -1752,8 +1869,15 @@ suite('extension integration', () => {
       restoreAddUninstall();
     }
     assert.strictEqual(handled, true, 'a confirmed retry is handled even when it fails again');
-    assert.ok(lines.some((l) => l.includes('still refused')), `the retry failure is logged: ${lines.join(' | ')}`);
-    assert.strictEqual(dialogs.errorCalls.length, 1, 'the retry failure surfaces the normal error toast');
+    assert.ok(
+      lines.some((l) => l.includes('still refused')),
+      `the retry failure is logged: ${lines.join(' | ')}`,
+    );
+    assert.strictEqual(
+      dialogs.errorCalls.length,
+      1,
+      'the retry failure surfaces the normal error toast',
+    );
     assert.ok(
       dialogs.errorCalls[0]?.message.includes('still refused'),
       `the toast names the failure: ${dialogs.errorCalls[0]?.message}`,
@@ -1791,7 +1915,11 @@ suite('extension integration', () => {
     // A typo'd command id would reject (VS Code has no such command) and throw
     // out of offerForcedRetry — reaching this assertion at all is part of the
     // proof, alongside naming the exact id dispatched.
-    assert.deepStrictEqual(dispatched, ['grimoire.showOutput'], 'the real command id is dispatched, not a typo');
+    assert.deepStrictEqual(
+      dispatched,
+      ['grimoire.showOutput'],
+      'the real command id is dispatched, not a typo',
+    );
   });
 
   test('precedence: a refusal carrying both forceable AND anchor-escape takes the security branch', async function () {
@@ -1824,7 +1952,11 @@ suite('extension integration', () => {
       dialogs.restore();
     }
     assert.strictEqual(handled, true);
-    assert.strictEqual(dialogs.warningCalls.length, 0, 'no modal confirm — anchor-escape wins over forceable');
+    assert.strictEqual(
+      dialogs.warningCalls.length,
+      0,
+      'no modal confirm — anchor-escape wins over forceable',
+    );
     assert.strictEqual(dialogs.errorCalls.length, 1, 'the security notice was shown instead');
     assert.strictEqual(
       argvLines(stub).length,
@@ -1871,7 +2003,11 @@ suite('extension integration', () => {
         0,
         `no modal confirm for reason ${JSON.stringify(variant)} — spelling must not bypass the security branch`,
       );
-      assert.strictEqual(dialogs.errorCalls.length, 1, `the security notice was shown for ${JSON.stringify(variant)}`);
+      assert.strictEqual(
+        dialogs.errorCalls.length,
+        1,
+        `the security notice was shown for ${JSON.stringify(variant)}`,
+      );
       assert.strictEqual(
         argvLines(stub).length,
         0,
@@ -1890,7 +2026,12 @@ suite('extension integration', () => {
     // reason isn't anchor-escape. Do not "harden" this into an allow-list —
     // that would silently drop the dialog for any future forceable reason
     // until the extension ships a matching update.
-    canned(stub, 'add', { kind: 'skill', name: 'code-review', pinned: 'y@sha256:2', status: 'added' });
+    canned(stub, 'add', {
+      kind: 'skill',
+      name: 'code-review',
+      pinned: 'y@sha256:2',
+      status: 'added',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     const futureReason: FailedGrimResult = {
@@ -1917,7 +2058,11 @@ suite('extension integration', () => {
       restoreAddUninstall();
     }
     assert.strictEqual(handled, true, 'an unrecognized-but-forceable refusal is still handled');
-    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite modal is shown for an unknown reason');
+    assert.strictEqual(
+      dialogs.warningCalls.length,
+      1,
+      'the Overwrite modal is shown for an unknown reason',
+    );
     assert.strictEqual(dialogs.errorCalls.length, 0, 'this is not the security branch');
     const lines = argvLines(stub);
     assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
@@ -1943,11 +2088,21 @@ suite('extension integration', () => {
         forceable: true,
       },
     });
-    canned(stub, 'update-force', { kind: 'skill', name: 'demo', pinned: 'y@sha256:2', status: 'updated' });
+    canned(stub, 'update-force', {
+      kind: 'skill',
+      name: 'demo',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     fs.rmSync(stub.argvLog, { force: true });
     try {
-      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
       await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
     } finally {
       dialogs.restore();
@@ -1959,7 +2114,10 @@ suite('extension integration', () => {
       updates.some((l) => l.startsWith('update demo') && !l.includes('--force')),
       `the per-name update ran first: ${updates.join(' | ')}`,
     );
-    assert.ok(updates.some((l) => l.includes('--force')), `a forced retry ran: ${updates.join(' | ')}`);
+    assert.ok(
+      updates.some((l) => l.includes('--force')),
+      `a forced retry ran: ${updates.join(' | ')}`,
+    );
     assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
   });
@@ -1978,7 +2136,12 @@ suite('extension integration', () => {
     const dialogs = stubForceDialogs('Show Output');
     fs.rmSync(stub.argvLog, { force: true });
     try {
-      await api.providers.sidebar.handleMessage({ type: 'update', kind: 'skill', name: 'demo', scope: 'global' });
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
       await waitFor(() => argvLines(stub).some((l) => l.startsWith('update demo')));
     } finally {
       dialogs.restore();
@@ -2014,7 +2177,12 @@ suite('extension integration', () => {
         forceable: true,
       },
     });
-    canned(stub, 'update-force', { kind: 'skill', name: 'grim-usage', pinned: 'y@sha256:2', status: 'updated' });
+    canned(stub, 'update-force', {
+      kind: 'skill',
+      name: 'grim-usage',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
     const dialogs = stubForceDialogs('Overwrite');
     const posted: { type: string }[] = [];
     const panel = {
@@ -2042,7 +2210,10 @@ suite('extension integration', () => {
       fs.rmSync(path.join(stub.dir, 'update-force.json'), { force: true });
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
-    assert.ok(updates.some((l) => l.includes('--force')), `a forced retry ran: ${updates.join(' | ')}`);
+    assert.ok(
+      updates.some((l) => l.includes('--force')),
+      `a forced retry ran: ${updates.join(' | ')}`,
+    );
     assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
     assert.ok(
@@ -2203,8 +2374,13 @@ suite('extension integration', () => {
     isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/plain';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:1', kind: 'skill', name: 'plain',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'plain',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     canned(stub, 'describe', describeDoc(repo, { name: 'plain', has_description: false }));
     fs.rmSync(stub.argvLog, { force: true });
@@ -2221,15 +2397,30 @@ suite('extension integration', () => {
     isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/rich';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'rich',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'rich',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
-    canned(stub, 'describe', describeDoc(repo, { name: 'rich', has_description: true, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'rich', has_description: true, digest: 'sha256:art1' }),
+    );
     // One report, every member inline; README + CHANGELOG both carry image refs.
     canned(stub, 'fetch-description', {
-      ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
       files: [
-        { path: 'README.md', size: 40, content: '# Rich\n\n![logo](./logo.png)\n\ninline-readme-marker' },
+        {
+          path: 'README.md',
+          size: 40,
+          content: '# Rich\n\n![logo](./logo.png)\n\ninline-readme-marker',
+        },
         { path: 'logo.png', size: 4, content: 'QUJD', encoding: 'base64' },
         { path: 'CHANGELOG.md', size: 20, content: '![c](logo.png)\n\ninline-changelog-marker' },
       ],
@@ -2262,13 +2453,22 @@ suite('extension integration', () => {
     const repo = 'ghcr.io/grimoire-rs/skills/older';
     // Artifact ships an in-tree README (fetched via --path); no companion exists.
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:1', kind: 'skill', name: 'older',
-      vendor: 'canonical', content: '# Descriptor',
+      ref: `${repo}:latest`,
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'older',
+      vendor: 'canonical',
+      content: '# Descriptor',
       files: [{ path: 'older/README.md', size: 20 }],
     });
     canned(stub, 'fetch-readme', {
-      ref: `${repo}:latest`, digest: 'sha256:1', kind: 'skill', name: 'older',
-      vendor: 'canonical', content: 'in-tree-readme-marker', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'older',
+      vendor: 'canonical',
+      content: 'in-tree-readme-marker',
+      files: [],
     });
     // A valid describe, but WITHOUT the has_description key (a grim predating v2).
     canned(stub, 'describe', describeDoc(repo, { name: 'older' }));
@@ -2290,14 +2490,25 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/warm';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'warm',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'warm',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     // describe's manifest digest matches the cached fetch digest (the warm probe
     // compares live describe.digest against the cached artifact digest).
-    canned(stub, 'describe', describeDoc(repo, { name: 'warm', has_description: true, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'warm', has_description: true, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch-description', {
-      ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
       files: [{ path: 'README.md', size: 20, content: 'warm-readme-marker' }],
     });
     // Companion digest probe reports the SAME digest as the cached content → fresh.
@@ -2313,7 +2524,10 @@ suite('extension integration', () => {
       assert.match(posts[0]?.readmeMarkdown ?? '', /warm-readme-marker/);
       assert.deepStrictEqual(revalidates, ['checking', 'done'], 'indicator: checking → done');
       const lines = argvLines(stub);
-      assert.ok(lines.some((l) => l.startsWith('describe')), 'a live describe probe ran');
+      assert.ok(
+        lines.some((l) => l.startsWith('describe')),
+        'a live describe probe ran',
+      );
       const fetches = lines.filter((l) => l.startsWith('fetch'));
       assert.ok(fetches.length > 0, 'the companion digest probe ran');
       assert.ok(
@@ -2334,12 +2548,23 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/moved';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'moved',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'moved',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
-    canned(stub, 'describe', describeDoc(repo, { name: 'moved', has_description: true, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'moved', has_description: true, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch-description', {
-      ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
       files: [{ path: 'README.md', size: 20, content: 'old-readme-marker' }],
     });
     canned(stub, 'fetch-desc-digest', { ref: `${repo}:__grimoire`, digest: 'sha256:comp1' });
@@ -2347,13 +2572,24 @@ suite('extension integration', () => {
       await api.providers.details.buildVM(repo); // populate cache at art1/comp1
       // The artifact rolled forward: describe now reports the art2 manifest digest,
       // and the content fetches carry new digests + a new README.
-      canned(stub, 'describe', describeDoc(repo, { name: 'moved', has_description: true, digest: 'sha256:art2' }));
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, { name: 'moved', has_description: true, digest: 'sha256:art2' }),
+      );
       canned(stub, 'fetch', {
-        ref: `${repo}:latest`, digest: 'sha256:art2', kind: 'skill', name: 'moved',
-        vendor: 'canonical', content: '# Descriptor', files: [],
+        ref: `${repo}:latest`,
+        digest: 'sha256:art2',
+        kind: 'skill',
+        name: 'moved',
+        vendor: 'canonical',
+        content: '# Descriptor',
+        files: [],
       });
       canned(stub, 'fetch-description', {
-        ref: `${repo}:__grimoire`, digest: 'sha256:comp2', kind: 'desc',
+        ref: `${repo}:__grimoire`,
+        digest: 'sha256:comp2',
+        kind: 'desc',
         files: [{ path: 'README.md', size: 20, content: 'new-readme-marker' }],
       });
       const { panel, posts } = fakePanel();
@@ -2390,17 +2626,32 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/flip';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'flip',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'flip',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     // First: no companion.
-    canned(stub, 'describe', describeDoc(repo, { name: 'flip', has_description: false, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'flip', has_description: false, digest: 'sha256:art1' }),
+    );
     try {
       await api.providers.details.buildVM(repo);
       // Companion published later; the artifact manifest is untouched (art1).
-      canned(stub, 'describe', describeDoc(repo, { name: 'flip', has_description: true, digest: 'sha256:art1' }));
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, { name: 'flip', has_description: true, digest: 'sha256:art1' }),
+      );
       canned(stub, 'fetch-description', {
-        ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+        ref: `${repo}:__grimoire`,
+        digest: 'sha256:comp1',
+        kind: 'desc',
         files: [{ path: 'README.md', size: 20, content: 'freshly-published-readme' }],
       });
       canned(stub, 'fetch-desc-digest', { ref: `${repo}:__grimoire`, digest: 'sha256:comp1' });
@@ -2430,18 +2681,37 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/tagged';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'tagged',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'tagged',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
-    canned(stub, 'describe', describeDoc(repo, {
-      name: 'tagged', has_description: false, digest: 'sha256:art1', tags: ['1.0.0', 'latest'],
-    }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, {
+        name: 'tagged',
+        has_description: false,
+        digest: 'sha256:art1',
+        tags: ['1.0.0', 'latest'],
+      }),
+    );
     try {
       await api.providers.details.buildVM(repo);
       // Same manifest digest, but a new tag appeared in describe.
-      canned(stub, 'describe', describeDoc(repo, {
-        name: 'tagged', has_description: false, digest: 'sha256:art1', tags: ['1.0.0', '1.1.0', 'latest'],
-      }));
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, {
+          name: 'tagged',
+          has_description: false,
+          digest: 'sha256:art1',
+          tags: ['1.0.0', '1.1.0', 'latest'],
+        }),
+      );
       fs.rmSync(stub.argvLog, { force: true });
       const { panel, posts, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
@@ -2468,13 +2738,24 @@ suite('extension integration', () => {
     isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/emptyreadme';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'emptyreadme',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'emptyreadme',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
-    canned(stub, 'describe', describeDoc(repo, { name: 'emptyreadme', has_description: true, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'emptyreadme', has_description: true, digest: 'sha256:art1' }),
+    );
     // README member ships NO content (omit-empty) — must not TypeError.
     canned(stub, 'fetch-description', {
-      ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
       files: [{ path: 'README.md', size: 0 }],
     });
     try {
@@ -2492,19 +2773,34 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/broken';
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'broken',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'broken',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
-    canned(stub, 'describe', describeDoc(repo, { name: 'broken', has_description: true, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'broken', has_description: true, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch-description', {
-      ref: `${repo}:__grimoire`, digest: 'sha256:comp1', kind: 'desc',
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
       files: [{ path: 'README.md', size: 20, content: 'cached-readme-marker' }],
     });
     try {
       await api.providers.details.buildVM(repo); // populate cache
       // Second open: describe reports a changed digest (forces the full pipeline),
       // but the content fetch now fails → entry null → keep-cached + failed.
-      canned(stub, 'describe', describeDoc(repo, { name: 'broken', has_description: true, digest: 'sha256:art2' }));
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, { name: 'broken', has_description: true, digest: 'sha256:art2' }),
+      );
       canned(stub, 'fetch', { error: { code: 'not-found', exit: 79, message: 'gone' } });
       const { panel, posts, revalidates, revalidateMessages } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
@@ -2544,8 +2840,13 @@ suite('extension integration', () => {
     canned(stub, 'search', { items: [searchItem(a), searchItem(b)] });
     canned(stub, 'describe', describeDoc(a, { has_description: false }));
     canned(stub, 'fetch', {
-      ref: 'x:latest', digest: 'sha256:1', kind: 'skill', name: 'x',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: 'x:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'x',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -2597,10 +2898,19 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/pf-open';
     canned(stub, 'search', { items: [searchItem(repo)] });
-    canned(stub, 'describe', describeDoc(repo, { name: 'pf-open', has_description: false, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'pf-open', has_description: false, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'pf-open',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'pf-open',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     fs.rmSync(stub.argvLog, { force: true });
     try {
@@ -2611,7 +2921,10 @@ suite('extension integration', () => {
       const { panel, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       const lines = argvLines(stub);
-      assert.ok(lines.some((l) => l.startsWith(`describe ${repo}`)), 'revalidate described');
+      assert.ok(
+        lines.some((l) => l.startsWith(`describe ${repo}`)),
+        'revalidate described',
+      );
       assert.ok(
         !lines.some((l) => l.startsWith(`fetch ${repo}`)),
         `no content fetch on a cached open: ${lines.join(' | ')}`,
@@ -2664,8 +2977,13 @@ suite('extension integration', () => {
     // v1 of the artifact ships no logo.
     canned(stub, 'describe', describeDoc(repo, { has_description: false, digest: 'sha256:art1' }));
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'late-logo',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'late-logo',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     try {
       await api.providers.sidebar.refresh();
@@ -2706,8 +3024,13 @@ suite('extension integration', () => {
     const repo = 'ghcr.io/grimoire-rs/skills/flaky-readme';
     canned(stub, 'describe', describeDoc(repo, { has_description: false, digest: 'sha256:art1' }));
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'flaky-readme',
-      vendor: 'canonical', content: '# Descriptor', files: [{ path: 'README.md', size: 12 }],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'flaky-readme',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [{ path: 'README.md', size: 12 }],
     });
     canned(stub, 'fetch-readme', { error: { code: 'network', exit: 70, message: 'flaky' } });
     try {
@@ -2722,8 +3045,13 @@ suite('extension integration', () => {
       // as "ships no README" would let revalidate short-circuit on the matching
       // digest and hide it for good.
       canned(stub, 'fetch-readme', {
-        ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'flaky-readme',
-        vendor: 'canonical', path: 'README.md', content: '# real-readme-marker',
+        ref: `${repo}:latest`,
+        digest: 'sha256:art1',
+        kind: 'skill',
+        name: 'flaky-readme',
+        vendor: 'canonical',
+        path: 'README.md',
+        content: '# real-readme-marker',
       });
       const second = fakePanel();
       await api.providers.details.onMessage(repo, second.panel, { type: 'ready', repo });
@@ -2743,10 +3071,19 @@ suite('extension integration', () => {
     const api = await activateExtension();
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/instant';
-    canned(stub, 'describe', describeDoc(repo, { name: 'instant', has_description: false, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'instant', has_description: false, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'instant',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'instant',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     try {
       await api.providers.details.buildVM(repo); // populate the cache + a last-known snapshot
@@ -2781,10 +3118,19 @@ suite('extension integration', () => {
     const cacheDir = isolateCache(api);
     const repo = 'ghcr.io/grimoire-rs/skills/rows';
     canned(stub, 'context', contextDoc({ config_exists: false }));
-    canned(stub, 'describe', describeDoc(repo, { name: 'rows', has_description: false, digest: 'sha256:art1' }));
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'rows', has_description: false, digest: 'sha256:art1' }),
+    );
     canned(stub, 'fetch', {
-      ref: `${repo}:latest`, digest: 'sha256:art1', kind: 'skill', name: 'rows',
-      vendor: 'canonical', content: '# Descriptor', files: [],
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'rows',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
     });
     try {
       await api.providers.details.buildVM(repo); // stale snapshot: project not configured
@@ -2793,7 +3139,11 @@ suite('extension integration', () => {
       const { panel, posts } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.ok(posts.length >= 2, 'instant stale paint + a fresh install repost');
-      assert.strictEqual(posts[0]?.scopes.projectConfigured, false, 'first paint used the stale snapshot');
+      assert.strictEqual(
+        posts[0]?.scopes.projectConfigured,
+        false,
+        'first paint used the stale snapshot',
+      );
       assert.strictEqual(
         posts[posts.length - 1]?.scopes.projectConfigured,
         true,
@@ -3170,7 +3520,10 @@ suite('extension integration', () => {
     assert.ok(initIndex >= 0, `init ran: ${lines.join(' | ')}`);
     assert.ok(addIndex > initIndex, 'add ran after init');
     assert.ok(lines[initIndex] && !lines[initIndex].includes('--global'), 'init is project-scoped');
-    assert.ok(lines[addIndex]?.includes('grim-usage:1.4.2'), `pins the picked tag: ${lines[addIndex]}`);
+    assert.ok(
+      lines[addIndex]?.includes('grim-usage:1.4.2'),
+      `pins the picked tag: ${lines[addIndex]}`,
+    );
     assert.ok(lines[addIndex] && !lines[addIndex].includes('--global'), 'add is project-scoped');
   });
 
@@ -3307,7 +3660,9 @@ suite('extension integration', () => {
     const api = await activateExtension();
     const repo = 'ghcr.io/grimoire-rs/skills/grim-usage';
     await api.handleUri(
-      vscode.Uri.parse(`vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`),
+      vscode.Uri.parse(
+        `vscode://grimoire-rs.grimoire-vscode/open?repo=${encodeURIComponent(repo)}`,
+      ),
     );
     assert.ok(api.providers.details.openRepos.includes(repo));
   });
@@ -3340,9 +3695,7 @@ suite('extension integration', () => {
     await waitFor(() =>
       argvLines(stub).some((l) => l.startsWith('search') && l.includes('oci-cli-tag')),
     );
-    const search = argvLines(stub).find(
-      (l) => l.startsWith('search') && l.includes('oci-cli-tag'),
-    );
+    const search = argvLines(stub).find((l) => l.startsWith('search') && l.includes('oci-cli-tag'));
     assert.ok(search, 'Browse searched for the clicked tag');
   });
 });

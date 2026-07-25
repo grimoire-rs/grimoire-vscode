@@ -35,11 +35,11 @@ Derive:
 
 ## Tier metric table
 
-| Tier | file_count | lines_changed | subsystems | structural markers |
-|------|-----------|---------------|------------|-------------------|
-| **low** | ≤3 | ≤100 | 1 | None from adversarial list |
-| **high** | ≤15 | ≤500 | 1–2 | No One-Way Door High signals |
-| **max** | >15 or any One-Way Door High signal | any | ≥2 or cross-subsystem | Any One-Way Door High signal |
+| Tier     | file_count                          | lines_changed | subsystems            | structural markers           |
+| -------- | ----------------------------------- | ------------- | --------------------- | ---------------------------- |
+| **low**  | ≤3                                  | ≤100          | 1                     | None from adversarial list   |
+| **high** | ≤15                                 | ≤500          | 1–2                   | No One-Way Door High signals |
+| **max**  | >15 or any One-Way Door High signal | any           | ≥2 or cross-subsystem | Any One-Way Door High signal |
 
 Diff may match multiple rows — pick **highest** tier with ≥1
 clear signal firing. Small file count no demote diff
@@ -47,31 +47,31 @@ introducing new top-level module.
 
 ## Structural marker signals
 
-| Marker | Tier impact |
-|---|---|
-| New top-level module under `src/` | → **max** |
-| `.github/workflows/**` changes | Adds `--breadth=full` minimum; security review required |
-| `src/grim.ts` (grim JSON contract surface) | Adds `--breadth=full`; `--codex` auto-on at high (frozen/additive contract) |
-| `src/installer.ts` (download + extraction) | Adds `--breadth=adversarial` at high+ (supply-chain sensitive) |
-| Webview escaping/CSP paths (`src/webview/render*`, `webview.html`, `unsafeHTML` sites) | Adds `--codex`; security review required |
-| `package.json` dependency changes | Adds `--breadth=full` (supply-chain scrutiny) |
-| Public API breakage (removed exports, changed protocol messages) | → **max**, adds `--codex` |
-| `src/webview/protocol*` (host↔webview protocol) | → **max** if changed (load-bearing) |
+| Marker                                                                                 | Tier impact                                                                 |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| New top-level module under `src/`                                                      | → **max**                                                                   |
+| `.github/workflows/**` changes                                                         | Adds `--breadth=full` minimum; security review required                     |
+| `src/grim.ts` (grim JSON contract surface)                                             | Adds `--breadth=full`; `--codex` auto-on at high (frozen/additive contract) |
+| `src/installer.ts` (download + extraction)                                             | Adds `--breadth=adversarial` at high+ (supply-chain sensitive)              |
+| Webview escaping/CSP paths (`src/webview/render*`, `webview.html`, `unsafeHTML` sites) | Adds `--codex`; security review required                                    |
+| `package.json` dependency changes                                                      | Adds `--breadth=full` (supply-chain scrutiny)                               |
+| Public API breakage (removed exports, changed protocol messages)                       | → **max**, adds `--codex`                                                   |
+| `src/webview/protocol*` (host↔webview protocol)                                        | → **max** if changed (load-bearing)                                         |
 
 ## PR label signals
 
 Target resolves to PR? Read labels, apply:
 
-| Label | Effect |
-|---|---|
-| `breaking-change` | → **max**; `--codex` on |
-| `security` | Adds `--breadth=adversarial`; `--codex` on |
-| `epic` | → **max** |
-| `small` | Hint toward **low** (metrics can still escalate) |
-| `docs` | Hint toward **low** if no code paths touched |
-| `chore` | Hint toward **low** |
+| Label             | Effect                                           |
+| ----------------- | ------------------------------------------------ |
+| `breaking-change` | → **max**; `--codex` on                          |
+| `security`        | Adds `--breadth=adversarial`; `--codex` on       |
+| `epic`            | → **max**                                        |
+| `small`           | Hint toward **low** (metrics can still escalate) |
+| `docs`            | Hint toward **low** if no code paths touched     |
+| `chore`           | Hint toward **low**                              |
 
-Labels never *demote* below metrics dictate — `small` label
+Labels never _demote_ below metrics dictate — `small` label
 on 30-file diff still high (size beat label).
 
 ## Confidence rules
@@ -84,45 +84,45 @@ on 30-file diff still high (size beat label).
   empty-but-metadata-only (e.g., rename-only), or target
   ambiguous. Flag; SKILL.md routes into meta-plan gate.
 
-Never manufacture question when confident. *Announce and proceed*, or
-*let meta-plan gate handle*.
+Never manufacture question when confident. _Announce and proceed_, or
+_let meta-plan gate handle_.
 
 ## Overlay triggers
 
 Overlays adjust single axis on top of chosen tier. Stack —
 multiple triggers may fire. Axis defs live in `overlays.md`.
 
-| Overlay | Triggered by |
-|---|---|
-| `--breadth=full` | tier=high (default); `.github/workflows/**`, `package.json`, or dependency paths touched at tier=low (escalation) |
-| `--breadth=adversarial` | tier=max (default); `src/installer.ts` touched at tier=high; `security` label; `--rca=on` together with ≥2 modules |
-| `--reviewer=haiku` | tier=low AND NO structural markers present in diff |
-| `--reviewer=opus` | tier=max AND `--breadth=adversarial` |
-| `--doc-reviewer=haiku` | Diff touches ≤2 doc files (`website/**/*.md` or `CHANGELOG.md`) AND does not touch `website/src/docs/user-guide.md` |
-| `--rca=on` | tier=high+ (default) — scope differs per tier (see overlays.md) |
-| `--codex` | One-Way Door structural marker; `breaking-change` or `security` label; public API change; new crate; protocol change |
+| Overlay                 | Triggered by                                                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--breadth=full`        | tier=high (default); `.github/workflows/**`, `package.json`, or dependency paths touched at tier=low (escalation)    |
+| `--breadth=adversarial` | tier=max (default); `src/installer.ts` touched at tier=high; `security` label; `--rca=on` together with ≥2 modules   |
+| `--reviewer=haiku`      | tier=low AND NO structural markers present in diff                                                                   |
+| `--reviewer=opus`       | tier=max AND `--breadth=adversarial`                                                                                 |
+| `--doc-reviewer=haiku`  | Diff touches ≤2 doc files (`website/**/*.md` or `CHANGELOG.md`) AND does not touch `website/src/docs/user-guide.md`  |
+| `--rca=on`              | tier=high+ (default) — scope differs per tier (see overlays.md)                                                      |
+| `--codex`               | One-Way Door structural marker; `breaking-change` or `security` label; public API change; new crate; protocol change |
 
 Defaults per tier (before overlays apply):
 
-| Axis | low | high | max |
-|---|---|---|---|
-| breadth | minimal | full | adversarial |
-| reviewer | haiku (→ sonnet on structural markers) | sonnet | sonnet (→ opus on adversarial breadth) |
-| doc-reviewer | sonnet | sonnet (→ haiku on narrow doc scope) | sonnet (→ haiku on narrow doc scope) |
-| rca | off | on (Block/High) | on (>Suggest) |
-| codex | off | off (auto-on for One-Way Door signals) | on (mandatory) |
+| Axis         | low                                    | high                                   | max                                    |
+| ------------ | -------------------------------------- | -------------------------------------- | -------------------------------------- |
+| breadth      | minimal                                | full                                   | adversarial                            |
+| reviewer     | haiku (→ sonnet on structural markers) | sonnet                                 | sonnet (→ opus on adversarial breadth) |
+| doc-reviewer | sonnet                                 | sonnet (→ haiku on narrow doc scope)   | sonnet (→ haiku on narrow doc scope)   |
+| rca          | off                                    | on (Block/High)                        | on (>Suggest)                          |
+| codex        | off                                    | off (auto-on for One-Way Door signals) | on (mandatory)                         |
 
 ## Baseline interaction with auto-tier
 
 `--base` change what classifier see:
 
-| Invocation | Typical diff size | Typical auto tier |
-|---|---|---|
-| `/swarm-review` (no base → `main`, long-lived branch) | 50+ files | **high** or **max** |
-| `/swarm-review --base=HEAD~1` | ≤3 files | **low** |
-| `/swarm-review --base=<parent-branch>` | a few commits | **low** or **high** |
-| `/swarm-review --base=<older-tag>` | entire release delta | **max** |
-| `/swarm-review <PR>` (base auto-resolved to PR base) | PR-sized diff | tier matches PR scope |
+| Invocation                                            | Typical diff size    | Typical auto tier     |
+| ----------------------------------------------------- | -------------------- | --------------------- |
+| `/swarm-review` (no base → `main`, long-lived branch) | 50+ files            | **high** or **max**   |
+| `/swarm-review --base=HEAD~1`                         | ≤3 files             | **low**               |
+| `/swarm-review --base=<parent-branch>`                | a few commits        | **low** or **high**   |
+| `/swarm-review --base=<older-tag>`                    | entire release delta | **max**               |
+| `/swarm-review <PR>` (base auto-resolved to PR base)  | PR-sized diff        | tier matches PR scope |
 
 Intended design: **baseline controls effort**. User want
 quick re-check of last commit → pass `--base=HEAD~1`; user

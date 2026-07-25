@@ -206,9 +206,11 @@ suite('watchers', () => {
     }, 40);
     try {
       w2.rebuild(undefined);
-      await w2.suspendWhile(async () => {
-        throw new Error('x');
-      }).catch(() => {});
+      await w2
+        .suspendWhile(async () => {
+          throw new Error('x');
+        })
+        .catch(() => {});
       const folder = vscode.workspace.workspaceFolders?.[0];
       assert.ok(folder);
       const file = path.join(folder.uri.fsPath, 'grimoire.toml');

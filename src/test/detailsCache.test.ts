@@ -104,8 +104,14 @@ suite('DetailsCache', () => {
 
   test('presentLogos returns logos for cached repos only (readdir once)', async () => {
     const cache = new DetailsCache(dir);
-    await cache.save('ghcr.io/o/skills/withlogo', entry('ghcr.io/o/skills/withlogo', { logoUri: 'data:image/png;base64,AAA' }));
-    await cache.save('ghcr.io/o/skills/nologo', entry('ghcr.io/o/skills/nologo', { logoUri: null }));
+    await cache.save(
+      'ghcr.io/o/skills/withlogo',
+      entry('ghcr.io/o/skills/withlogo', { logoUri: 'data:image/png;base64,AAA' }),
+    );
+    await cache.save(
+      'ghcr.io/o/skills/nologo',
+      entry('ghcr.io/o/skills/nologo', { logoUri: null }),
+    );
     const logos = await cache.presentLogos([
       'ghcr.io/o/skills/withlogo',
       'ghcr.io/o/skills/nologo',

@@ -20,7 +20,7 @@ Launch **1** `worker-builder` (focus: `stubbing`, model: sonnet) to create type 
 
 Launch **1** `worker-reviewer` (focus: `spec-compliance`, phase: `post-stub`) to validate stubs against design record: API surface matches, module boundaries align, error types cover all failure modes.
 
-*Optional for features touching ≤3 files — classifier usually picks tier=low for those.*
+_Optional for features touching ≤3 files — classifier usually picks tier=low for those._
 
 **Gate**: Reviewer reports pass.
 

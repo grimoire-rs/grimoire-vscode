@@ -249,7 +249,8 @@ function notDiscoveredDoc(): Record<string, unknown> {
     error: {
       code: 'not-found',
       exit: 79,
-      message: '/fixture-workspace: no grimoire.toml found by walking up from the working directory',
+      message:
+        '/fixture-workspace: no grimoire.toml found by walking up from the working directory',
     },
   };
 }
@@ -348,7 +349,11 @@ suite('settings host integration', () => {
     canned(stub.dir, 'context', contextDoc());
     canned(stub.dir, 'context-project-before', notDiscoveredDoc());
     canned(stub.dir, 'context-project-after', contextProjectDoc());
-    canned(stub.dir, 'init', { path: '/fixture-workspace/grimoire.toml', scope: 'project', status: 'created' });
+    canned(stub.dir, 'init', {
+      path: '/fixture-workspace/grimoire.toml',
+      scope: 'project',
+      status: 'created',
+    });
     canned(stub.dir, 'config-list', { items: [configEntry('expand_levels')] });
     canned(stub.dir, 'registry-list', { items: [] });
     canned(stub.dir, 'config-set', {
@@ -584,7 +589,9 @@ suite('settings host integration', () => {
     }
     const preInitCalls = argvLines(stub);
     assert.ok(
-      !preInitCalls.some((l) => l.startsWith('config list') || l.startsWith('config registry list')),
+      !preInitCalls.some(
+        (l) => l.startsWith('config list') || l.startsWith('config registry list'),
+      ),
       `opening an unconfigured Global scope must never call config/registry list, got: ${JSON.stringify(preInitCalls)}`,
     );
     assert.ok(
@@ -693,19 +700,22 @@ suite('settings host integration', () => {
           key: 'oci',
           type: 'string',
           title: 'OCI registry ref',
-          description: 'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.',
+          description:
+            'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.',
         },
         {
           key: 'index',
           type: 'string',
           title: 'Package-index locator',
-          description: 'Sets a package-index locator that replaces the `_catalog` registry listing.',
+          description:
+            'Sets a package-index locator that replaces the `_catalog` registry listing.',
         },
         {
           key: 'default',
           type: 'boolean',
           title: 'Default registry flag',
-          description: 'Controls whether this registry is the primary one short identifiers expand against.',
+          description:
+            'Controls whether this registry is the primary one short identifiers expand against.',
         },
       ],
     };
@@ -756,9 +766,24 @@ suite('settings host integration', () => {
         assert.deepStrictEqual(
           [...last.state.registryFields].sort((a, b) => a.key.localeCompare(b.key)),
           [
-            { key: 'default', title: 'Default registry flag', description: 'Controls whether this registry is the primary one short identifiers expand against.' },
-            { key: 'index', title: 'Package-index locator', description: 'Sets a package-index locator that replaces the `_catalog` registry listing.' },
-            { key: 'oci', title: 'OCI registry ref', description: 'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.' },
+            {
+              key: 'default',
+              title: 'Default registry flag',
+              description:
+                'Controls whether this registry is the primary one short identifiers expand against.',
+            },
+            {
+              key: 'index',
+              title: 'Package-index locator',
+              description:
+                'Sets a package-index locator that replaces the `_catalog` registry listing.',
+            },
+            {
+              key: 'oci',
+              title: 'OCI registry ref',
+              description:
+                'Sets the OCI registry host, for example `ghcr.io` or `ghcr.io/acme` with a namespace.',
+            },
           ],
         );
       }
@@ -774,12 +799,20 @@ suite('settings host integration', () => {
 
     await manager.onMessage(panel, { type: 'ready', scope: 'global' });
 
-    assert.strictEqual(posts.length, 1, 'no separate writeError/registryFields message — just the one state post');
+    assert.strictEqual(
+      posts.length,
+      1,
+      'no separate writeError/registryFields message — just the one state post',
+    );
     const message = posts[0];
     assert.ok(message);
     assert.strictEqual(message.type, 'state');
     if (message.type === 'state') {
-      assert.strictEqual(message.state.phase, 'ready', 'the failed metadata fetch must not affect the scope phase');
+      assert.strictEqual(
+        message.state.phase,
+        'ready',
+        'the failed metadata fetch must not affect the scope phase',
+      );
       assert.deepStrictEqual(message.state.registryFields, []);
     }
   });

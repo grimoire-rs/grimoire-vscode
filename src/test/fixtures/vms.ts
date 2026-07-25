@@ -177,9 +177,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   );
   add(
     'card-browse-outdated',
-    r.renderCard(
-      card({ state: 'outdated', installs: [outdatedInstall], latestVersion: '1.5.0' }),
-    ),
+    r.renderCard(card({ state: 'outdated', installs: [outdatedInstall], latestVersion: '1.5.0' })),
   );
   add(
     'card-browse-deprecated',
@@ -195,20 +193,13 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       }),
     ),
   );
-  add(
-    'card-browse-private-registry',
-    r.renderCard(card({ privateRegistry: true })),
-  );
-  add(
-    'card-browse-logo-uri',
-    r.renderCard(card({ logoUri: 'data:image/png;base64,AAAA' })),
-  );
+  add('card-browse-private-registry', r.renderCard(card({ privateRegistry: true })));
+  add('card-browse-logo-uri', r.renderCard(card({ logoUri: 'data:image/png;base64,AAAA' })));
   add(
     'card-updates-basic',
-    r.renderCard(
-      card({ state: 'outdated', installs: [outdatedInstall], latestVersion: '1.5.0' }),
-      { variant: 'updates' },
-    ),
+    r.renderCard(card({ state: 'outdated', installs: [outdatedInstall], latestVersion: '1.5.0' }), {
+      variant: 'updates',
+    }),
   );
   add(
     'card-updates-floating-tag',
@@ -262,10 +253,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   );
   add(
     'card-menu-both-scopes',
-    r.renderCardMenu(
-      card({ state: 'installed', installs: [projectInstall, globalInstall] }),
-      true,
-    ),
+    r.renderCardMenu(card({ state: 'installed', installs: [projectInstall, globalInstall] }), true),
   );
   add(
     'card-menu-deprecated-switch',
@@ -356,10 +344,7 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   );
   add(
     'results-browse-ready-with-cards',
-    r.renderSidebarResults(
-      sidebarState({ items: buildCards([searchItem()], []) }),
-      DEFAULT_FILTER,
-    ),
+    r.renderSidebarResults(sidebarState({ items: buildCards([searchItem()], []) }), DEFAULT_FILTER),
   );
   // --- top notice slot (above the tab bar): init notification / hidden ---
   add(
@@ -522,18 +507,12 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       }),
     ),
   );
-  add(
-    'details-logo-uri',
-    r.renderDetails(detailsVM({ logoUri: 'data:image/png;base64,AAAA' })),
-  );
+  add('details-logo-uri', r.renderDetails(detailsVM({ logoUri: 'data:image/png;base64,AAAA' })));
 
   // --- revalidate indicator: every state + null ---
   add('revalidate-checking', r.revalidateIndicator('checking'));
   add('revalidate-done', r.revalidateIndicator('done'));
-  add(
-    'revalidate-failed',
-    r.revalidateIndicator('failed', 'Refresh failed: network error'),
-  );
+  add('revalidate-failed', r.revalidateIndicator('failed', 'Refresh failed: network error'));
   add('revalidate-null', r.revalidateIndicator(null));
 
   return cases;

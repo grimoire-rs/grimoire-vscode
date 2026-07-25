@@ -135,7 +135,9 @@ export function scopesVM(overrides: Partial<ScopesVM> = {}): ScopesVM {
  *  against the grim binary; see grim.ts's RegistryFieldEntry). Defaults to
  *  `[]` in both fixture builders below (the "fetch hasn't happened / failed"
  *  case) — pass this explicitly for cases exercising grim-sourced labels. */
-export function registryFieldVM(overrides: Partial<SettingsRegistryFieldVM> = {}): SettingsRegistryFieldVM {
+export function registryFieldVM(
+  overrides: Partial<SettingsRegistryFieldVM> = {},
+): SettingsRegistryFieldVM {
   return {
     key: 'index',
     title: 'Package-index locator',
@@ -173,7 +175,12 @@ export function settingsSource(overrides: Partial<SettingsSource> = {}): Setting
     entries: wireConfigEntries(),
     registries: [
       wireRegistryEntry(),
-      wireRegistryEntry({ alias: 'internal', oci: null, index: 'https://index.acme.io/index.json', default: false }),
+      wireRegistryEntry({
+        alias: 'internal',
+        oci: null,
+        index: 'https://index.acme.io/index.json',
+        default: false,
+      }),
     ],
     registryFields: [],
     ...overrides,

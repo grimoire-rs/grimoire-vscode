@@ -50,9 +50,18 @@ suite('buildSettingsRow', () => {
   // non-null) previously showed the modified accent + bg tint just because
   // null !== the default — modified must require the row to actually be SET.
   test('modified requires the row to be SET — an unset row never shows modified, even if value differs from default', () => {
-    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'flat', default: 'flat', set: true })).modified, false);
-    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: false })).modified, false);
-    assert.strictEqual(buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: true })).modified, true);
+    assert.strictEqual(
+      buildSettingsRow(wireConfigEntry({ value: 'flat', default: 'flat', set: true })).modified,
+      false,
+    );
+    assert.strictEqual(
+      buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: false })).modified,
+      false,
+    );
+    assert.strictEqual(
+      buildSettingsRow(wireConfigEntry({ value: 'tree', default: 'flat', set: true })).modified,
+      true,
+    );
   });
 
   test('every row starts idle with no error message', () => {
@@ -149,7 +158,12 @@ suite('buildGroups', () => {
     );
     assert.deepStrictEqual(
       groups[1]?.rows.map((r) => r.key),
-      ['options.default_view', 'options.group_by_type', 'options.tree_separators', 'options.expand_levels'],
+      [
+        'options.default_view',
+        'options.group_by_type',
+        'options.tree_separators',
+        'options.expand_levels',
+      ],
     );
   });
 
@@ -188,7 +202,12 @@ suite('buildRegistryRow', () => {
 suite('resolveSettingsPhase / buildSettingsVM: empty and init states', () => {
   test('grim missing wins over everything else', () => {
     assert.strictEqual(
-      resolveSettingsPhase({ scope: 'project', scopes: scopesVM(), grimMissing: true, configExists: true }),
+      resolveSettingsPhase({
+        scope: 'project',
+        scopes: scopesVM(),
+        grimMissing: true,
+        configExists: true,
+      }),
       'no-grim',
     );
   });
@@ -221,7 +240,10 @@ suite('resolveSettingsPhase / buildSettingsVM: empty and init states', () => {
   // independent; a Global tab visited with no folder open must still work).
   test('global scope, config exists: ready regardless of project workspace state', () => {
     const vm = buildSettingsVM(
-      settingsSource({ scope: 'global', scopes: scopesVM({ projectOpen: false, projectConfigured: false }) }),
+      settingsSource({
+        scope: 'global',
+        scopes: scopesVM({ projectOpen: false, projectConfigured: false }),
+      }),
     );
     assert.strictEqual(vm.phase, 'ready');
   });
@@ -300,17 +322,23 @@ suite('buildSettingsVM: registries', () => {
 suite('reloadedKeys', () => {
   test('flags rows whose value changed between two same-scope ready VMs', () => {
     const prev = settingsState({
-      groups: [{ title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] }],
+      groups: [
+        { title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] },
+      ],
     });
     const next = settingsState({
-      groups: [{ title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '2' }))] }],
+      groups: [
+        { title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '2' }))] },
+      ],
     });
     assert.deepStrictEqual(reloadedKeys(prev, next), ['a']);
   });
 
   test('no diff -> no reloaded keys', () => {
     const state = settingsState({
-      groups: [{ title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] }],
+      groups: [
+        { title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] },
+      ],
     });
     assert.deepStrictEqual(reloadedKeys(state, state), []);
   });
@@ -318,11 +346,15 @@ suite('reloadedKeys', () => {
   test('a scope switch never flags reloaded (different scope entirely)', () => {
     const prev = settingsState({
       scope: 'project',
-      groups: [{ title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] }],
+      groups: [
+        { title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '1' }))] },
+      ],
     });
     const next = settingsState({
       scope: 'global',
-      groups: [{ title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '2' }))] }],
+      groups: [
+        { title: 'Options', rows: [buildSettingsRow(wireConfigEntry({ key: 'a', value: '2' }))] },
+      ],
     });
     assert.deepStrictEqual(reloadedKeys(prev, next), []);
   });
@@ -336,7 +368,10 @@ suite('allRows', () => {
         { title: 'TUI', rows: [buildSettingsRow(wireConfigEntry({ key: 'b' }))] },
       ],
     });
-    assert.deepStrictEqual(allRows(state).map((r) => r.key), ['a', 'b']);
+    assert.deepStrictEqual(
+      allRows(state).map((r) => r.key),
+      ['a', 'b'],
+    );
   });
 });
 
@@ -402,7 +437,10 @@ suite('addRegistryDraftValid', () => {
       addRegistryDraftValid({ ...EMPTY_REGISTRY_DRAFT, alias: 'x', locator: 'ghcr.io/x' }),
       true,
     );
-    assert.strictEqual(addRegistryDraftValid({ ...EMPTY_REGISTRY_DRAFT, alias: '  ', locator: 'x' }), false);
+    assert.strictEqual(
+      addRegistryDraftValid({ ...EMPTY_REGISTRY_DRAFT, alias: '  ', locator: 'x' }),
+      false,
+    );
   });
 });
 
@@ -510,6 +548,9 @@ suite('resolveScopeSwitch', () => {
   });
 
   test('no cache and nothing showing yet: nothing to render', () => {
-    assert.deepStrictEqual(resolveScopeSwitch('global', undefined, null), { vm: null, refreshing: false });
+    assert.deepStrictEqual(resolveScopeSwitch('global', undefined, null), {
+      vm: null,
+      refreshing: false,
+    });
   });
 });

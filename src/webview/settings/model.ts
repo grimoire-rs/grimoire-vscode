@@ -70,7 +70,8 @@ function shortKey(key: string): string {
  *  caption instead of the generic "Default: …" line (design item 3). */
 const NULL_DEFAULT_HINTS: Record<string, string> = {
   default_registry: 'Not set — the registry precedence chain decides.',
-  clients: 'Not set — clients are auto-detected, falling back to all clients when none are detected.',
+  clients:
+    'Not set — clients are auto-detected, falling back to all clients when none are detected.',
 };
 
 export function defaultHint(key: string, value: string | null): string {
@@ -88,7 +89,9 @@ export function defaultHint(key: string, value: string | null): string {
  *  first values entry, purely so *something* renders selected. Shared here
  *  (not per-key) so every enum row, current and future, goes through the
  *  same rule. */
-export function enumSelectedValue(row: Pick<SettingsRowVM, 'value' | 'default' | 'values'>): string | null {
+export function enumSelectedValue(
+  row: Pick<SettingsRowVM, 'value' | 'default' | 'values'>,
+): string | null {
   if (row.value !== null) {
     return row.value;
   }
@@ -104,7 +107,11 @@ export function enumSelectedValue(row: Pick<SettingsRowVM, 'value' | 'default' |
  *  accent on every unset row with a non-null default (bug: unset "Default
  *  view" showed modified even though nothing overrides it). Idle instead;
  *  the hint line already communicates the default. */
-export function isModified(set: boolean, value: string | null, defaultValue: string | null): boolean {
+export function isModified(
+  set: boolean,
+  value: string | null,
+  defaultValue: string | null,
+): boolean {
   return set && value !== defaultValue;
 }
 

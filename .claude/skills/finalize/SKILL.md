@@ -20,13 +20,13 @@ Sibling `/commit` skill handles **working phase** (save progress during dev). `/
 
 ## When To Use
 
-| Situation | Use |
-|---|---|
-| Branch has multiple `Checkpoint` commits | `/finalize` |
-| Branch has working-phase bundles ("chore(claude): bundle skill + rules + agents") | `/finalize` |
-| Rebasing branch onto current `main` before fast-forward | `/finalize` |
-| Branch is one changelog entry with noise between | `/finalize --squash-all` |
-| Already one-concern-per-commit and rebased | don't — fast-forward |
+| Situation                                                                         | Use                      |
+| --------------------------------------------------------------------------------- | ------------------------ |
+| Branch has multiple `Checkpoint` commits                                          | `/finalize`              |
+| Branch has working-phase bundles ("chore(claude): bundle skill + rules + agents") | `/finalize`              |
+| Rebasing branch onto current `main` before fast-forward                           | `/finalize`              |
+| Branch is one changelog entry with noise between                                  | `/finalize --squash-all` |
+| Already one-concern-per-commit and rebased                                        | don't — fast-forward     |
 
 ## Flags
 
@@ -63,11 +63,11 @@ Both cases use `git rebase -i main`, replays `merge-base..HEAD` onto current `ma
 
 **`origin/main` handling.** If local `main` behind `origin/main`, surface before drafting plan, ask user how to proceed:
 
-| Option | Effect |
-|---|---|
+| Option                                                       | Effect                                                                                                                                                                |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Fast-forward local `main` first, then finalize** (default) | `git fetch origin main && git checkout main && git merge --ff-only origin/main && git checkout <branch>` then continue. Branch lands on top of latest published main. |
-| **Finalize against current local `main`** | Skip fetch. Branch fast-forwards onto local main but may lag origin once published. |
-| **Abort** | Stop without changes. |
+| **Finalize against current local `main`**                    | Skip fetch. Branch fast-forwards onto local main but may lag origin once published.                                                                                   |
+| **Abort**                                                    | Stop without changes.                                                                                                                                                 |
 
 Never touch `origin/main` directly (no force-push, no remote updates beyond `fetch`).
 
@@ -75,14 +75,14 @@ Never touch `origin/main` directly (no force-push, no remote updates beyond `fet
 
 For every commit in `main..HEAD`, assign one category:
 
-| Category | Signal | Action |
-|---|---|---|
-| **Keep** | Clean Conventional Commits subject, single concern, useful changelog entry | Leave alone |
-| **Reword** | Single concern but subject non-conventional, typo'd, or mis-typed (e.g. `fix:` for real `feat:`) | Rewrite subject only, keep diff |
-| **Squash** | Two+ adjacent commits cover same concern (fix + follow-up fixup, feat + missed test, rolling checkpoint amendments) | Collapse into one with drafted message |
-| **Split** | One commit mixes unrelated concerns | Offer `git reset HEAD^` workflow; defer to human if non-trivial |
-| **Drop** | Empty commit, reverted earlier in branch, pure noise | Remove |
-| **Checkpoint** | Subject exactly `Checkpoint` | Reword (single concern inside) or squash into neighbour |
+| Category       | Signal                                                                                                              | Action                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **Keep**       | Clean Conventional Commits subject, single concern, useful changelog entry                                          | Leave alone                                                     |
+| **Reword**     | Single concern but subject non-conventional, typo'd, or mis-typed (e.g. `fix:` for real `feat:`)                    | Rewrite subject only, keep diff                                 |
+| **Squash**     | Two+ adjacent commits cover same concern (fix + follow-up fixup, feat + missed test, rolling checkpoint amendments) | Collapse into one with drafted message                          |
+| **Split**      | One commit mixes unrelated concerns                                                                                 | Offer `git reset HEAD^` workflow; defer to human if non-trivial |
+| **Drop**       | Empty commit, reverted earlier in branch, pure noise                                                                | Remove                                                          |
+| **Checkpoint** | Subject exactly `Checkpoint`                                                                                        | Reword (single concern inside) or squash into neighbour         |
 
 **Classification heuristics:**
 
@@ -110,11 +110,11 @@ Final commit count: 3
 
 Use `AskUserQuestion` with three options:
 
-| Option | Effect |
-|---|---|
-| **Execute plan** (default) | Run scripted rebase |
-| **Edit plan** | Let user adjust before exec (describe change in prose, redraw) |
-| **Abort** | Stop without changes |
+| Option                     | Effect                                                         |
+| -------------------------- | -------------------------------------------------------------- |
+| **Execute plan** (default) | Run scripted rebase                                            |
+| **Edit plan**              | Let user adjust before exec (describe change in prose, redraw) |
+| **Abort**                  | Stop without changes                                           |
 
 If user picked `--dry-run`, print plan and stop regardless of choice.
 

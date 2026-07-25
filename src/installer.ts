@@ -118,8 +118,7 @@ export function latestVersion(manifest: DistManifest): string | undefined {
  *  parts compare as 0; equal or garbage input -> false.
  *  ponytail: 3-component numeric compare, not full semver — grim releases plain x.y.z. */
 export function isNewerVersion(latest: string, current: string): boolean {
-  const parse = (v: string): number[] =>
-    v.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const parse = (v: string): number[] => v.split('.').map((part) => Number.parseInt(part, 10) || 0);
   const [l, c] = [parse(latest), parse(current)];
   for (let i = 0; i < 3; i++) {
     const a = l[i] ?? 0;

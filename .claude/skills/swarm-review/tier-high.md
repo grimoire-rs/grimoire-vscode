@@ -61,6 +61,7 @@ Launch **in single message with multiple Agent tool calls** so run concurrently 
   `overlays.md` doc-reviewer axis)
 
 Each reviewer classifies findings:
+
 - **Actionable** (Block/Warn) — reported with remediation
 - **Deferred** — needs human judgment; reason stated
 - **Suggest** — optional; goes direct to deferred summary
@@ -119,25 +120,39 @@ Produce review report using shared skeleton from `SKILL.md`:
 
 ```markdown
 ## Code Review: [target]
+
 ### Summary
+
 - Verdict: [Approve / Needs Work / Request Changes]
 - Tier: high
 - Baseline: <base>
 - Diff: N files, +L / -L lines, S subsystems
+
 ### Stage 1 — Correctness
+
 #### Spec-compliance
+
 #### Test Coverage
+
 ### Stage 2 — Quality / Security / Performance / Docs
+
 #### Quality
-#### Security             # if fired
-#### Performance          # if fired
-#### Documentation        # if fired
-### Cross-Model Adversarial (Codex)   # if --codex fired
+
+#### Security # if fired
+
+#### Performance # if fired
+
+#### Documentation # if fired
+
+### Cross-Model Adversarial (Codex) # if --codex fired
+
 ### Root-Cause Analysis
+
 ### Deferred Findings
 ```
 
 **Verdict rules**:
+
 - **Request Changes** if any Block-tier finding unresolved, or
   security vulns exist, or breaking changes lack migration,
   or tests absent for new code

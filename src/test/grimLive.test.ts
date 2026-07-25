@@ -31,8 +31,9 @@ const GRIM = process.env['GRIM_LIVE_BIN'] ?? 'grim';
 const VERSION_PROBE = spawnSync(GRIM, ['--version'], { timeout: 10000, encoding: 'utf8' });
 const HAVE_GRIM = VERSION_PROBE.status === 0;
 // `grim --version` prints e.g. "grim 0.11.0" — the semver is the last token.
-const GRIM_VERSION =
-  HAVE_GRIM ? (/(\d+\.\d+\.\d+)/.exec(VERSION_PROBE.stdout ?? '')?.[1] ?? null) : null;
+const GRIM_VERSION = HAVE_GRIM
+  ? (/(\d+\.\d+\.\d+)/.exec(VERSION_PROBE.stdout ?? '')?.[1] ?? null)
+  : null;
 const NETWORK = process.env['GRIM_LIVE_NETWORK'] === '1';
 
 suite('grim live (real binary)', function () {
@@ -131,10 +132,17 @@ suite('grim live (real binary)', function () {
     try {
       const result = await runJson<ConfigWriteResult>(
         GRIM,
-        ['--config', configPath, ...configSetArgs('options.tui.default_view', 'tree', { dryRun: true })],
+        [
+          '--config',
+          configPath,
+          ...configSetArgs('options.tui.default_view', 'tree', { dryRun: true }),
+        ],
         { timeoutMs: 15000 },
       );
-      assert.ok(result.ok, result.ok ? '' : `config set --dry-run not ok: ${JSON.stringify(result)}`);
+      assert.ok(
+        result.ok,
+        result.ok ? '' : `config set --dry-run not ok: ${JSON.stringify(result)}`,
+      );
       if (result.ok) {
         assert.strictEqual(result.value.dry_run, true);
       }

@@ -484,7 +484,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
             );
           };
           if (await scopes.projectConfigured()) {
-            handle('project', await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'project'));
+            handle(
+              'project',
+              await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'project'),
+            );
           }
           handle('global', await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'global'));
           // Reap only ever fires against an explicitly set `[options].clients`
