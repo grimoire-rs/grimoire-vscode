@@ -69,6 +69,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   initNotify(context);
 
   const scopes = new ScopeService(context.globalStorageUri, output);
+  // Remember `grim status --check` verdicts across window reloads. The daily
+  // throttle below is already persisted; without this the result it gates was
+  // not, so a reloaded window fell back to the local lock proxy for up to a day
+  // and the update count silently changed meaning.
+  scopes.checkStore = context.globalState;
   scopes.logExecutable();
   const catalog = new CatalogService(scopes);
 

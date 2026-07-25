@@ -178,6 +178,17 @@ export interface ItemsEnvelope<T> {
   items: T[];
 }
 
+/** `grim status`'s envelope. `checked` is `true` only when `--check` was passed
+ *  AND the invocation ran online — an offline `--check` degrades with a stderr
+ *  warning and reports `false`. grim's contract: `checked === false` implies
+ *  `deprecated`/`replaced_by`/`update_available` are null on EVERY item, so it
+ *  is the discriminator between "grim says there is no update" and "grim did
+ *  not look". Optional here like every additive field — an envelope without it
+ *  reads as "did not look", which is the safe direction. */
+export interface StatusEnvelope extends ItemsEnvelope<StatusItem> {
+  checked?: boolean;
+}
+
 /** One row of `grim update --format json`'s `items` envelope: one artifact's
  *  update outcome. `old`/`new` are digests — `old: null` means the artifact
  *  had no previous lock entry, `new: null` means the row left the lock

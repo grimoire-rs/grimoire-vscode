@@ -13,9 +13,9 @@ import {
   runJson,
   type ContextInfo,
   type GrimResult,
-  type ItemsEnvelope,
   type RunOptions,
   type Scope,
+  type StatusEnvelope,
   type StatusItem,
 } from './grim';
 
@@ -185,6 +185,87 @@ export function searchScopeFor(projectFolder: string | undefined, searchable: bo
   return projectFolder !== undefined && searchable ? 'project' : 'global';
 }
 
+/** The three fields `grim status` only populates under `--check`, remembered
+ *  per artifact pin between checks. */
+interface CheckedFields {
+  update_available: boolean | null;
+  deprecated: string | null;
+  replaced_by: string | null;
+}
+
+/** Narrow key/value face of `vscode.Memento` — `context.globalState` satisfies
+ *  it structurally. Narrow on purpose: the store only ever holds the last
+ *  `--check` verdicts, and a full Memento would let this reach the rest of the
+ *  extension's persisted state. */
+export interface CheckStore {
+  get<T>(key: string, defaultValue: T): T;
+  update(key: string, value: unknown): Thenable<void>;
+}
+
+/** Session-lifetime CheckStore. The default, so tests and any construction
+ *  without an ExtensionContext behave — verdicts then simply don't outlive the
+ *  window, which is the pre-existing behavior. */
+export function memoryCheckStore(): CheckStore {
+  const values = new Map<string, unknown>();
+  return {
+    get<T>(key: string, defaultValue: T): T {
+      return values.has(key) ? (values.get(key) as T) : defaultValue;
+    },
+    update(key: string, value: unknown): Thenable<void> {
+      values.set(key, value);
+      return Promise.resolve();
+    },
+  };
+}
+
+/** Cache key for one status row's remembered check verdict. The PIN is part of
+ *  the key, which is the whole invalidation strategy: updating or re-locking an
+ *  artifact re-pins it, so the old verdict is simply never looked up again. No
+ *  TTL, and nothing to clear when `grim update` runs behind our back. */
+function checkKey(item: Pick<StatusItem, 'kind' | 'name' | 'pinned'>): string {
+  // '|' separates because it can appear in none of the three: kind is a fixed
+  // lowercase word, name is [A-Za-z0-9._-] (see parseDeclaredRefs), and an OCI
+  // reference has no room for it either — so two distinct rows cannot collide
+  // on one key.
+  return [item.kind, item.name, item.pinned ?? ''].join('|');
+}
+
+/** Merges a status round with the last-remembered `--check` verdicts, and
+ *  returns both the merged items and the record to persist.
+ *
+ *  grim leaves `update_available`/`deprecated`/`replaced_by` null on a plain
+ *  `grim status` (no `--check` ⇒ no network). Without this, every watcher
+ *  event, config change and post-action refresh recomputed the update count
+ *  from the local lock proxy (`outdated`/`stale` — "installed digest ≠ lock",
+ *  NOT "the registry has something newer"), so the badge flipped between two
+ *  different meanings all day.
+ *
+ *  One expression covers both directions: `item.X ?? remembered.X ?? null`. A
+ *  fresh `false` wins (`??` only falls back on null/undefined), so a check that
+ *  says "no update" clears a remembered `true`; a per-artifact re-resolution
+ *  that FAILED under `checked: true` reads as null and keeps the last good
+ *  verdict rather than flip-flopping. Only keys seen this round are written
+ *  back, so the record self-prunes to the installed set.
+ *
+ *  Pure over its inputs; exported for tests. */
+export function mergeCheckedFields(
+  items: StatusItem[],
+  remembered: Record<string, CheckedFields>,
+): { items: StatusItem[]; remember: Record<string, CheckedFields> } {
+  const remember: Record<string, CheckedFields> = {};
+  const merged = items.map((item) => {
+    const previous = remembered[checkKey(item)];
+    const fields: CheckedFields = {
+      update_available: item.update_available ?? previous?.update_available ?? null,
+      deprecated: item.deprecated ?? previous?.deprecated ?? null,
+      replaced_by: item.replaced_by ?? previous?.replaced_by ?? null,
+    };
+    remember[checkKey(item)] = fields;
+    return { ...item, ...fields };
+  });
+  return { items: merged, remember };
+}
+
 export class ScopeService {
   // Last snapshot computed by snapshot(), so the details panel can render real
   // scope/install state in its instant skeleton without awaiting a fresh grim
@@ -208,6 +289,13 @@ export class ScopeService {
    *  that sets PATH would otherwise make the probe and the spawn disagree about
    *  whether a PATH grim exists. */
   pathHasGrim: () => boolean = () => grimOnPath({ ...process.env, ...readConfig().extraEnv });
+
+  /** Where the last `--check` verdicts are remembered (see
+   *  {@link mergeCheckedFields}). In-memory by default; extension.ts swaps in
+   *  `context.globalState` so they outlive a window reload — the 24h throttle
+   *  that gates the next check already does, and a throttle that outlives its
+   *  own result is what left a reloaded window on the lock proxy for a day. */
+  checkStore: CheckStore = memoryCheckStore();
 
   /**
    * Resolves the grim executable: explicit setting wins; the default `grim`
@@ -421,7 +509,7 @@ export class ScopeService {
       };
     }
     const status = ctx.value.config_exists
-      ? await this.run<ItemsEnvelope<StatusItem>>(statusArgs(options), scope)
+      ? await this.run<StatusEnvelope>(statusArgs(options), scope)
       : undefined;
     const failed = status !== undefined && !status.ok;
     return {
@@ -430,7 +518,12 @@ export class ScopeService {
         context: ctx.value,
         // No config (status undefined) means no installs — a positive empty;
         // a ran-but-failed status is unknown (null), never empty.
-        status: status === undefined ? [] : status.ok ? status.value.items : null,
+        status:
+          status === undefined
+            ? []
+            : status.ok
+              ? this.rememberChecks(scope, status.value, options.check === true)
+              : null,
         ...(failed ? { statusUnknownReason: 'status-failed' as const } : {}),
         declared: this.readDeclared(ctx.value),
       },
@@ -440,6 +533,38 @@ export class ScopeService {
           }
         : {}),
     };
+  }
+
+  /** Fills this round's `--check`-only fields from the last remembered check
+   *  and records the result (see {@link mergeCheckedFields} for the merge rule
+   *  and why the badge needs it). One record per scope, so the two scopes'
+   *  self-pruning writes can't clobber each other. Also names the one degrade
+   *  worth a log line: `--check` was asked for, but grim reports it did not run
+   *  online, so the numbers on screen are last-known rather than fresh. */
+  private rememberChecks(
+    scope: Scope,
+    envelope: StatusEnvelope,
+    checkRequested: boolean,
+  ): StatusItem[] {
+    if (checkRequested && envelope.checked !== true) {
+      this.output.appendLine(
+        `  grim status --check (${scope}) did not run online (offline?) — update and ` +
+          'deprecation data stays last-known',
+      );
+    }
+    // Boundary guard, same as the update summary in extension.ts: an envelope
+    // that parses but whose `items` is missing or not an array must not throw.
+    const raw = Array.isArray(envelope.items) ? envelope.items : [];
+    const key = `updateCheck.${scope}`;
+    const previous = this.checkStore.get<Record<string, CheckedFields>>(key, {});
+    const { items, remember } = mergeCheckedFields(raw, previous);
+    // Only persist a round that actually learned something. Most rounds are
+    // plain refreshes that merge the record back unchanged, and globalState is
+    // backed by disk — a watcher storm would write on every event.
+    if (JSON.stringify(remember) !== JSON.stringify(previous)) {
+      void this.checkStore.update(key, remember);
+    }
+    return items;
   }
 
   /** The scope's declared refs, read off grimoire.toml. Empty when there is no
