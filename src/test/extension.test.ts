@@ -4,7 +4,6 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
-  grimOnPath,
   isProjectNotDiscovered,
   whichGrim,
   parseDeclaredRefs,
@@ -4036,7 +4035,7 @@ suite('project probe failure (run override)', () => {
 });
 
 suite('executable resolution', () => {
-  test('grimOnPath: executable file on PATH found; empty/dir-only PATH rejected', function () {
+  test('whichGrim: executable file on PATH found; empty/dir-only PATH rejected', function () {
     if (isWindows) {
       this.skip(); // exe-bit + PATHEXT semantics; resolution order is covered via the seam below
     }
@@ -4046,14 +4045,35 @@ suite('executable resolution', () => {
     // A DIRECTORY named grim must not count as an executable (X_OK passes on dirs).
     const dirTrap = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-trap-'));
     fs.mkdirSync(path.join(dirTrap, 'grim'));
-    // whichGrim names the exact hit — the too-old message prints it, so "which
-    // grim ran?" is answerable from the toast alone.
+    // The ABSOLUTE hit, never a bare name: it is what gets spawned (a bare name
+    // resolves against cwd before PATH on Windows) and what the too-old message
+    // prints, so "which grim ran?" is answerable from the toast alone.
     assert.strictEqual(whichGrim({ PATH: dir }), path.join(dir, 'grim'));
-    assert.strictEqual(grimOnPath({ PATH: dir }), true);
-    assert.strictEqual(grimOnPath({ PATH: `${empty}${path.delimiter}${dir}` }), true);
-    assert.strictEqual(grimOnPath({ PATH: empty }), false);
-    assert.strictEqual(grimOnPath({ PATH: dirTrap }), false);
-    assert.strictEqual(grimOnPath({}), false);
+    assert.strictEqual(
+      whichGrim({ PATH: `${empty}${path.delimiter}${dir}` }),
+      path.join(dir, 'grim'),
+      'an earlier empty PATH entry is skipped, not fatal',
+    );
+    assert.strictEqual(whichGrim({ PATH: empty }), undefined);
+    assert.strictEqual(whichGrim({ PATH: dirTrap }), undefined);
+    assert.strictEqual(whichGrim({}), undefined);
+  });
+
+  test('whichGrim: a RELATIVE PATH entry still yields an absolute path', function () {
+    if (isWindows) {
+      this.skip(); // exe bit; the resolution rule itself is platform-independent
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-path-rel-'));
+    fs.writeFileSync(path.join(dir, 'grim'), '#!/bin/sh\n', { mode: 0o755 });
+    // `.`, `bin`, `./tools` are all legal PATH entries. Handed back relative,
+    // they get resolved against the SPAWN's cwd — the workspace folder — which
+    // is the same hole as spawning a bare `grim`: a repository shipping its own
+    // grim wins over the user's.
+    const relative = path.relative(process.cwd(), dir);
+    assert.ok(!path.isAbsolute(relative), 'the PATH entry under test is relative');
+    const hit = whichGrim({ PATH: relative });
+    assert.strictEqual(hit, path.join(dir, 'grim'));
+    assert.ok(hit !== undefined && path.isAbsolute(hit), 'never a workspace-relative executable');
   });
 
   test('resolveExecutable: PATH grim wins over the bundled copy; bundled is the no-PATH fallback', async () => {
@@ -4061,19 +4081,25 @@ suite('executable resolution', () => {
     const scopes = new ScopeService(vscode.Uri.file(storage), recordingOutput([]));
     fs.mkdirSync(path.dirname(scopes.bundledExecutablePath()), { recursive: true });
     fs.writeFileSync(scopes.bundledExecutablePath(), '#!/bin/sh\n', { mode: 0o755 });
+    const onPath = path.join(storage, 'path-grim');
     // The resolution under test is the default-setting branch — park any
     // explicit executable another suite left in the global setting.
     const cfg = vscode.workspace.getConfiguration('grimoire');
     const prev = cfg.inspect<string>('path.executable')?.globalValue;
     await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
     try {
-      scopes.pathHasGrim = () => true;
+      scopes.pathGrim = () => onPath;
       assert.strictEqual(
         scopes.resolveExecutable(),
-        DEFAULT_EXECUTABLE,
-        'a user-managed PATH grim must win over the extension-managed copy',
+        onPath,
+        'a user-managed PATH grim must win over the extension-managed copy, named absolutely',
       );
-      scopes.pathHasGrim = () => false;
+      assert.notStrictEqual(
+        scopes.resolveExecutable(),
+        DEFAULT_EXECUTABLE,
+        'never the bare name: run() spawns with cwd set, where Windows resolves it against the repo first',
+      );
+      scopes.pathGrim = () => undefined;
       assert.strictEqual(
         scopes.resolveExecutable(),
         scopes.bundledExecutablePath(),
@@ -4096,9 +4122,9 @@ suite('executable resolution', () => {
     try {
       // The setting is the top of the chain: neither a PATH grim nor the
       // bundled copy may override what the user pointed at explicitly.
-      scopes.pathHasGrim = () => true;
+      scopes.pathGrim = () => path.join(storage, 'path-grim');
       assert.strictEqual(scopes.resolveExecutable(), explicit);
-      scopes.pathHasGrim = () => false;
+      scopes.pathGrim = () => undefined;
       assert.strictEqual(scopes.resolveExecutable(), explicit);
     } finally {
       await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
@@ -4114,9 +4140,9 @@ suite('executable resolution', () => {
     const prev = cfg.inspect<string>('path.executable')?.globalValue;
     await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
     try {
-      scopes.pathHasGrim = () => false;
+      scopes.pathGrim = () => undefined;
       assert.strictEqual(scopes.managedExecutable(), true, 'bundled fallback is ours to replace');
-      scopes.pathHasGrim = () => true;
+      scopes.pathGrim = () => path.join(storage, 'path-grim');
       assert.strictEqual(scopes.managedExecutable(), false, 'a PATH grim is user-managed');
       // Pointing the setting AT the bundled path is still a user's explicit
       // choice — the update toast must not offer to overwrite it.
@@ -4125,7 +4151,7 @@ suite('executable resolution', () => {
         scopes.bundledExecutablePath(),
         vscode.ConfigurationTarget.Global,
       );
-      scopes.pathHasGrim = () => false;
+      scopes.pathGrim = () => undefined;
       assert.strictEqual(scopes.managedExecutable(), false, 'an explicit setting is user-managed');
     } finally {
       await cfg.update('path.executable', prev, vscode.ConfigurationTarget.Global);
@@ -4145,31 +4171,29 @@ suite('executable resolution', () => {
     const cfg = vscode.workspace.getConfiguration('grimoire');
     const prevExec = cfg.inspect<string>('path.executable')?.globalValue;
     const prevEnv = cfg.inspect<Record<string, string>>('extraEnv')?.globalValue;
-    // resolvedExecutable() names the PATH hit absolutely, but resolveExecutable()
-    // hands the OS a bare `grim` to resolve itself — so parity maps the PATH
-    // origin to the default, and every other origin to the reported path.
-    const derived = (r: ReturnType<ScopeService['resolvedExecutable']>): string =>
-      r.origin === 'PATH' ? DEFAULT_EXECUTABLE : r.path;
+    // The spawn and the naming resolution are ONE derivation now: whatever
+    // resolvedExecutable() reports is exactly what resolveExecutable() spawns,
+    // PATH branch included (it used to hand the OS a bare `grim` there).
     try {
       await cfg.update('path.executable', undefined, vscode.ConfigurationTarget.Global);
       await cfg.update('extraEnv', { PATH: pathDir }, vscode.ConfigurationTarget.Global);
 
-      // PATH: the scan names the absolute hit whichGrim found, never bare `grim`.
-      scopes.pathHasGrim = () => true;
+      // PATH: the real scan, through the default seam — the absolute hit
+      // whichGrim found, never bare `grim`.
       fs.rmSync(bundled, { force: true });
       const onPath = scopes.resolvedExecutable();
       assert.strictEqual(onPath.origin, 'PATH');
       assert.strictEqual(onPath.path, path.join(pathDir, 'grim'));
       assert.notStrictEqual(onPath.path, DEFAULT_EXECUTABLE, 'PATH names the hit, not bare grim');
-      assert.strictEqual(scopes.resolveExecutable(), derived(onPath));
+      assert.strictEqual(scopes.resolveExecutable(), onPath.path);
 
       // missing: no setting, no PATH grim, no bundled copy — reported as missing,
       // never mislabelled PATH (the bug: a full scan only to name a nowhere binary).
-      scopes.pathHasGrim = () => false;
+      scopes.pathGrim = () => undefined;
       const missing = scopes.resolvedExecutable();
       assert.strictEqual(missing.origin, 'missing');
       assert.strictEqual(missing.path, DEFAULT_EXECUTABLE);
-      assert.strictEqual(scopes.resolveExecutable(), derived(missing));
+      assert.strictEqual(scopes.resolveExecutable(), missing.path);
 
       // bundled: no PATH grim but the extension-managed copy exists.
       fs.mkdirSync(path.dirname(bundled), { recursive: true });
@@ -4177,16 +4201,16 @@ suite('executable resolution', () => {
       const bundledRes = scopes.resolvedExecutable();
       assert.strictEqual(bundledRes.origin, 'bundled');
       assert.strictEqual(bundledRes.path, bundled);
-      assert.strictEqual(scopes.resolveExecutable(), derived(bundledRes));
+      assert.strictEqual(scopes.resolveExecutable(), bundledRes.path);
 
       // setting: an explicit path wins over a PATH grim and the bundled copy alike.
       const explicit = path.join(storage, 'explicit-grim');
       await cfg.update('path.executable', explicit, vscode.ConfigurationTarget.Global);
-      scopes.pathHasGrim = () => true;
+      scopes.pathGrim = () => path.join(pathDir, 'grim');
       const setting = scopes.resolvedExecutable();
       assert.strictEqual(setting.origin, 'setting');
       assert.strictEqual(setting.path, explicit);
-      assert.strictEqual(scopes.resolveExecutable(), derived(setting));
+      assert.strictEqual(scopes.resolveExecutable(), setting.path);
     } finally {
       await cfg.update('path.executable', prevExec, vscode.ConfigurationTarget.Global);
       await cfg.update('extraEnv', prevEnv, vscode.ConfigurationTarget.Global);

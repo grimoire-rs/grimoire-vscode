@@ -108,7 +108,14 @@ export function whichGrim(env: NodeJS.ProcessEnv = process.env): string | undefi
     }
     for (const ext of exts) {
       try {
-        const candidate = path.join(dir, `grim${ext}`);
+        // RESOLVED, not merely joined: a relative PATH entry (`.`, `bin`,
+        // `./tools` — all legal) would otherwise yield a relative executable
+        // path, which run() then resolves against ITS cwd, the workspace
+        // folder. That is the same threat as handing the OS a bare `grim`: a
+        // repository shipping its own grim would win. Resolving before the
+        // access check also keeps the file we probed and the file we return the
+        // same one.
+        const candidate = path.resolve(dir, `grim${ext}`);
         fs.accessSync(candidate, fs.constants.X_OK);
         // X_OK passes on directories too — a dir named `grim` on PATH is not
         // an executable.
@@ -121,11 +128,6 @@ export function whichGrim(env: NodeJS.ProcessEnv = process.env): string | undefi
     }
   }
   return undefined;
-}
-
-/** Boolean face of {@link whichGrim}. */
-export function grimOnPath(env: NodeJS.ProcessEnv = process.env): boolean {
-  return whichGrim(env) !== undefined;
 }
 
 /** Prepends the top-level `--global` flag before the subcommand. grim documents
@@ -283,12 +285,16 @@ export class ScopeService {
     return this.lastSnapshot;
   }
 
-  /** Test seam for the PATH probe (see grimOnPath) — instance-overridable the
-   *  same way tests override run(). Probes the SAME env the spawn will use
-   *  (`process.env` merged with grimoire.extraEnv, see runJson): an extraEnv
-   *  that sets PATH would otherwise make the probe and the spawn disagree about
-   *  whether a PATH grim exists. */
-  pathHasGrim: () => boolean = () => grimOnPath({ ...process.env, ...readConfig().extraEnv });
+  /** Test seam for the PATH scan (see {@link whichGrim}) — instance-overridable
+   *  the same way tests override run(). Yields the ABSOLUTE hit rather than a
+   *  boolean because both consumers need it: the spawn as much as the naming
+   *  resolution (see {@link resolveExecutable}), so ONE scan answers both
+   *  questions instead of one of them scanning and discarding the path it found.
+   *  Probes the SAME env the spawn will use (`process.env` merged with
+   *  grimoire.extraEnv, see runJson): an extraEnv that sets PATH would otherwise
+   *  make the probe and the spawn disagree about which grim exists. */
+  pathGrim: () => string | undefined = () =>
+    whichGrim({ ...process.env, ...readConfig().extraEnv });
 
   /** Where the last `--check` verdicts are remembered (see
    *  {@link mergeCheckedFields}). In-memory by default; extension.ts swaps in
@@ -298,62 +304,47 @@ export class ScopeService {
   checkStore: CheckStore = memoryCheckStore();
 
   /**
-   * Resolves the grim executable: explicit setting wins; the default `grim`
-   * uses PATH when a grim exists there, and only otherwise falls back to the
-   * extension-managed copy in globalStorage/bin. The bundled copy is a
+   * The grim executable to spawn: explicit setting wins; the default `grim`
+   * resolves to the PATH hit when there is one, and only otherwise falls back
+   * to the extension-managed copy in globalStorage/bin. The bundled copy is a
    * fallback for machines with no grim at all — it must never shadow a
    * user-managed PATH install (it goes stale independently of it).
    *
-   * The spawn path: it needs the boolean {@link pathHasGrim}, never the
-   * absolute PATH hit, so it deliberately does NOT route through
-   * {@link resolvedExecutable} — that would charge every grim call a second
-   * PATH scan just to name a binary the OS resolves itself.
+   * ABSOLUTE for the PATH branch, never the bare `grim` this used to hand the
+   * OS: run() spawns with `cwd` set to the workspace folder, and libuv resolves
+   * a directory-free name against that cwd BEFORE PATH on Windows — so opening
+   * a repository that ships a `grim.exe` in its root ran THAT binary instead of
+   * the user's grim. Naming the hit is free: {@link pathGrim}'s scan is the same
+   * one that answers whether a PATH grim exists at all.
+   *
+   * One derivation with {@link resolvedExecutable}, so the binary that gets
+   * spawned and the binary the grim-info dialog names cannot disagree.
    */
   resolveExecutable(): string {
-    const configured = readConfig().executable;
-    if (configured !== DEFAULT_EXECUTABLE) {
-      return configured;
-    }
-    if (this.pathHasGrim()) {
-      return configured; // 'grim' — the spawn resolves it via PATH
-    }
-    const bundled = this.bundledExecutablePath();
-    if (bundled && fs.existsSync(bundled)) {
-      return bundled;
-    }
-    return configured;
+    return this.resolvedExecutable().path;
   }
 
   /**
-   * The resolution of {@link resolveExecutable} together with the branch it
-   * took — the single source for every consumer that needs to *name* the binary
-   * rather than just spawn it (`collectGrimInfo`'s Binary/Resolved rows, the
-   * version-floor message in `scopeSnapshot`), both of which re-derive the
-   * setting → PATH → bundled branch today and can disagree with the spawn.
+   * The resolution together with the branch it took — for the spawn (see
+   * {@link resolveExecutable}) and for every consumer that needs to *name* the
+   * binary (`collectGrimInfo`'s Binary/Resolved rows, the version-floor message
+   * in `scopeSnapshot`), off one branch rather than three re-derivations.
    *
    * `path` is absolute wherever knowable: for the PATH branch that means the
-   * hit {@link whichGrim} found, not the bare `grim` the spawn passes to the OS.
-   * `origin` is `'missing'` when the setting is the default, {@link pathHasGrim}
-   * is false and no extension-managed copy exists at
-   * {@link bundledExecutablePath} — the state `resolveExecutable` reports as a
-   * bare `grim` and `collectGrimInfo` currently mislabels as `'PATH'`.
-   * `'bundled'` is the same condition {@link managedExecutable} tests.
-   * The PATH scan runs only behind `pathHasGrim()`, so the no-grim-anywhere
-   * state does not pay for a full scan twice.
+   * hit {@link whichGrim} found. `origin` is `'missing'` when the setting is the
+   * default, {@link pathGrim} finds nothing and no extension-managed copy exists
+   * at {@link bundledExecutablePath} — the state `collectGrimInfo` used to
+   * mislabel as `'PATH'`. `'bundled'` is the same condition
+   * {@link managedExecutable} tests.
    */
   resolvedExecutable(): { path: string; origin: 'setting' | 'PATH' | 'bundled' | 'missing' } {
     const configured = readConfig().executable;
     if (configured !== DEFAULT_EXECUTABLE) {
       return { path: configured, origin: 'setting' };
     }
-    if (this.pathHasGrim()) {
-      // Only the naming scan, and only behind the boolean gate: whichGrim
-      // early-returns on the first hit, so this costs a hit-length scan here
-      // and nothing at all in the no-grim-anywhere state below.
-      return {
-        path: whichGrim({ ...process.env, ...readConfig().extraEnv }) ?? configured,
-        origin: 'PATH',
-      };
+    const onPath = this.pathGrim();
+    if (onPath !== undefined) {
+      return { path: onPath, origin: 'PATH' };
     }
     const bundled = this.bundledExecutablePath();
     if (fs.existsSync(bundled)) {
