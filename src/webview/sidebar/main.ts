@@ -505,6 +505,14 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
       render();
     }
     (document.getElementById('search') as HTMLInputElement | null)?.focus();
+  } else if (message.type === 'setTab') {
+    // Host-driven tab switch (the activity-bar Updates row clicks through
+    // here). Persisted like a user click so the tab survives a reload.
+    if (activeTab !== message.tab) {
+      activeTab = message.tab;
+      persist();
+      render();
+    }
   }
 });
 

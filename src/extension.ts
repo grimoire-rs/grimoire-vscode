@@ -30,6 +30,7 @@ import { showGrimInfo } from './views/grimInfo';
 import { pickVersion } from './views/pickVersion';
 import { SettingsManager } from './views/settings';
 import { SidebarProvider } from './views/sidebar';
+import { UpdatesView } from './views/updatesView';
 import { Watchers } from './watchers';
 import { artifactName, isValidRepo, parseShareLink, refRepo } from './webview/model';
 
@@ -41,6 +42,7 @@ export interface GrimoireApi {
     sidebar: SidebarProvider;
     details: DetailsManager;
     settings: SettingsManager;
+    updates: UpdatesView;
   };
   /** Deep-link handler (test seam; fired for real via registerUriHandler). */
   handleUri(uri: vscode.Uri): Promise<void>;
@@ -272,6 +274,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   });
   context.subscriptions.push(prefetcher);
 
+  // Owns the activity-bar update count — see views/updatesView.ts for why the
+  // sidebar webview cannot. Exists from activation, unlike the webview view.
+  const updatesView = new UpdatesView();
+  context.subscriptions.push(updatesView);
+
   const delegate = {
     openDetails: (repo: string, mode: 'preview' | 'permanent') =>
       mode === 'preview' ? details.openPreview(repo) : details.open(repo),
@@ -283,6 +290,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       suspendWhile(() => pickVersion(repo, scopes, output, refreshAll)),
     cachedLogos: (repos: string[]) => details.cachedLogos(repos),
     prefetch: (repos: string[]) => void prefetcher.enqueue(repos),
+    setUpdateCount: (count: number) => updatesView.setCount(count),
   };
 
   const sidebar = new SidebarProvider(context.extensionUri, scopes, catalog, delegate, output);
@@ -428,6 +436,12 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   );
 
   context.subscriptions.push(
+    // The activity-bar Updates row clicks through to the Updates tab. Not in
+    // the command palette (package.json hides it) — it exists for that row.
+    vscode.commands.registerCommand('grimoire.showUpdates', async () => {
+      await vscode.commands.executeCommand('grimoire.marketplace.focus');
+      sidebar.showTab('updates');
+    }),
     vscode.commands.registerCommand('grimoire.focusSearch', async () => {
       await vscode.commands.executeCommand('grimoire.marketplace.focus');
       sidebar.focusSearch();
@@ -557,7 +571,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   return {
     refresh: refreshAll,
     scopes,
-    providers: { sidebar, details, settings },
+    providers: { sidebar, details, settings, updates: updatesView },
     handleUri,
   };
 }

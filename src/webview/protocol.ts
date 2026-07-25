@@ -145,7 +145,12 @@ export type SidebarToHost =
    *  grim, or a non-too-old failure). */
   | { type: 'showGrimInfo' };
 
-export type HostToSidebar = { type: 'state'; state: SidebarState } | { type: 'focusSearch' };
+export type HostToSidebar =
+  | { type: 'state'; state: SidebarState }
+  | { type: 'focusSearch' }
+  /** Switches the internal tab bar from the host — the Updates row in the
+   *  activity-bar tree view clicks through to the Updates tab. */
+  | { type: 'setTab'; tab: SidebarState['mode'] };
 
 export interface BundleMemberVM {
   kind: string;

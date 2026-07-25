@@ -79,8 +79,10 @@ Run from the Command Palette (all under the **Grimoire** category).
 | `Grimoire: Report Bug`                         | Open a prefilled GitHub bug report                                               |
 | `Grimoire: Request Feature`                    | Open a prefilled GitHub feature request                                          |
 
-The `grimoire.openDetails` command is intentionally omitted — it's invoked via
-the `vscode://` deep link, not run from the Command Palette.
+`grimoire.openDetails` and `grimoire.showUpdates` are intentionally omitted from
+the palette — the first is invoked via the `vscode://` deep link, the second by
+the **Updates** row that appears in the Grimoire sidebar when updates are
+available.
 
 ## Settings
 

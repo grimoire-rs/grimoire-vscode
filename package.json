@@ -31,6 +31,7 @@
   "icon": "assets/logo.png",
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onWebviewPanel:grimoire.details",
     "onUri"
   ],
@@ -64,6 +65,11 @@
           "type": "webview",
           "id": "grimoire.marketplace",
           "name": "Grimoire"
+        },
+        {
+          "id": "grimoire.updates",
+          "name": "Updates",
+          "when": "grimoire.updatesAvailable"
         }
       ]
     },
@@ -84,6 +90,11 @@
         "title": "Check for Updates",
         "category": "Grimoire",
         "icon": "$(sync)"
+      },
+      {
+        "command": "grimoire.showUpdates",
+        "title": "Show Updates",
+        "category": "Grimoire"
       },
       {
         "command": "grimoire.updateAll",
@@ -194,6 +205,10 @@
       "commandPalette": [
         {
           "command": "grimoire.openDetails",
+          "when": "false"
+        },
+        {
+          "command": "grimoire.showUpdates",
           "when": "false"
         }
       ]

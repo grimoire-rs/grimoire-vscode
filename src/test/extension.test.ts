@@ -3711,10 +3711,13 @@ suite('view/title toolbar contributions (package.json)', () => {
     group?: string;
   }
   interface PackageJson {
+    activationEvents: string[];
     contributes: {
+      views: { grimoire: { id: string; when?: string }[] };
       menus: {
         'view/title': MenuEntry[];
         'grimoire.feedback': MenuEntry[];
+        commandPalette: { command: string; when?: string }[];
       };
     };
   }
@@ -3733,6 +3736,24 @@ suite('view/title toolbar contributions (package.json)', () => {
     assert.deepStrictEqual(
       pkg.contributes.menus['grimoire.feedback'].map((entry) => entry.command),
       ['grimoire.reportBug', 'grimoire.requestFeature'],
+    );
+  });
+
+  test('the update count survives a window where Grimoire is never opened', () => {
+    // Three contributions carry it, and all three are load-bearing: the tree
+    // view exists from activation (a WebviewView badge does not — VS Code only
+    // resolves that view when it first becomes visible); its `when` key is the
+    // one setBadge sets, so no updates means no extra row in the container; and
+    // eager activation is what sets that key in a window nobody has opened.
+    const updates = pkg.contributes.views.grimoire.find((v) => v.id === 'grimoire.updates');
+    assert.ok(updates, 'the updates view must be contributed');
+    assert.strictEqual(updates.when, 'grimoire.updatesAvailable');
+    assert.ok(pkg.activationEvents.includes('onStartupFinished'));
+    assert.ok(
+      pkg.contributes.menus.commandPalette.some(
+        (entry) => entry.command === 'grimoire.showUpdates' && entry.when === 'false',
+      ),
+      'the row-click command is not a palette entry',
     );
   });
 });
@@ -4278,7 +4299,11 @@ suite('grim version floor', () => {
 /** The activity-bar badge (outdated count). It rolls up into the icon number,
  *  so a stale count reads as "you still have updates" after a successful one. */
 suite('update badge', () => {
-  const badgeOf = (view: vscode.WebviewView): vscode.ViewBadge | undefined => view.badge;
+  // The count lives on the activity-bar tree view, not on the sidebar's
+  // WebviewView — VS Code only resolves that one when the view first becomes
+  // visible, so a badge set there was invisible until Grimoire was opened.
+  const badgeOf = (api: GrimoireApi): vscode.ViewBadge | undefined =>
+    api.providers.updates.badge();
 
   /** A run override serving one installed artifact whose status `state` the
    *  caller picks — the field the badge count ultimately derives from on a
@@ -4317,6 +4342,21 @@ suite('update badge', () => {
     }) as ScopeService['run'];
   }
 
+  test('the tree view carries the count as a row and drops it at zero', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const updates = api.providers.updates;
+    updates.setCount(3);
+    assert.deepStrictEqual(updates.getChildren(), ['updates'], 'a row to click through from');
+    assert.strictEqual(updates.getTreeItem().label, '3 updates available');
+    assert.strictEqual(updates.getTreeItem().command?.command, 'grimoire.showUpdates');
+    updates.setCount(1);
+    assert.strictEqual(updates.getTreeItem().label, '1 update available', 'singular at one');
+    updates.setCount(0);
+    assert.deepStrictEqual(updates.getChildren(), [], 'nothing to show with no updates');
+    assert.strictEqual(updates.badge(), undefined);
+  });
+
   test('the badge tracks the outdated count and clears once the update lands', async function () {
     this.timeout(15000);
     const api = await activateExtension();
@@ -4326,12 +4366,12 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(view)?.value, 1, 'an outdated install badges the activity bar');
+      assert.strictEqual(badgeOf(api)?.value, 1, 'an outdated install badges the activity bar');
       // What `grim update` leaves behind: the same artifact, no longer outdated.
       api.scopes.run = statusRun('installed');
       await api.providers.sidebar.refresh();
       assert.strictEqual(
-        badgeOf(view),
+        badgeOf(api),
         undefined,
         'the badge must clear after the update — a stale count reads as "still outdated"',
       );
@@ -4349,7 +4389,7 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(view)?.value, 1);
+      assert.strictEqual(badgeOf(api)?.value, 1);
       // Install state is now UNKNOWN, not empty. The badge deliberately holds
       // its last value rather than clearing to a "no updates" claim it cannot
       // make. The Updates tab must not contradict it with a bare 0 either —
@@ -4371,7 +4411,7 @@ suite('update badge', () => {
       const last = states.at(-1);
       assert.ok(last);
       assert.strictEqual(last.phase, 'ready', 'the catalog is fine — browsing stays available');
-      assert.strictEqual(badgeOf(view)?.value, 1, 'the badge holds its last known count');
+      assert.strictEqual(badgeOf(api)?.value, 1, 'the badge holds its last known count');
       assert.ok(
         last.installStateUnknown?.includes('stale binary'),
         'the tabs render the reason instead of a count that would contradict the badge',

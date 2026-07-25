@@ -53,6 +53,9 @@ export interface SidebarDelegate {
   cachedLogos(repos: string[]): Promise<Map<string, string>>;
   /** Background-prefetch the top of a fresh browse result list into the cache. */
   prefetch(repos: string[]): void;
+  /** Publishes the outdated count to whatever owns the activity-bar badge (see
+   *  views/updatesView.ts for why that is not this webview). */
+  setUpdateCount(count: number): void;
 }
 
 /** The SINGLE producer of render-facing scope status — every "install state
@@ -141,6 +144,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   focusSearch(): void {
     this.post({ type: 'focusSearch' });
+  }
+
+  /** Switches the webview's internal tab bar (the activity-bar Updates row). */
+  showTab(tab: SidebarState['mode']): void {
+    this.post({ type: 'setTab', tab });
   }
 
   /** Seeds the search box (deep-link handler) so the query + results show. */
@@ -440,17 +448,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Native view badge (outdated count): it rolls up into the activity-bar
-   *  icon's number, which must mean "updates available", not "artifacts
-   *  installed". Cleared at zero. Also drives the `grimoire.updatesAvailable`
-   *  context key that shows/hides the conditional Update All toolbar icon —
-   *  kept in this single choke point so badge and icon can never disagree. */
+  /** The outdated count that rolls up into the activity-bar icon's number,
+   *  which must mean "updates available", not "artifacts installed". Cleared at
+   *  zero.
+   *
+   *  Handed to the delegate rather than set on `this.view`: a WebviewView's
+   *  badge only exists once VS Code resolves the view, which it defers until
+   *  the view first becomes visible, so this count was invisible in any window
+   *  where Grimoire was never opened. UpdatesView owns it now (and the
+   *  `grimoire.updatesAvailable` context key with it). Still the single choke
+   *  point on this side — every count the sidebar computes goes through here. */
   private setBadge(count: number): void {
-    void vscode.commands.executeCommand('setContext', 'grimoire.updatesAvailable', count > 0);
-    if (!this.view) {
-      return;
-    }
-    this.view.badge = count > 0 ? { value: count, tooltip: `${count} available` } : undefined;
+    this.delegate.setUpdateCount(count);
   }
 
   /** Sets card.logoUri from the details cache (misses stay codicon tiles). */

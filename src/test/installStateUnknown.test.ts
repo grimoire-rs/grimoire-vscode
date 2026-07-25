@@ -156,6 +156,9 @@ function makeSidebar(
   provider: SidebarProvider;
   posted: HostToSidebar[];
   view: vscode.WebviewView;
+  /** Every count the provider published, in order — the badge now lives on the
+   *  activity-bar tree view (views/updatesView.ts), not on this fake view. */
+  counts: number[];
 } {
   const queue = [...snapshots];
   let last = queue[0] ?? healthySnapshot();
@@ -169,6 +172,7 @@ function makeSidebar(
   const catalog = {
     search: async (): Promise<CatalogState> => ({ items: [searchItem()], syncedAt: Date.now() }),
   } as unknown as CatalogService;
+  const counts: number[] = [];
   const delegate: SidebarDelegate = {
     openDetails: () => {},
     installGrim: async () => {},
@@ -178,6 +182,7 @@ function makeSidebar(
     suspendWhile: (fn) => fn(),
     cachedLogos: async () => new Map<string, string>(),
     prefetch: () => {},
+    setUpdateCount: (count) => counts.push(count),
   };
   const posted: HostToSidebar[] = [];
   const output = vscode.window.createOutputChannel('grimoire-test');
@@ -190,7 +195,7 @@ function makeSidebar(
   );
   const view = fakeView(posted);
   provider.resolveWebviewView(view);
-  return { provider, posted, view };
+  return { provider, posted, view, counts };
 }
 
 suite('unknown install state: sidebar', () => {
@@ -331,12 +336,12 @@ suite('unknown install state: sidebar', () => {
         declared: { 'grim-usage': `${REPO}:1.5.0` },
       },
     };
-    const { provider, view } = makeSidebar([snapshot]);
+    const { provider, counts } = makeSidebar([snapshot]);
     await provider.refresh();
-    assert.strictEqual(
-      view.badge,
-      undefined,
-      'the badge stays frozen — reverting the gate to snap.error would set it to the global count (1)',
+    assert.deepStrictEqual(
+      counts,
+      [],
+      'the badge stays frozen — reverting the gate to snap.error would publish the global count (1)',
     );
   });
 });
