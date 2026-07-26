@@ -10,14 +10,18 @@
     "node": ">=20"
   },
   "categories": [
+    "AI",
     "Other"
   ],
   "keywords": [
+    "ai",
+    "skills",
+    "agents",
+    "mcp",
+    "claude",
     "grimoire",
     "grim",
     "oci",
-    "ai",
-    "skills",
     "package-manager"
   ],
   "repository": {
