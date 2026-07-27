@@ -5,6 +5,21 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-07-27
+
+### Added
+
+- Remember grim --check verdicts across plain refreshes *(status)*
+- Move the update badge to a view that exists before first open *(sidebar)*
+- Separate artifact update checks from the grim release check *(config)*
+
+### Fixed
+
+- Count updates by grim's verdict, not by row state *(sidebar)*
+- Clear the update count when grim is missing *(sidebar)*
+- Spawn the resolved grim by absolute path, never a bare name *(grim)*
+- Correct the update count's verdict memory and publishers *(sidebar)*
+
 ## [0.2.4] - 2026-07-24
 
 ### Added
@@ -108,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.2.5]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.4..v0.2.5
 [0.2.4]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.3..v0.2.4
 [0.2.3]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.2..v0.2.3
 [0.2.2]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.1..v0.2.2
