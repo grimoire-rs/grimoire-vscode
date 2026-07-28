@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { sidebarState } from './fixtures/vms';
 import {
+  addRegistryPrompt,
   artifactName,
   authenticatedHosts,
   buildCards,
@@ -22,6 +23,7 @@ import {
   isInteractiveTarget,
   isValidRepo,
   normalizeKind,
+  parseAddRegistryLink,
   parseBundleMembers,
   parseFrontmatter,
   parseShareLink,
@@ -1030,6 +1032,78 @@ suite('share links', () => {
     assert.ok(!isValidRepo(''));
     assert.ok(!isValidRepo('"><script>x</script>'));
     assert.ok(!isValidRepo('has space/x'));
+  });
+});
+
+suite('add-registry deep link', () => {
+  test('accepts an https index with a safe alias, and normalizes the URL', () => {
+    assert.deepStrictEqual(parseAddRegistryLink('index=https://index.grimoire.rs&alias=grimoire'), {
+      alias: 'grimoire',
+      index: 'https://index.grimoire.rs/',
+    });
+    assert.deepStrictEqual(
+      parseAddRegistryLink(
+        `index=${encodeURIComponent('https://idx.example.com/v1/')}&alias=my_idx-2`,
+      ),
+      { alias: 'my_idx-2', index: 'https://idx.example.com/v1/' },
+    );
+  });
+
+  test('rejects every non-https or unparseable index', () => {
+    for (const index of [
+      'http://index.grimoire.rs',
+      'file:///etc/passwd',
+      'javascript:alert(1)',
+      'vscode://grimoire-rs.grimoire-vscode/open',
+      'not a url',
+      '',
+      // Credentials would be persisted into grimoire.toml verbatim.
+      'https://user:token@index.grimoire.rs',
+    ]) {
+      assert.strictEqual(
+        parseAddRegistryLink(`index=${encodeURIComponent(index)}&alias=ok`),
+        null,
+        `rejected: ${index}`,
+      );
+    }
+    assert.strictEqual(parseAddRegistryLink('alias=ok'), null, 'index missing');
+    // Over the length cap, so it never reaches the URL parser or the modal.
+    const long = `https://x.example.com/${'a'.repeat(2100)}`;
+    assert.strictEqual(parseAddRegistryLink(`index=${long}&alias=ok`), null);
+  });
+
+  test('rejects an alias that is not a bare, flag-safe identifier', () => {
+    for (const alias of [
+      '',
+      '-default',
+      '--default',
+      'has space',
+      'dotted.key',
+      'quote"key',
+      'bracket]key',
+      'new\nline',
+      '<script>',
+      'a'.repeat(33),
+    ]) {
+      assert.strictEqual(
+        parseAddRegistryLink(`index=https://idx.example.com&alias=${encodeURIComponent(alias)}`),
+        null,
+        `rejected: ${JSON.stringify(alias)}`,
+      );
+    }
+  });
+
+  test('prompt targets project scope, falling back to global with that said out loud', () => {
+    const link = { alias: 'grimoire', index: 'https://index.grimoire.rs/' };
+    const project = addRegistryPrompt(link, true);
+    assert.strictEqual(project.scope, 'project');
+    assert.ok(project.detail.includes('https://index.grimoire.rs/'), 'names the exact index');
+    assert.ok(project.detail.includes('grimoire'), 'names the alias');
+    assert.ok(project.detail.includes("project's grimoire.toml"));
+
+    const global = addRegistryPrompt(link, false);
+    assert.strictEqual(global.scope, 'global');
+    assert.ok(global.detail.includes('GLOBAL'), 'the fallback is stated, not silent');
   });
 });
 

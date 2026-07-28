@@ -22,6 +22,7 @@ import {
   type ItemsEnvelope,
   type RegistryEntry,
   type RegistryFieldEntry,
+  type RegistryLocator,
   type Scope,
 } from '../grim';
 import {
@@ -70,7 +71,7 @@ export class SettingsManager {
   private activeScope: Scope | undefined;
   /** One in-flight write per scope, chained so a second edit to the same scope
    *  waits for the first's grim round trip instead of racing it. */
-  private writeChains = new Map<Scope, Promise<void>>();
+  private writeChains = new Map<Scope, Promise<unknown>>();
   /** grim's registry-form field metadata (`config registry fields`) —
    *  context-free, so fetched ONCE per panel lifetime rather than per scope;
    *  see ensureRegistryFields. Cached as the in-flight PROMISE (not just its
@@ -202,9 +203,9 @@ export class SettingsManager {
     }
   }
 
-  private post(panel: vscode.WebviewPanel, message: HostToSettings): void {
-    if (this.disposedPanels.has(panel)) {
-      return; // disposed while this async op was in flight — touching it throws
+  private post(panel: vscode.WebviewPanel | undefined, message: HostToSettings): void {
+    if (!panel || this.disposedPanels.has(panel)) {
+      return; // never opened, or disposed while this async op was in flight
     }
     void panel.webview.postMessage(message);
   }
@@ -408,29 +409,31 @@ export class SettingsManager {
    *  repostAfterChange (a single
    *  fetch, see its own doc); failure posts writeError only — nothing was
    *  written, so no state repost follows (protocol contract, stage 2
-   *  handoff). */
+   *  handoff). Returns the failure message, or undefined on success, for a
+   *  caller with no panel to receive writeError (see addRegistry).
+   *  `panel` is undefined for exactly that caller — Settings may be closed. */
   private async write(
-    panel: vscode.WebviewPanel,
+    panel: vscode.WebviewPanel | undefined,
     scope: Scope,
     key: string,
     args: string[],
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const prior = this.writeChains.get(scope) ?? Promise.resolve();
     const run = prior.then(
       () => this.writeInner(panel, scope, key, args),
       () => this.writeInner(panel, scope, key, args),
     );
     this.writeChains.set(scope, run);
-    await run;
+    return await run;
   }
 
   private async writeInner(
-    panel: vscode.WebviewPanel,
+    panel: vscode.WebviewPanel | undefined,
     scope: Scope,
     key: string,
     args: string[],
-  ): Promise<void> {
-    await this.suspendWhile(async () => {
+  ): Promise<string | undefined> {
+    return await this.suspendWhile(async () => {
       let result = await this.scopes.run<ConfigWriteResult>(args, scope);
       if (!result.ok && result.kind === 'error' && isRetryable(result)) {
         await sleep(LOCK_RETRY_DELAY_MS);
@@ -440,10 +443,25 @@ export class SettingsManager {
         const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
         this.output.appendLine(`error: grim ${args.join(' ')}: ${message}`);
         this.post(panel, { type: 'writeError', scope, key, message });
-        return;
+        return message;
       }
       await this.repostAfterChange(panel, scope);
+      return undefined;
     });
+  }
+
+  /** Add-registry deep link entry point (extension.ts confirms modally first —
+   *  never call this without that confirmation). Routed through the same
+   *  per-scope write chain as the panel's own add-registry form, so a link
+   *  arriving mid-edit queues behind that edit instead of racing it, and an
+   *  open Settings panel reposts itself afterwards for free. */
+  async addRegistry(alias: string, locator: RegistryLocator, scope: Scope): Promise<void> {
+    const failure = await this.write(this.panel, scope, alias, registryAddArgs(alias, locator));
+    if (failure !== undefined) {
+      notifyError(`Grimoire: could not add registry ${alias}: ${failure}`);
+      return;
+    }
+    void vscode.window.showInformationMessage(`Grimoire: added registry ${alias}`);
   }
 
   /** Runs `grim init` for `scope`, ONLY in response to the button click
@@ -475,9 +493,12 @@ export class SettingsManager {
    *  or targets a different manager. Drops a stale-scope repost: the user
    *  switched tabs while the action was in flight, and switching already
    *  reset that scope's local UI state. */
-  private async repostAfterChange(panel: vscode.WebviewPanel, scope: Scope): Promise<void> {
+  private async repostAfterChange(
+    panel: vscode.WebviewPanel | undefined,
+    scope: Scope,
+  ): Promise<void> {
     await this.onDidChange();
-    if (this.activeScope === scope) {
+    if (panel && this.activeScope === scope) {
       await this.postState(panel, scope);
     }
   }
