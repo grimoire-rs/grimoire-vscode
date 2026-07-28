@@ -33,9 +33,11 @@ import { SidebarProvider, scopeStatuses } from './views/sidebar';
 import { UpdatesView } from './views/updatesView';
 import { Watchers } from './watchers';
 import {
+  addRegistryPrompt,
   artifactName,
   firstUnknownScope,
   isValidRepo,
+  parseAddRegistryLink,
   parseShareLink,
   refRepo,
   updateCount,
@@ -364,7 +366,28 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
 
   // Deep link: vscode://grimoire-rs.grimoire-vscode/open?repo=<repo> focuses Browse
   // with the artifact searched and opens its (permanent) details panel.
+  // …/add-registry?index=<https url>&alias=<name> lets an index website offer a
+  // one-click "add this index". That one writes, and the URI is attacker-supplied
+  // (any page can navigate to it), so it is gated on a modal naming the exact URL
+  // and alias — the link alone never authorizes a write.
   const handleUri = async (uri: vscode.Uri): Promise<void> => {
+    if (uri.path === '/add-registry') {
+      const link = parseAddRegistryLink(uri.query);
+      if (!link) {
+        return;
+      }
+      const { scope, detail } = addRegistryPrompt(link, scopes.projectFolder() !== undefined);
+      const choice = await vscode.window.showWarningMessage(
+        `Grimoire: add registry \`${link.alias}\`?`,
+        { modal: true, detail },
+        'Add Registry',
+      );
+      if (choice !== 'Add Registry') {
+        return;
+      }
+      await settings.addRegistry(link.alias, { index: link.index }, scope);
+      return;
+    }
     if (uri.path !== '/open') {
       return;
     }

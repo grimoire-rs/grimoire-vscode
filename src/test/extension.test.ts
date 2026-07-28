@@ -629,7 +629,11 @@ suite('extension integration', () => {
     assert.ok(original, 'vscode.workspace.isTrusted has no own descriptor to restore');
     Object.defineProperty(vscode.workspace, 'isTrusted', { get: () => false, configurable: true });
     try {
-      assert.strictEqual(vscode.workspace.isTrusted, false, 'precondition: the window is untrusted');
+      assert.strictEqual(
+        vscode.workspace.isTrusted,
+        false,
+        'precondition: the window is untrusted',
+      );
       await fn();
     } finally {
       Object.defineProperty(vscode.workspace, 'isTrusted', original);
@@ -3839,6 +3843,112 @@ suite('extension integration', () => {
     assert.strictEqual(api.providers.details.openRepos.length, before);
   });
 
+  // --- add-registry deep link (a WRITE reachable from any web page) ---
+
+  function addRegistryUri(query: string): vscode.Uri {
+    return vscode.Uri.parse(`vscode://grimoire-rs.grimoire-vscode/add-registry?${query}`);
+  }
+
+  /** Answers the confirmation modal with `confirm` and records every prompt, so
+   *  a test can assert both what the user was shown and — for a rejected link —
+   *  that they were never asked at all. */
+  function stubAddRegistryModal(confirm: string | undefined): {
+    restore: () => void;
+    prompts: { message: string; detail: string }[];
+  } {
+    const window = vscode.window as unknown as { showWarningMessage: unknown };
+    const original = window.showWarningMessage;
+    const prompts: { message: string; detail: string }[] = [];
+    window.showWarningMessage = async (message: string, options?: { detail?: string }) => {
+      prompts.push({ message, detail: options?.detail ?? '' });
+      return confirm;
+    };
+    return {
+      restore: () => {
+        window.showWarningMessage = original;
+      },
+      prompts,
+    };
+  }
+
+  const INDEX_QUERY = `index=${encodeURIComponent('https://index.grimoire.rs')}&alias=grimoire`;
+
+  test('add-registry deep link writes only after a modal naming the index and alias', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'config', {
+      action: 'registry-added',
+      key: 'grimoire',
+      value: 'https://index.grimoire.rs/',
+      scope: 'project',
+      dry_run: false,
+    });
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal('Add Registry');
+    try {
+      await api.handleUri(addRegistryUri(INDEX_QUERY));
+    } finally {
+      modal.restore();
+      fs.rmSync(path.join(stub.dir, 'config.json'), { force: true });
+    }
+    assert.strictEqual(modal.prompts.length, 1, 'confirmed exactly once');
+    assert.ok(modal.prompts[0]?.detail.includes('https://index.grimoire.rs/'), 'names the index');
+    assert.ok(modal.prompts[0]?.detail.includes('grimoire'), 'names the alias');
+    const lines = argvLines(stub);
+    const add = lines.find((l) => l.startsWith('config registry add'));
+    assert.ok(add, `registry add ran: ${lines.join(' | ')}`);
+    assert.ok(add.includes('--index=https://index.grimoire.rs/'), `index locator: ${add}`);
+    assert.ok(add.endsWith('-- grimoire'), `alias stays positional after --: ${add}`);
+    assert.ok(!add.includes('--global'), 'project scope, the workspace fixture being open');
+  });
+
+  test('declining the add-registry modal writes nothing', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal(undefined);
+    try {
+      await api.handleUri(addRegistryUri(INDEX_QUERY));
+    } finally {
+      modal.restore();
+    }
+    assert.strictEqual(modal.prompts.length, 1, 'the user was asked');
+    assert.deepStrictEqual(
+      argvLines(stub).filter((l) => l.startsWith('config')),
+      [],
+      'no grim config call at all',
+    );
+  });
+
+  test('add-registry deep link rejects http, junk and unsafe aliases without asking', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal('Add Registry');
+    const https = encodeURIComponent('https://index.grimoire.rs');
+    try {
+      for (const query of [
+        `index=${encodeURIComponent('http://index.grimoire.rs')}&alias=grimoire`,
+        `index=${encodeURIComponent('file:///etc/passwd')}&alias=grimoire`,
+        `index=${encodeURIComponent('not a url')}&alias=grimoire`,
+        `index=${encodeURIComponent('https://user:token@index.grimoire.rs')}&alias=grimoire`,
+        'alias=grimoire',
+        https,
+        `index=${https}&alias=${encodeURIComponent('--default')}`,
+        `index=${https}&alias=${encodeURIComponent('a"] \n evil')}`,
+      ]) {
+        await api.handleUri(addRegistryUri(query));
+      }
+    } finally {
+      modal.restore();
+    }
+    assert.deepStrictEqual(modal.prompts, [], 'a rejected link never reaches the modal');
+    assert.deepStrictEqual(
+      argvLines(stub).filter((l) => l.startsWith('config')),
+      [],
+    );
+  });
+
   test('details rail tag click seeds the Browse search with the tag (item 2)', async function () {
     this.timeout(20000);
     const api = await activateExtension();
@@ -4489,8 +4599,7 @@ suite('update badge', () => {
   // The count lives on the activity-bar tree view, not on the sidebar's
   // WebviewView — VS Code only resolves that one when the view first becomes
   // visible, so a badge set there was invisible until Grimoire was opened.
-  const badgeOf = (api: GrimoireApi): vscode.ViewBadge | undefined =>
-    api.providers.updates.badge();
+  const badgeOf = (api: GrimoireApi): vscode.ViewBadge | undefined => api.providers.updates.badge();
 
   /** A run override serving one installed artifact whose status `state` the
    *  caller picks — the field the badge count ultimately derives from on a
@@ -4581,8 +4690,11 @@ suite('update badge', () => {
       // definite answer, not a degraded one — the count must not survive it
       // pointing at an Updates tab that now renders the no-grim state.
       api.scopes.run = (async <T>(): Promise<GrimResult<T>> =>
-        ({ ok: false, kind: 'not-found', message: 'grim not found' }) as GrimResult<T>) as
-        typeof api.scopes.run;
+        ({
+          ok: false,
+          kind: 'not-found',
+          message: 'grim not found',
+        }) as GrimResult<T>) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
       assert.strictEqual(badgeOf(api), undefined);
     } finally {

@@ -638,6 +638,77 @@ export function isValidRepo(repo: string): boolean {
   return /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._:@-]+)+$/.test(repo);
 }
 
+// --- Add-registry deep link (…/add-registry?index=<url>&alias=<name>) ---
+// Unlike /open, this one WRITES: an index website offers a one-click "add this
+// index". Any web page can navigate to the URI, so everything below treats the
+// query as hostile — the host still confirms modally before writing.
+
+/** A validated add-registry link. `index` is the normalized URL, which is both
+ *  what the modal shows and what is written — never the raw query value. */
+export interface AddRegistryLink {
+  alias: string;
+  index: string;
+}
+
+/** Alias charset: TOML bare-key safe (a `.` would split the key path, quotes
+ *  and brackets would break out of it) and flag-safe (never a leading `-`).
+ *  Rejected outright rather than escaped — nothing legitimate needs the rest. */
+const REGISTRY_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+
+/**
+ * Reads `?index=<url>&alias=<name>` out of an /add-registry query string, or
+ * null when it is anything grim should not be handed.
+ *
+ * `https:` only: an index locator is fetched with whatever credentials the
+ * user configures for it, so a link that downgrades to plain http is refused
+ * rather than silently accepted. Embedded credentials are refused too — the
+ * link would otherwise persist a secret into grimoire.toml.
+ *
+ * The returned `index` is `URL.href`, not the raw parameter: URL parsing
+ * strips tabs and newlines the query can legally carry, so normalizing here is
+ * what guarantees the string in the confirmation modal is byte-for-byte the
+ * string that reaches the config file.
+ */
+export function parseAddRegistryLink(query: string): AddRegistryLink | null {
+  const params = new URLSearchParams(query);
+  const alias = params.get('alias') ?? '';
+  const index = params.get('index') ?? '';
+  if (!REGISTRY_ALIAS.test(alias) || index.length > 2048) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(index);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+    return null;
+  }
+  return { alias, index: url.href };
+}
+
+/** Where an add-registry link writes, plus the modal text that says so. The
+ *  Settings UX defaults to project scope; with no folder open there is no
+ *  project config to write, so it falls back to global — named in the modal
+ *  rather than done silently, since global is a machine-wide change. */
+export function addRegistryPrompt(
+  link: AddRegistryLink,
+  projectOpen: boolean,
+): { scope: Scope; detail: string } {
+  const scope: Scope = projectOpen ? 'project' : 'global';
+  const where =
+    scope === 'project'
+      ? "this project's grimoire.toml"
+      : 'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
+  return {
+    scope,
+    detail:
+      `A web page is asking to add an index registry.\n\nIndex: ${link.index}\nAlias: ${link.alias}\n\n` +
+      `This writes to ${where}. Only continue if you trust that page.`,
+  };
+}
+
 /** "synced 12 min ago" style relative time. */
 export function relativeTime(from: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - from) / 1000));
