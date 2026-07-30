@@ -160,6 +160,20 @@ export function parseViaBundles(source: string | null | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** Key into a scope's declared-ref map. grim identifies an artifact by
+ *  (kind, name) — grimoire.toml is five tables of `name = "ref"`, so ONE name
+ *  can be declared as both a skill and an agent, and `grim status` reports both
+ *  rows. Keyed by name alone, the two rows read the same ref: the skill got the
+ *  agent's repo, the two collapsed into one card, and the update count dropped
+ *  the loser. `kind` is grim's own lowercase kind string (the `[skills]` table
+ *  declares kind `skill`); lowercased here so a hand-written table heading
+ *  cannot miss its rows. Pure; shared by the parser (scopes.ts) and both
+ *  readers (installIndex here, installState in views/details.ts) so the key is
+ *  built in exactly one way. */
+export function declaredKey(kind: string, name: string): string {
+  return `${kind.toLowerCase()}:${name}`;
+}
+
 export interface ScopeStatus {
   scope: Scope;
   /** Null when the scope's install state is unknown (see ScopeSnapshot.status);
@@ -171,14 +185,20 @@ export interface ScopeStatus {
    *  `grim context` probe failed and so never produced a ScopeSnapshot. Absent
    *  exactly when `status !== null`. */
   unknownReason?: 'too-old' | 'status-failed' | 'probe-failed';
+  /** The scope's grimoire.toml refs, keyed by {@link declaredKey} — NOT by
+   *  name: one name may be declared in two artifact tables. */
   declared: Record<string, string>;
 }
 
-/** Index of installs per repo for one scope. Empty when the scope's install
- *  state is unknown — the single funnel both buildCards and buildInstalledCards
- *  go through, so one guard here covers every card surface. */
-function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
-  const byRepo = new Map<string, InstallVM>();
+/** Installs per repo for one scope, MANY per repo: two declarations can point
+ *  at one repo (a second `grim add … --name other`, or a repo published as two
+ *  kinds), and they are distinct artifacts with their own state and update
+ *  verdict. Keeping only the last dropped one out of the Installed list and out
+ *  of the update count. Empty when the scope's install state is unknown — the
+ *  single funnel both buildCards and buildInstalledCards go through, so one
+ *  guard here covers every card surface. */
+function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
+  const byRepo = new Map<string, InstallVM[]>();
   if (scope.status === null) {
     // Nothing to index — and nothing here may imply "not installed". The card
     // surfaces make that distinction one level up, off SidebarState's
@@ -187,7 +207,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
     return byRepo;
   }
   for (const item of scope.status) {
-    const declaredRef = scope.declared[item.name];
+    const declaredRef = scope.declared[declaredKey(item.kind, item.name)];
     // pinned is null for unlocked artifacts; with no declared ref either there
     // is no repo to key on, so skip the item rather than deref null.
     const repo = declaredRef ? refRepo(declaredRef) : item.pinned ? refRepo(item.pinned) : null;
@@ -195,7 +215,8 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
       continue;
     }
     const version = declaredRef ? refTag(declaredRef) : null;
-    byRepo.set(repo, {
+    const installs = byRepo.get(repo) ?? [];
+    installs.push({
       scope: scope.scope,
       version,
       updateAvailable: computeUpdateAvailable(item),
@@ -210,6 +231,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM> {
       deprecated: item.deprecated ?? null,
       replacedBy: item.replaced_by ?? null,
     });
+    byRepo.set(repo, installs);
   }
   return byRepo;
 }
@@ -299,9 +321,7 @@ export function buildCards(
   const seen = new Set<string>();
   for (const item of items) {
     seen.add(item.repo);
-    const installs = indexes
-      .map((index) => index.get(item.repo))
-      .filter((i): i is InstallVM => i !== undefined);
+    const installs = indexes.flatMap((index) => index.get(item.repo) ?? []);
     const deprecated = item.deprecated ?? null;
     cards.push({
       repo: item.repo,
@@ -330,10 +350,17 @@ export function buildInstalledCards(
   const catalog = new Map(items.map((i) => [i.repo, i]));
   const byRepo = new Map<string, CardVM>();
   for (const scope of scopes) {
-    for (const [repo, install] of installIndex(scope)) {
+    for (const [repo, installs] of installIndex(scope)) {
       const existing = byRepo.get(repo);
       if (existing) {
-        existing.installs.push(install);
+        existing.installs.push(...installs);
+        continue;
+      }
+      // Every install here shares the repo, so any of them names the card; the
+      // first is the one the card's header shows. (installIndex never stores an
+      // empty array — the guard is for the type, not a reachable state.)
+      const install = installs[0];
+      if (!install) {
         continue;
       }
       const item = catalog.get(repo);
@@ -350,7 +377,7 @@ export function buildInstalledCards(
         // out-of-band that never showed up in the browse catalog snapshot).
         deprecated: item?.deprecated ?? install.deprecated ?? null,
         replacedBy: item?.replaced_by ?? install.replacedBy ?? null,
-        installs: [install],
+        installs: [...installs],
         privateRegistry: isPrivateRegistry(registryHost(repo), authed, defaultRegistryHost),
       });
     }

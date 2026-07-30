@@ -879,7 +879,7 @@ suite('sidebar rendering', () => {
           outputs: [{ client: 'claude', path: '/x' }],
         },
       ],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const items = buildCards([searchItem()], [scope]);
     const html = await litHtml(

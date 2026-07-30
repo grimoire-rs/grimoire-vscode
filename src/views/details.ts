@@ -27,6 +27,7 @@ import {
   buildShareLink,
   buildSkeletonVM,
   computeUpdateAvailable,
+  declaredKey,
   findAssetPath,
   normalizeKind,
   parseViaBundles,
@@ -1136,7 +1137,10 @@ export function installState(
       continue;
     }
     for (const item of scope.status) {
-      const declared = scope.declared[item.name];
+      // Keyed by (kind, name) — see declaredKey: one name can be declared in
+      // two artifact tables, and by name alone this panel matched the OTHER
+      // kind's row and showed it as an install of this repo.
+      const declared = scope.declared[declaredKey(item.kind, item.name)];
       // pinned is null for unlocked artifacts — an undeclared, unlocked item
       // has no repo to match against, so it never matches (rather than deref null).
       const matches = declared

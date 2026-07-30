@@ -146,7 +146,7 @@ suite('computeUpdateAvailable', () => {
     const scope: ScopeStatus = {
       scope: 'project',
       status: [statusItem({ state: 'stale', update_available: false })],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const card = buildCards([searchItem()], [scope])[0];
     assert.ok(card);
@@ -159,12 +159,12 @@ suite('card building', () => {
   const projectScope: ScopeStatus = {
     scope: 'project',
     status: [statusItem()],
-    declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
   };
   const globalScope: ScopeStatus = {
     scope: 'global',
     status: [statusItem({ state: 'outdated' })],
-    declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:latest' },
+    declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:latest' },
   };
 
   test('merges installs from both scopes (project shadows global)', () => {
@@ -243,11 +243,64 @@ suite('card building', () => {
     const declaredUnlocked: ScopeStatus = {
       scope: 'project',
       status: [statusItem({ pinned: null })],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
     };
     const cards = buildInstalledCards([], [declaredUnlocked]);
     assert.strictEqual(cards.length, 1);
     assert.strictEqual(cards[0]?.installs[0]?.version, '1');
+  });
+
+  test('one name declared as two kinds resolves to two repos, both counted', () => {
+    // grim identifies by (kind, name). Keyed by name alone, both status rows
+    // read the same declared ref — the skill wore the agent's repo, the two
+    // collapsed into one card and the outdated one left the update count.
+    const scope: ScopeStatus = {
+      scope: 'global',
+      status: [
+        statusItem({
+          kind: 'skill',
+          name: 'code-review',
+          pinned: 'ghcr.io/acme/skills/code-review@sha256:aaa',
+          state: 'outdated',
+          update_available: true,
+        }),
+        statusItem({
+          kind: 'agent',
+          name: 'code-review',
+          pinned: 'ghcr.io/acme/agents/code-review@sha256:bbb',
+        }),
+      ],
+      declared: {
+        'skill:code-review': 'ghcr.io/acme/skills/code-review:1.0',
+        'agent:code-review': 'ghcr.io/acme/agents/code-review:2.0',
+      },
+    };
+    assert.deepStrictEqual(
+      buildInstalledCards([], [scope]).map((c) => c.repo),
+      ['ghcr.io/acme/skills/code-review', 'ghcr.io/acme/agents/code-review'],
+    );
+    assert.strictEqual(updateCount([scope]), 1, 'the outdated skill still counts');
+  });
+
+  test('two installs at one repo in one scope both survive', () => {
+    // Legal: `grim add <repo> --name other` declares the same repo twice. The
+    // card is repo-keyed, so they share one — but the later install used to
+    // REPLACE the earlier, dropping it out of the list and the count.
+    const scope: ScopeStatus = {
+      scope: 'global',
+      status: [
+        statusItem({ name: 'a', pinned: 'ghcr.io/acme/x/shared@sha256:aaa', state: 'outdated' }),
+        statusItem({ kind: 'rule', name: 'b', pinned: 'ghcr.io/acme/x/shared@sha256:bbb' }),
+      ],
+      declared: {},
+    };
+    const cards = buildInstalledCards([], [scope]);
+    assert.strictEqual(cards.length, 1, 'one repo, one card');
+    assert.deepStrictEqual(
+      cards[0]?.installs.map((i) => i.name),
+      ['a', 'b'],
+    );
+    assert.strictEqual(updateCount([scope]), 1);
   });
 
   test('install is flagged floating when pinned is null, pinned otherwise (item 18)', () => {
@@ -257,7 +310,7 @@ suite('card building', () => {
         {
           scope: 'project',
           status: [statusItem({ pinned: null, state: 'outdated' })],
-          declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
+          declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
         },
       ],
     );
@@ -268,7 +321,7 @@ suite('card building', () => {
         {
           scope: 'project',
           status: [statusItem({ state: 'outdated' })],
-          declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+          declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
         },
       ],
     );
@@ -284,7 +337,7 @@ suite('card building', () => {
           replaced_by: 'ghcr.io/x/skills/status-replacement',
         }),
       ],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const withCatalog = buildInstalledCards(
       [
@@ -340,7 +393,7 @@ suite('client drift', () => {
     const scope: ScopeStatus = {
       scope: 'project',
       status: [statusItem({ clients_missing: ['opencode'], clients_extra: ['copilot'] })],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const cards = buildCards([searchItem()], [scope]);
     assert.deepStrictEqual(cards[0]?.installs[0]?.clientsMissing, ['opencode']);
@@ -351,7 +404,7 @@ suite('client drift', () => {
     const scope: ScopeStatus = {
       scope: 'project',
       status: [statusItem()],
-      declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
     };
     const cards = buildCards([searchItem()], [scope]);
     assert.deepStrictEqual(cards[0]?.installs[0]?.clientsMissing, []);
@@ -473,7 +526,7 @@ suite('filters', () => {
       {
         scope: 'global',
         status: [statusItem()],
-        declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
+        declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1' },
       },
     ],
   );

@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { readConfig, DEFAULT_EXECUTABLE } from './config';
 import { grimTooOld, tooOldMessage } from './installer';
+import { declaredKey } from './webview/model';
 import {
   contextArgs,
   statusArgs,
@@ -71,25 +72,37 @@ export interface Snapshot {
   globalProbeFailed?: boolean;
 }
 
-/** Parses declared name -> ref pairs out of a grimoire.toml. Pure; exported for tests. */
+/** Parses a grimoire.toml's declarations into {@link declaredKey} -> ref pairs.
+ *  Pure; exported for tests. */
 export function parseDeclaredRefs(toml: string): Record<string, string> {
   // ponytail: hand-rolled line parser instead of a TOML dep at runtime — the
   // config format is flat `[section]` tables of `name = "ref"` pairs.
   const declared: Record<string, string> = {};
-  let inArtifactTable = false;
-  const tables = new Set(['skills', 'rules', 'agents', 'bundles', 'mcp']);
+  // Table -> the kind grim reports for its rows, so the entry is keyed by
+  // (kind, name) like grim's own identity. Keyed by name alone, a name declared
+  // in two tables (a `code-review` skill AND agent) gave both status rows the
+  // same ref — one artifact then wore the other's repo. `[mcp]` is the one
+  // table whose name is already the kind.
+  const kinds = new Map([
+    ['skills', 'skill'],
+    ['rules', 'rule'],
+    ['agents', 'agent'],
+    ['bundles', 'bundle'],
+    ['mcp', 'mcp'],
+  ]);
+  let kind: string | undefined;
   for (const rawLine of toml.split('\n')) {
     const line = rawLine.trim();
     if (line.startsWith('[')) {
-      inArtifactTable = tables.has(line.replace(/[[\]]/g, '').trim());
+      kind = kinds.get(line.replace(/[[\]]/g, '').trim());
       continue;
     }
-    if (!inArtifactTable || line.startsWith('#')) {
+    if (kind === undefined || line.startsWith('#')) {
       continue;
     }
     const match = /^([A-Za-z0-9._-]+)\s*=\s*"([^"]+)"/.exec(line);
     if (match && match[1] && match[2]) {
-      declared[match[1]] = match[2];
+      declared[declaredKey(kind, match[1])] = match[2];
     }
   }
   return declared;

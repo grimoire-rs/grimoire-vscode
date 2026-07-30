@@ -4073,8 +4073,25 @@ clients = "claude"
 `;
     const declared = parseDeclaredRefs(toml);
     assert.deepStrictEqual(declared, {
-      'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2',
-      grim: 'ghcr.io/grimoire-rs/mcp/grim:latest',
+      'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2',
+      'mcp:grim': 'ghcr.io/grimoire-rs/mcp/grim:latest',
+    });
+  });
+
+  test('one name in two tables keeps both refs', () => {
+    // grim identifies an artifact by (kind, name), and grimoire.toml is five
+    // tables of names — so `code-review` can be a skill AND an agent, with two
+    // different repos. Keyed by name alone one silently overwrote the other.
+    const declared = parseDeclaredRefs(`
+[skills]
+code-review = "ghcr.io/acme/skills/code-review:1.0"
+
+[agents]
+code-review = "ghcr.io/acme/agents/code-review:2.0"
+`);
+    assert.deepStrictEqual(declared, {
+      'skill:code-review': 'ghcr.io/acme/skills/code-review:1.0',
+      'agent:code-review': 'ghcr.io/acme/agents/code-review:2.0',
     });
   });
 

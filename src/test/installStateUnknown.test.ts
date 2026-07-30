@@ -66,7 +66,7 @@ function knownScope(): ScopeSnapshot {
   return {
     context: contextInfo(),
     status: [statusItem()],
-    declared: { 'grim-usage': `${REPO}:1.5.0` },
+    declared: { 'skill:grim-usage': `${REPO}:1.5.0` },
   };
 }
 
@@ -76,7 +76,7 @@ function unknownScope(reason: 'too-old' | 'status-failed'): ScopeSnapshot {
     context: contextInfo(),
     status: null,
     statusUnknownReason: reason,
-    declared: { 'grim-usage': `${REPO}:1.5.0` },
+    declared: { 'skill:grim-usage': `${REPO}:1.5.0` },
   };
 }
 
@@ -333,7 +333,7 @@ suite('unknown install state: sidebar', () => {
       global: {
         context: contextInfo(),
         status: [{ ...statusItem(), state: 'outdated', update_available: true }],
-        declared: { 'grim-usage': `${REPO}:1.5.0` },
+        declared: { 'skill:grim-usage': `${REPO}:1.5.0` },
       },
     };
     const { provider, counts } = makeSidebar([snapshot]);
@@ -371,7 +371,7 @@ suite('unknown install state: details panel', () => {
         context: contextInfo({ scope: 'project', workspace: '/work/my-app' }),
         status: null,
         statusUnknownReason: 'status-failed',
-        declared: { 'grim-usage': `${REPO}:1.5.0` },
+        declared: { 'skill:grim-usage': `${REPO}:1.5.0` },
       },
       global: knownScope(),
     };
@@ -459,7 +459,7 @@ suite('unknown install state: details panel', () => {
         context: contextInfo({ scope: 'project', workspace: '/work/my-app' }),
         status: null,
         statusUnknownReason: 'status-failed',
-        declared: { 'grim-usage': `${REPO}:1.5.0` },
+        declared: { 'skill:grim-usage': `${REPO}:1.5.0` },
       },
       global: knownScope(),
     };

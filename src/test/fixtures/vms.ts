@@ -108,7 +108,7 @@ export function installedScope(scope: 'project' | 'global'): ScopeStatus {
         outputs: [{ client: 'claude', path: '/x' }],
       },
     ],
-    declared: { 'grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.5.0' },
+    declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.5.0' },
   };
 }
 
