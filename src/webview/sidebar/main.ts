@@ -148,8 +148,11 @@ function persist(): void {
   });
 }
 
-/** The active tab's filter. Updates has no filter UI — its chips never render,
- *  so the default is only ever read, never mutated. */
+/** The active tab's filter. Updates has no filter UI, so it falls through to
+ *  BROWSE's — not to a fresh default. Nothing on that tab may narrow its list by
+ *  it (render.ts's updates branch deliberately ignores the filter it is handed):
+ *  Browse's chips persist across reloads, and a chip set there was hiding rows
+ *  the tab pill and the activity-bar badge went on counting. */
 function activeFilter(): CardFilter {
   return activeTab === 'installed' ? filters.installed : filters.browse;
 }

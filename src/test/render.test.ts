@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { buildCards, DEFAULT_FILTER, type ScopeStatus } from '../webview/model';
+import { buildCards, DEFAULT_FILTER, viewForTab, type ScopeStatus } from '../webview/model';
 import { createMarkdown } from '../webview/markdown';
 import {
   esc,
@@ -898,6 +898,20 @@ suite('sidebar rendering', () => {
       ),
       '',
       'Updates has no filters',
+    );
+  });
+
+  test('updates list ignores the Browse kind filter, so it matches the tab count', async () => {
+    // main.ts hands this tab BROWSE's filter (activeFilter falls through to it
+    // for any tab but Installed) and Browse's chips persist across reloads, so
+    // filtering here showed "1" on the pill over "Everything is up to date."
+    const view = viewForTab(sidebarState({ installedItems: [outdatedCard()] }), 'updates', '');
+    const results = await litHtml(renderSidebarResults(view, { kinds: ['rule'] }));
+    assert.ok(results.includes('card-delta'), 'the outdated skill survives a rule-only chip');
+    assert.ok(!results.includes('Everything is up to date.'), 'not the empty state');
+    assert.ok(
+      (await litHtml(renderSidebarTabs(view))).includes('<span class="tab-count">1</span>'),
+      'and the pill counts exactly the row that rendered',
     );
   });
 

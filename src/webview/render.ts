@@ -40,7 +40,6 @@ import {
   relativeTime,
   resolveInstalledScope,
   scopeRowMenuEntries,
-  searchCards,
   viaBundleTitle,
   type MenuEntry,
 } from './model';
@@ -458,10 +457,18 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
  *  Kind filter and a client-side name filter for the search box. */
 function renderInstalledResults(state: SidebarState, filter: CardFilter): TemplateResult {
   if (state.mode === 'updates') {
-    const named = searchCards(filterCards(state.items, filter), state.query);
-    return named.length
+    // The WHOLE hasUpdate slice, deliberately unfiltered: this tab renders no
+    // kind chips and no search box, while the count beside its label (and the
+    // activity-bar badge, same derivation) is the unfiltered length. Running
+    // the filter here made the two disagree — the `filter` that reaches this
+    // branch is BROWSE's (main.ts activeFilter falls through to it for any tab
+    // but Installed), so a kind chip set on Browse, which persists across
+    // reloads, silently hid updates the badge was still counting: "3" over
+    // "Everything is up to date." A `kind: null` card — installed, absent from
+    // the catalog — dropped out of every chip-narrowed list the same way.
+    return state.items.length
       ? html`${repeat(
-          named,
+          state.items,
           (c) => c.repo,
           (c) => renderCard(c, { variant: 'updates' }),
         )}`
