@@ -84,6 +84,25 @@ suite('installer asset selection', () => {
     assert.strictEqual(selectAsset(manifest('tar.xz'), 'sunos', 'x64'), undefined);
   });
 
+  test('an artifact key with a path separator is never selected', () => {
+    // The key is remote data that installGrim joins onto the staging dir and
+    // interpolates into the download URL — one carrying `..` or `/` would write
+    // outside the extension's storage. Skipped, so selection falls through to
+    // the honest "no asset for this platform" error.
+    for (const key of [
+      '../../../../tmp/evil.tar.xz',
+      'nested/grimoire-x86_64-unknown-linux-gnu.tar.xz',
+      '..grimoire.tar.xz',
+    ]) {
+      const hostile: DistManifest = {
+        artifacts: {
+          [key]: { kind: 'executable-zip', target_triples: ['x86_64-unknown-linux-gnu'] },
+        },
+      };
+      assert.strictEqual(selectAsset(hostile, 'linux', 'x64'), undefined, key);
+    }
+  });
+
   test('installer scripts and checksums are never selected', () => {
     const asset = selectAsset(manifest('tar.xz'), 'linux', 'arm64');
     assert.ok(asset && !asset.name.endsWith('.sh') && !asset.name.endsWith('.sha256'));

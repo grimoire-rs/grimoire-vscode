@@ -14,6 +14,7 @@ import {
   isForceable,
   isRetryable,
   parseReport,
+  positionalOf,
   registryAddArgs,
   registryFieldsArgs,
   registryListArgs,
@@ -25,6 +26,7 @@ import {
   statusArgs,
   uninstallArgs,
   updateArgs,
+  withFlags,
   type ConfigEntry,
   type ConfigWriteResult,
   type ItemsEnvelope,
@@ -64,39 +66,43 @@ suite('grim arg builders', () => {
   });
 
   test('fetchArgs with path and vendor', () => {
-    assert.deepStrictEqual(fetchArgs('a/b/c'), ['fetch', 'a/b/c']);
+    assert.deepStrictEqual(fetchArgs('a/b/c'), ['fetch', '--', 'a/b/c']);
     assert.deepStrictEqual(fetchArgs('a/b/c', { path: 'c/logo.png', vendor: 'claude' }), [
       'fetch',
-      'a/b/c',
       '--path',
       'c/logo.png',
       '--vendor',
       'claude',
+      '--',
+      'a/b/c',
     ]);
   });
 
   test('fetchArgs description/digestOnly flags', () => {
     assert.deepStrictEqual(fetchArgs('a/b/c', { description: true }), [
       'fetch',
-      'a/b/c',
       '--description',
+      '--',
+      'a/b/c',
     ]);
     assert.deepStrictEqual(fetchArgs('a/b/c', { digestOnly: true }), [
       'fetch',
-      'a/b/c',
       '--digest-only',
+      '--',
+      'a/b/c',
     ]);
     // --description before --digest-only.
     assert.deepStrictEqual(fetchArgs('a/b/c', { description: true, digestOnly: true }), [
       'fetch',
-      'a/b/c',
       '--description',
       '--digest-only',
+      '--',
+      'a/b/c',
     ]);
   });
 
   test('describe/status/context args', () => {
-    assert.deepStrictEqual(describeArgs('a/b'), ['describe', 'a/b']);
+    assert.deepStrictEqual(describeArgs('a/b'), ['describe', '--', 'a/b']);
     assert.deepStrictEqual(statusArgs(), ['status']);
     // Plain status carries no --check; check:false stays offline too.
     assert.deepStrictEqual(statusArgs({}), ['status']);
@@ -109,22 +115,60 @@ suite('grim arg builders', () => {
   test('add/remove/uninstall/update/init args', () => {
     assert.deepStrictEqual(addArgs('a/b:1', { kind: 'skill', name: 'b', noInstall: true }), [
       'add',
-      'a/b:1',
       '--kind',
       'skill',
       '--name',
       'b',
       '--no-install',
+      '--',
+      'a/b:1',
     ]);
-    assert.deepStrictEqual(removeArgs('skill', 'b'), ['remove', 'skill', 'b']);
-    assert.deepStrictEqual(uninstallArgs('rule', 'r'), ['uninstall', 'rule', 'r']);
+    assert.deepStrictEqual(removeArgs('skill', 'b'), ['remove', '--', 'skill', 'b']);
+    assert.deepStrictEqual(uninstallArgs('rule', 'r'), ['uninstall', '--', 'rule', 'r']);
+    // A bare update protects nothing, so it carries no separator.
     assert.deepStrictEqual(updateArgs(), ['update']);
-    assert.deepStrictEqual(updateArgs(['a', 'b']), ['update', 'a', 'b']);
+    assert.deepStrictEqual(updateArgs(['a', 'b']), ['update', '--', 'a', 'b']);
     assert.deepStrictEqual(initArgs({ registry: 'ghcr.io/x' }), [
       'init',
       '--registry',
       'ghcr.io/x',
     ]);
+  });
+
+  test('a hyphenated repo/name stays a positional, never a flag', () => {
+    // Repos and artifact names come off the registry catalog and grim's status
+    // rows — a repo spelled "--global" must reach clap as the reference.
+    for (const args of [
+      addArgs('--global'),
+      fetchArgs('--global'),
+      describeArgs('--global'),
+      uninstallArgs('skill', '--force'),
+      removeArgs('bundle', '--force'),
+      updateArgs(['--force']),
+    ]) {
+      const sep = args.indexOf('--');
+      assert.ok(sep !== -1, `${args[0]} emits a separator: ${args.join(' ')}`);
+      assert.ok(
+        args.slice(sep + 1).some((a) => a.startsWith('--')),
+        `the hyphenated value sits behind it: ${args.join(' ')}`,
+      );
+    }
+  });
+
+  test('withFlags puts a flag in front of the separator, positionalOf reads behind it', () => {
+    // The force retry's two needs: --force must stay a flag, and the dialog
+    // names the artifact off the same argv.
+    assert.deepStrictEqual(withFlags(addArgs('a/b'), ['--force']), [
+      'add',
+      '--force',
+      '--',
+      'a/b',
+    ]);
+    assert.deepStrictEqual(withFlags(updateArgs(), ['--force']), ['update', '--force']);
+    assert.strictEqual(positionalOf(addArgs('a/b:1')), 'a/b:1');
+    assert.strictEqual(positionalOf(updateArgs(['demo'])), 'demo');
+    // A builder with no positional to name yields nothing, not its subcommand.
+    assert.strictEqual(positionalOf(updateArgs()), '');
   });
 
   test('configListArgs plain vs --all', () => {

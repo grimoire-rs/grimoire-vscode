@@ -148,6 +148,15 @@ export interface SelectedAsset {
   checksumName: string;
 }
 
+/** A dist-manifest artifact key is a plain release filename. Enforced because
+ *  the key is REMOTE data that installGrim joins onto the staging directory
+ *  (and interpolates into the download URL): a key carrying `/` or `..` would
+ *  write the download outside the extension's own storage. Nothing legitimate
+ *  needs a separator, so a key with one is skipped rather than sanitized. */
+function isPlainAssetName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes('..');
+}
+
 /**
  * Picks the executable archive for this platform out of a dist-manifest.
  * Format-agnostic: matches on artifact kind + target triple, not on the file
@@ -163,7 +172,11 @@ export function selectAsset(
     return undefined;
   }
   for (const [name, artifact] of Object.entries(manifest.artifacts)) {
-    if (artifact.kind === 'executable-zip' && artifact.target_triples?.includes(triple)) {
+    if (
+      artifact.kind === 'executable-zip' &&
+      artifact.target_triples?.includes(triple) &&
+      isPlainAssetName(name)
+    ) {
       return { name, checksumName: `${name}.sha256` };
     }
   }

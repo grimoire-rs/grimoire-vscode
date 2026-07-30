@@ -42,6 +42,10 @@ function hashName(repo: string): string {
   return `${createHash('sha1').update(repo).digest('hex')}.json`;
 }
 
+/** Per-write suffix for the staging file (see save). Process-local, paired with
+ *  the pid so two windows sharing globalStorage can't collide either. */
+let tmpSeq = 0;
+
 export class DetailsCache {
   // maxEntries is injectable so prune tests don't have to write 256 files.
   constructor(
@@ -105,12 +109,21 @@ export class DetailsCache {
     await fs.mkdir(this.dir, { recursive: true });
     // Write-then-rename so a concurrent load never parses a half-written file and
     // deletes the good entry (rename is atomic within a dir). The .tmp suffix
-    // keeps it out of prune's `.json` filter. ponytail: shared tmp name, so racing
-    // saves to one repo last-write-win — a details snapshot isn't worth per-repo locks.
+    // keeps it out of prune's `.json` filter. The name is unique PER WRITE, not
+    // per repo: two saves for one repo overlap routinely (a panel open racing
+    // the prefetch of the same card), and a shared tmp path let both write into
+    // ONE file — interleaved, so the rename published a torn document. Racing
+    // saves still last-write-win at the rename; each writes a whole entry now.
     const file = this.fileFor(repo);
-    const tmp = `${file}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ ...entry, version: CACHE_VERSION }));
-    await fs.rename(tmp, file);
+    const tmp = `${file}.${process.pid}.${tmpSeq++}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify({ ...entry, version: CACHE_VERSION }));
+      await fs.rename(tmp, file);
+    } catch (error) {
+      // A crashed write leaves no orphan behind (the rename is what consumes it).
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      throw error;
+    }
     await this.prune();
   }
 

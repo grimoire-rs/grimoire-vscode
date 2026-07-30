@@ -24,6 +24,8 @@ export class Prefetcher {
   private readonly inFlight = new Set<string>();
   private disposed = false;
   private logoTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Monotonic enqueue generation — see enqueue's freshness loop. */
+  private generation = 0;
 
   constructor(private readonly deps: PrefetchDeps) {}
 
@@ -33,6 +35,12 @@ export class Prefetcher {
     if (this.disposed || !this.deps.enabled()) {
       return;
     }
+    // The freshness probes below are async (each reads the cache off disk), and
+    // enqueue is called per search — a burst of keystrokes overlaps several. The
+    // generation makes the LAST caller the one that owns the queue: without it a
+    // slow older round finished after a newer one and assigned its own, older
+    // result list on top, so the prefetch chased results that were already gone.
+    const generation = ++this.generation;
     const uncached: string[] = [];
     for (const repo of repos.slice(0, TOP_K)) {
       if (this.inFlight.has(repo) || uncached.includes(repo)) {
@@ -41,6 +49,9 @@ export class Prefetcher {
       if (!(await this.deps.isFresh(repo))) {
         uncached.push(repo);
       }
+    }
+    if (generation !== this.generation) {
+      return; // superseded — the newer enqueue's list is the one to pump
     }
     this.pending = uncached; // new results replace the queue
     this.pump();

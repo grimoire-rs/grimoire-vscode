@@ -82,6 +82,31 @@ suite('Prefetcher', () => {
     assert.ok(!worked.includes('a7') && !worked.includes('a8'), 'stale pending was cleared');
   });
 
+  test('a slow enqueue never installs its queue over a newer one', async () => {
+    // enqueue awaits a freshness probe per repo, and the sidebar calls it once
+    // per search — so rounds overlap. The older round finishing last used to
+    // assign its own list, sending the prefetch after results already replaced.
+    const gate: Array<() => void> = [];
+    const { p, worked } = make({
+      isFresh: (repo) =>
+        repo.startsWith('old')
+          ? new Promise<boolean>((resolve) => gate.push(() => resolve(false)))
+          : Promise.resolve(false),
+    });
+    const slow = p.enqueue(['old1', 'old2']); // parks on the gate
+    await p.enqueue(['new1']); // completes first — the current results
+    // Drained in a loop: the probes are sequential, so releasing one produces
+    // the next.
+    while (gate.length > 0) {
+      gate.shift()?.();
+      await flush();
+    }
+    await slow;
+    await flush();
+    await flush();
+    assert.deepStrictEqual(worked, ['new1'], 'only the newest round pumped');
+  });
+
   test('landed logos trigger a single debounced repost per burst', async () => {
     let reposts = 0;
     const { p } = make({

@@ -7,7 +7,14 @@
 // root is a security refusal, not a drift refusal) and gets a non-modal
 // notice with no override control instead of a confirm dialog.
 import * as vscode from 'vscode';
-import { isForceable, type ActionReport, type GrimResult, type Scope } from '../grim';
+import {
+  isForceable,
+  positionalOf,
+  withFlags,
+  type ActionReport,
+  type GrimResult,
+  type Scope,
+} from '../grim';
 import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
 import { artifactName, refRepo } from '../webview/model';
@@ -46,7 +53,8 @@ export async function offerForcedRetry(
   // ../grimoire/src/command/add.rs:162) strips a trailing tag — refRepo does
   // that, artifactName then takes the last path segment. A bare `grim update`
   // name (e.g. "demo") has no slash or tag, so it passes through unchanged.
-  const name = artifactName(refRepo(args[1] ?? ''));
+  // positionalOf, not args[1]: the builders put their positionals behind a `--`.
+  const name = artifactName(refRepo(positionalOf(args)));
   // Normalized, not `===`: a case/whitespace variant of this reason arriving
   // together with forceable:true must still take the security branch below,
   // never the override branch — see CWE-697/CWE-20 in the anchor-escape ADR.
@@ -75,7 +83,9 @@ export async function offerForcedRetry(
       return true;
     }
     await runWithStatusProgress(`Overwriting ${name}`, async () => {
-      const retry = await scopes.run<ActionReport>([...args, '--force'], scope);
+      // withFlags, not a tail append: the builders end in `-- <positional>`, so
+      // an appended --force would parse as a second reference/name.
+      const retry = await scopes.run<ActionReport>(withFlags(args, ['--force']), scope);
       if (!retry.ok) {
         reportGrimFailure(retry, output, `grim ${args[0]}`);
       }

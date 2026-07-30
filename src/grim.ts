@@ -393,21 +393,38 @@ export function isForceable(result: { forceable?: boolean }): boolean {
   return result.forceable === true;
 }
 
-/** Runs grim with `--format json` appended and parses the report. Builders
- *  that need a `--` separator (e.g. searchArgs, before a user-controlled
- *  positional query) put it in `args`; the format flag is inserted before it
- *  so it's still parsed as a flag, not swept up as another positional. */
+/** Adds flags to an argv the builders below may have ended with a `--`
+ *  separator: everything after that token parses as a positional, so a flag
+ *  appended to the tail would be swallowed as one (`grim add -- ref --force`
+ *  reads `--force` as a second reference). Inserted before the separator
+ *  instead — or plainly appended when there is none. Pure; the one place that
+ *  knows the rule, shared by runJson's `--format json` and the force retry. */
+export function withFlags(args: string[], flags: string[]): string[] {
+  const sep = args.indexOf('--');
+  return sep === -1
+    ? [...args, ...flags]
+    : [...args.slice(0, sep), ...flags, ...args.slice(sep)];
+}
+
+/** The positional an action's argv names — the reference for `add`, the
+ *  artifact name for `update`. Reads the token after the `--` separator the
+ *  builders emit, falling back to argv[1] for a builder that has none. Pure;
+ *  used for the human-facing name in a failure dialog, never for a respawn. */
+export function positionalOf(args: string[]): string {
+  const sep = args.indexOf('--');
+  return (sep === -1 ? args[1] : args[sep + 1]) ?? '';
+}
+
+/** Runs grim with `--format json` and parses the report. Builders end with a
+ *  `--` separator before their positionals; the format flag goes in front of
+ *  it (see {@link withFlags}) so it's still parsed as a flag. */
 export function runJson<T>(
   executable: string,
   args: string[],
   options: RunOptions = {},
 ): Promise<GrimResult<T>> {
   return new Promise((resolve) => {
-    const sep = args.indexOf('--');
-    const fullArgs =
-      sep === -1
-        ? [...args, '--format', 'json']
-        : [...args.slice(0, sep), '--format', 'json', ...args.slice(sep)];
+    const fullArgs = withFlags(args, ['--format', 'json']);
     const child = execFile(
       executable,
       fullArgs,
@@ -430,11 +447,21 @@ export function runJson<T>(
   });
 }
 
-// --- Pure argv builders (exported for tests). `--format json` is appended by
-// --- runJson; builders emit subcommand + flags only. Scope (`--global`) is
-// --- NOT a builder concern — ScopeService.run prepends it via withGlobalFlag
-// --- for global-scope calls, so a builder emitting it too would risk clap
-// --- rejecting a doubled top-level flag.
+// --- Pure argv builders (exported for tests). `--format json` is inserted by
+// --- runJson; builders emit subcommand + flags + positionals. Scope
+// --- (`--global`) is NOT a builder concern — ScopeService.run prepends it via
+// --- withGlobalFlag for global-scope calls, so a builder emitting it too would
+// --- risk clap rejecting a doubled top-level flag.
+// ---
+// --- EVERY positional goes behind a `--` separator, and every flag in front of
+// --- it. The values are not ours: repos and artifact names come off the
+// --- registry catalog and grim's own status rows, and a repo like `--global`
+// --- would otherwise reach clap as a FLAG rather than the reference it is
+// --- (argument injection — the security rule this repo already applies to
+// --- searchArgs' free-text query and the config/registry builders). None of
+// --- grim's positionals set `allow_hyphen_values`, so `--` is the only thing
+// --- that forces the parse; flags must precede it, since clap treats every
+// --- token after it as positional.
 
 export function searchArgs(
   query: string,
@@ -470,7 +497,7 @@ export function fetchArgs(
     digestOnly?: boolean;
   } = {},
 ): string[] {
-  const args = ['fetch', reference];
+  const args = ['fetch'];
   if (options.path) {
     args.push('--path', options.path);
   }
@@ -483,11 +510,12 @@ export function fetchArgs(
   if (options.digestOnly) {
     args.push('--digest-only');
   }
+  args.push('--', reference);
   return args;
 }
 
 export function describeArgs(reference: string): string[] {
-  return ['describe', reference];
+  return ['describe', '--', reference];
 }
 
 /** `--check` re-checks every registry-sourced artifact against the live catalog
@@ -510,7 +538,7 @@ export function addArgs(
   reference: string,
   options: { kind?: string; name?: string; noInstall?: boolean } = {},
 ): string[] {
-  const args = ['add', reference];
+  const args = ['add'];
   if (options.kind) {
     args.push('--kind', options.kind);
   }
@@ -520,15 +548,16 @@ export function addArgs(
   if (options.noInstall) {
     args.push('--no-install');
   }
+  args.push('--', reference);
   return args;
 }
 
 export function removeArgs(kind: string, name: string): string[] {
-  return ['remove', kind, name];
+  return ['remove', '--', kind, name];
 }
 
 export function uninstallArgs(kind: string, name: string): string[] {
-  return ['uninstall', kind, name];
+  return ['uninstall', '--', kind, name];
 }
 
 /**
@@ -556,8 +585,11 @@ export function uninstallNotice(report: ActionReport): string | null {
   return null;
 }
 
+/** A bare `grim update` (every artifact) emits no separator: with no
+ *  positional to protect, a trailing `--` is noise the force retry would then
+ *  have to reason about. */
 export function updateArgs(names: string[] = []): string[] {
-  return ['update', ...names];
+  return names.length > 0 ? ['update', '--', ...names] : ['update'];
 }
 
 export function initArgs(options: { registry?: string } = {}): string[] {

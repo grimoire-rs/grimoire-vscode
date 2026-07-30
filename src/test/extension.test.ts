@@ -21,7 +21,7 @@ import type {
   SidebarState,
 } from '../webview/protocol';
 import type { GrimoireApi } from '../extension';
-import type { ContextInfo, GrimResult, Scope } from '../grim';
+import { addArgs, updateArgs, type ContextInfo, type GrimResult, type Scope } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION } from '../installer';
 import { offerForcedRetry } from '../views/forceRetry';
@@ -106,13 +106,14 @@ case "$*" in
     fi
     ;;
 esac
-# A per-name update (a name in $2, not a flag) can be canned apart from the bare
-# full update, so stale-lock recovery tests fail the partial resolve while the
-# recovery full-resolve succeeds via update.json. Inert unless update-name.json exists.
+# A per-name update can be canned apart from the bare full update, so stale-lock
+# recovery tests fail the partial resolve while the recovery full-resolve
+# succeeds via update.json. The names ride behind a "--" separator (updateArgs
+# emits one only when it has names), so its presence IS the discriminator.
+# Inert unless update-name.json exists.
 if [ "$cmd" = "update" ] && [ -f "${dir}/update-name.json" ]; then
-  case "$2" in
-    -* | '') ;;
-    *) cat "${dir}/update-name.json"; exit 0 ;;
+  case "$*" in
+    *" -- "*) cat "${dir}/update-name.json"; exit 0 ;;
   esac
 fi
 if [ -f "${dir}/$cmd.json" ]; then
@@ -127,6 +128,27 @@ fi
 
 function canned(stub: Stub, command: string, doc: unknown): void {
   fs.writeFileSync(path.join(stub.dir, `${command}.json`), JSON.stringify(doc));
+}
+
+/** True when an argv line is a per-name `grim update` for `name`. The name is a
+ *  POSITIONAL, so updateArgs puts it behind a `--` separator (argument
+ *  injection: an artifact named `--force` must not reach clap as a flag) —
+ *  which is also what tells a per-name update apart from a bare one. */
+function updatesArtifact(line: string, name: string): boolean {
+  return line.startsWith('update ') && line.includes(`-- ${name}`);
+}
+
+/** True when an argv line invokes `cmd` on `ref`. The reference is a
+ *  POSITIONAL, so the builders put it behind a `--` separator — matching on
+ *  `<cmd> <ref>` adjacency stopped being possible when that landed. */
+function invokes(line: string, cmd: string, ref: string): boolean {
+  return line.startsWith(`${cmd} `) && line.includes(`-- ${ref}`);
+}
+
+/** True when an argv line is a BARE `grim update` (every artifact). It names no
+ *  positional, so updateArgs emits no separator — that absence is the tell. */
+function isFullUpdate(line: string): boolean {
+  return line.startsWith('update') && !line.includes(' -- ');
 }
 
 function argvLines(stub: Stub): string[] {
@@ -903,7 +925,7 @@ suite('extension integration', () => {
     await waitFor(() => argvLines(stub).some((l) => l.startsWith('uninstall')));
     const line = argvLines(stub).find((l) => l.startsWith('uninstall'));
     assert.ok(line);
-    assert.ok(line.includes('skill demo'));
+    assert.ok(line.includes('-- skill demo'));
     assert.ok(!line.includes('--global'));
   });
 
@@ -921,7 +943,7 @@ suite('extension integration', () => {
     await waitFor(() => argvLines(stub).some((l) => l.startsWith('remove')));
     const line = argvLines(stub).find((l) => l.startsWith('remove'));
     assert.ok(line);
-    assert.ok(line.startsWith('remove bundle grim-essentials'), `argv was: ${line}`);
+    assert.ok(line.startsWith('remove ') && line.includes('-- bundle grim-essentials'), `argv was: ${line}`);
     assert.ok(line.includes('--global'));
     assert.ok(!argvLines(stub).some((l) => l.startsWith('uninstall')), 'no uninstall was issued');
   });
@@ -1430,7 +1452,7 @@ suite('extension integration', () => {
         name: 'demo',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => /^update (--global|--format)/.test(l)));
+      await waitFor(() => argvLines(stub).some((l) => isFullUpdate(l)));
     } finally {
       window.showWarningMessage = originalWarn;
       window.showErrorMessage = originalError;
@@ -1438,10 +1460,10 @@ suite('extension integration', () => {
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
     assert.ok(
-      updates.some((l) => l.startsWith('update demo')),
+      updates.some((l) => updatesArtifact(l, 'demo')),
       `per-name update ran: ${updates.join(' | ')}`,
     );
-    const full = updates.find((l) => /^update (--global|--format)/.test(l));
+    const full = updates.find((l) => isFullUpdate(l));
     assert.ok(full, `a bare full update ran: ${updates.join(' | ')}`);
     assert.ok(full.includes('--global'), `full update stays in the same scope: ${full}`);
     assert.ok(warned, 'the stale-lock warning was shown');
@@ -1478,7 +1500,7 @@ suite('extension integration', () => {
         name: 'demo',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update demo')));
+      await waitFor(() => argvLines(stub).some((l) => updatesArtifact(l, 'demo')));
     } finally {
       window.showWarningMessage = originalWarn;
       window.showErrorMessage = originalError;
@@ -1486,11 +1508,11 @@ suite('extension integration', () => {
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
     assert.ok(
-      updates.some((l) => l.startsWith('update demo')),
+      updates.some((l) => updatesArtifact(l, 'demo')),
       'the per-name update ran',
     );
     assert.ok(
-      !updates.some((l) => /^update (--global|--format)/.test(l)),
+      !updates.some(isFullUpdate),
       `no full update ran: ${updates.join(' | ')}`,
     );
     assert.ok(errored, 'the plain error toast was shown');
@@ -1549,7 +1571,7 @@ suite('extension integration', () => {
         name: 'grim-usage',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => /^update (--global|--format)/.test(l)));
+      await waitFor(() => argvLines(stub).some((l) => isFullUpdate(l)));
     } finally {
       window.showWarningMessage = originalWarn;
       window.showErrorMessage = originalError;
@@ -1557,7 +1579,7 @@ suite('extension integration', () => {
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
     assert.ok(
-      updates.some((l) => /^update (--global|--format)/.test(l)),
+      updates.some((l) => isFullUpdate(l)),
       'a bare full update ran',
     );
     assert.ok(warned, 'the stale-lock warning was shown');
@@ -1677,7 +1699,7 @@ suite('extension integration', () => {
     try {
       handled = await offerForcedRetry(
         refusal,
-        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        addArgs('ghcr.io/grimoire-rs/code-review'),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -1694,7 +1716,7 @@ suite('extension integration', () => {
     assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
     assert.strictEqual(
       lines[0],
-      'add ghcr.io/grimoire-rs/code-review --force --format json --global',
+      'add --force --format json -- ghcr.io/grimoire-rs/code-review --global',
       'the same argv is reissued with --force appended, in the same scope',
     );
     assert.ok(onDoneCalled, 'onDone refreshes after a successful forced retry');
@@ -1727,7 +1749,7 @@ suite('extension integration', () => {
     try {
       await offerForcedRetry(
         forceableRefusal(),
-        ['update', 'demo'],
+        updateArgs(['demo']),
         'project',
         api.scopes,
         recordingOutput([]),
@@ -1741,7 +1763,7 @@ suite('extension integration', () => {
     assert.strictEqual(lines.length, 1, `exactly one retry call: ${lines.join(' | ')}`);
     assert.strictEqual(
       lines[0],
-      'update demo --force --format json',
+      'update --force --format json -- demo',
       'project scope carries no --global prefix',
     );
   });
@@ -1756,7 +1778,7 @@ suite('extension integration', () => {
     try {
       handled = await offerForcedRetry(
         forceableRefusal(),
-        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        addArgs('ghcr.io/grimoire-rs/code-review'),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -1791,7 +1813,7 @@ suite('extension integration', () => {
     try {
       await offerForcedRetry(
         forceableRefusal(),
-        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        addArgs('ghcr.io/grimoire-rs/code-review'),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -1824,7 +1846,7 @@ suite('extension integration', () => {
     try {
       await offerForcedRetry(
         forceableRefusal(),
-        ['update', 'demo'],
+        updateArgs(['demo']),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -1853,7 +1875,7 @@ suite('extension integration', () => {
     try {
       await offerForcedRetry(
         forceableRefusal(),
-        ['add', 'ghcr.io/grimoire-rs/code-review:1.2.3'],
+        addArgs('ghcr.io/grimoire-rs/code-review:1.2.3'),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -2022,7 +2044,7 @@ suite('extension integration', () => {
     try {
       handled = await offerForcedRetry(
         forceableRefusal(),
-        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        addArgs('ghcr.io/grimoire-rs/code-review'),
         'global',
         api.scopes,
         recordingOutput(lines),
@@ -2213,7 +2235,7 @@ suite('extension integration', () => {
     try {
       handled = await offerForcedRetry(
         futureReason,
-        ['add', 'ghcr.io/grimoire-rs/code-review'],
+        addArgs('ghcr.io/grimoire-rs/code-review'),
         'global',
         api.scopes,
         recordingOutput([]),
@@ -2277,7 +2299,7 @@ suite('extension integration', () => {
     }
     const updates = argvLines(stub).filter((l) => l.startsWith('update'));
     assert.ok(
-      updates.some((l) => l.startsWith('update demo') && !l.includes('--force')),
+      updates.some((l) => updatesArtifact(l, 'demo') && !l.includes('--force')),
       `the per-name update ran first: ${updates.join(' | ')}`,
     );
     assert.ok(
@@ -2308,7 +2330,7 @@ suite('extension integration', () => {
         name: 'demo',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update demo')));
+      await waitFor(() => argvLines(stub).some((l) => updatesArtifact(l, 'demo')));
     } finally {
       dialogs.restore();
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
@@ -2429,7 +2451,7 @@ suite('extension integration', () => {
         name: 'grim-usage',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update grim-usage')));
+      await waitFor(() => argvLines(stub).some((l) => updatesArtifact(l, 'grim-usage')));
     } finally {
       dialogs.restore();
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
@@ -2482,7 +2504,7 @@ suite('extension integration', () => {
         name: 'grim-usage',
         scope: 'global',
       });
-      await waitFor(() => argvLines(stub).some((l) => l.startsWith('update grim-usage')));
+      await waitFor(() => argvLines(stub).some((l) => updatesArtifact(l, 'grim-usage')));
     } finally {
       dialogs.restore();
       fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
@@ -2530,7 +2552,7 @@ suite('extension integration', () => {
     assert.strictEqual(vm.tags, null);
     assert.match(vm.contentMarkdown ?? '', /^# Grim Usage/);
     const lines = argvLines(stub);
-    assert.ok(lines.some((l) => l.startsWith('fetch ghcr.io/grimoire-rs/skills/grim-usage')));
+    assert.ok(lines.some((l) => invokes(l, 'fetch', 'ghcr.io/grimoire-rs/skills/grim-usage')));
     assert.ok(lines.some((l) => l.startsWith('describe')));
   });
 
@@ -3019,11 +3041,11 @@ suite('extension integration', () => {
       await api.providers.sidebar.refresh();
       await waitFor(() => {
         const lines = argvLines(stub);
-        return [a, b].every((r) => lines.some((l) => l.startsWith(`fetch ${r}`)));
+        return [a, b].every((r) => lines.some((l) => invokes(l, 'fetch', r)));
       });
       const lines = argvLines(stub);
       assert.ok(
-        [a, b].every((r) => lines.some((l) => l.startsWith(`describe ${r}`))),
+        [a, b].every((r) => lines.some((l) => invokes(l, 'describe', r))),
         'prefetch described both top items',
       );
     } finally {
@@ -3088,11 +3110,11 @@ suite('extension integration', () => {
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       const lines = argvLines(stub);
       assert.ok(
-        lines.some((l) => l.startsWith(`describe ${repo}`)),
+        lines.some((l) => invokes(l, 'describe', repo)),
         'revalidate described',
       );
       assert.ok(
-        !lines.some((l) => l.startsWith(`fetch ${repo}`)),
+        !lines.some((l) => invokes(l, 'fetch', repo)),
         `no content fetch on a cached open: ${lines.join(' | ')}`,
       );
       assert.deepStrictEqual(revalidates, ['checking', 'done'], 'cached paint → checking/done');
@@ -3161,7 +3183,7 @@ suite('extension integration', () => {
       await api.providers.sidebar.refresh();
       await new Promise((r) => setTimeout(r, 300)); // give any prefetch a chance to fire
       assert.ok(
-        !argvLines(stub).some((l) => l.startsWith(`describe ${repo}`)),
+        !argvLines(stub).some((l) => invokes(l, 'describe', repo)),
         'a fresh entry is not re-probed',
       );
       // Age it past the TTL, then publish a logo under a new digest.
@@ -3525,7 +3547,7 @@ suite('extension integration', () => {
     const labels = () => vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => t.label));
     // Single-click A: the fetch stub sleeps, parking buildVM(a) in flight.
     details.openPreview(a);
-    await waitFor(() => argvLines(stub).some((l) => l.startsWith(`fetch ${a}`)));
+    await waitFor(() => argvLines(stub).some((l) => invokes(l, 'fetch', a)));
     // Single-click B before A resolves: the one reusable slot retargets to B.
     details.openPreview(b);
     assert.strictEqual(details.previewRepo, b);
@@ -3547,11 +3569,11 @@ suite('extension integration', () => {
     api.providers.details.openPreview(previewRepo);
     assert.strictEqual(api.providers.details.previewRepo, previewRepo);
     // Let the open's initial buildVM settle so a later fetch can only be a refresh.
-    await waitFor(() => argvLines(stub).some((l) => l.startsWith(`fetch ${previewRepo}`)));
+    await waitFor(() => argvLines(stub).some((l) => invokes(l, 'fetch', previewRepo)));
     fs.rmSync(stub.argvLog, { force: true });
     await api.providers.details.refreshOpenPanels();
     assert.ok(
-      argvLines(stub).some((l) => l.startsWith(`fetch ${previewRepo}`)),
+      argvLines(stub).some((l) => invokes(l, 'fetch', previewRepo)),
       'the preview slot was refreshed',
     );
   });
