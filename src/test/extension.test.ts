@@ -362,6 +362,32 @@ async function activateExtension(): Promise<GrimoireApi> {
   return api;
 }
 
+/** Waits until activation's fire-and-forget work has stopped spawning grim.
+ *
+ *  `activate()` resolves long before it is finished: it kicks off
+ *  `publishUpdateCount()` and `checkForUpdates()` without awaiting either, and
+ *  the first of those CONSUMES the daily-check throttle — it stamps
+ *  `artifactCheck.lastCheck` before it spawns. A test that resets that stamp to
+ *  "never checked" while the chain is still in flight has its reset eaten:
+ *  `refreshWithDueCheck` then finds the round not due and runs a plain `grim
+ *  status`, which is what made the due-check test fail intermittently. Clearing
+ *  the argv log mid-chain is the same hazard from the other side.
+ *
+ *  Settles on three consecutive quiet polls (~300ms) after at least one spawn,
+ *  rather than waiting for a specific argv line: activation's shape varies with
+ *  whether its own round was due, and a round that WAS due ends in a second
+ *  full refresh. */
+async function settleActivation(stub: Stub): Promise<void> {
+  let previous = -1;
+  let quiet = 0;
+  await waitFor(() => {
+    const count = argvLines(stub).length;
+    quiet = count > 0 && count === previous ? quiet + 1 : 0;
+    previous = count;
+    return quiet >= 3;
+  });
+}
+
 suite('extension integration', () => {
   let stub: Stub;
 
@@ -380,6 +406,7 @@ suite('extension integration', () => {
       .getConfiguration('grimoire')
       .update('path.executable', stub.executable, vscode.ConfigurationTarget.Global);
     await activateExtension();
+    await settleActivation(stub);
   });
 
   suiteTeardown(async () => {
