@@ -5,6 +5,19 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] - 2026-07-31
+
+### Added
+
+- Add an add-registry deep link for index websites
+- Add-registry deep link for index websites
+
+### Fixed
+
+- Keep the Updates list in sync with its count *(sidebar)*
+- Stop registry-controlled values reaching grim as flags
+- Key installs by artifact identity, not by name alone
+
 ## [0.2.5] - 2026-07-27
 
 ### Added
@@ -123,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.2.6]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.5..v0.2.6
 [0.2.5]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.4..v0.2.5
 [0.2.4]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.3..v0.2.4
 [0.2.3]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.2..v0.2.3
