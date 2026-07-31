@@ -8,6 +8,19 @@ updates:
       dev-dependencies:
         dependency-type: development
     open-pull-requests-limit: 10
+    # Two bumps cannot be taken yet — without these, the weekly group PR is
+    # red on `npm ci` every time and has to be triaged by hand. Drop each
+    # entry once its upstream lands.
+    ignore:
+      # @lit-labs/ssr 4.x declares `@types/node >=20 <25`; 25+ makes a fresh
+      # `npm ci` fail ERESOLVE. Unpin when ssr widens the peer range.
+      - dependency-name: '@types/node'
+        versions: ['>=25']
+      # typescript-eslint 8.65 (its latest) peers on `typescript <6.1.0`, so
+      # TypeScript 7 cannot resolve. Unpin when typescript-eslint ships TS 7
+      # support.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
