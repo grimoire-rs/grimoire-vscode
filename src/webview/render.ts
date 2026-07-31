@@ -186,14 +186,6 @@ export interface CardVariant {
   installStateUnknown?: boolean;
 }
 
-/** "→ use <replacedBy>" link on a card's deprecated line — mirrors the details
- *  deprecation banner's replacement link (renderDeprecationBanner below). */
-function cardReplacementLink(replacedBy: string | null): TemplateResult | typeof nothing {
-  return replacedBy
-    ? html` → use <a href="#" data-action="open-details" data-repo="${replacedBy}" class="mono">${replacedBy}</a>`
-    : nothing;
-}
-
 /** Client-drift badge for an installed scope row (Installed tab): shown iff
  *  the install's clients_missing/clients_extra carry any entries — array
  *  non-emptiness is itself the explicit-clients signal, so no other gating. */
@@ -210,12 +202,13 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
   const version = card.latestVersion
     ? html`<span class="version mono">${card.latestVersion}</span>`
     : nothing;
-  const deprecatedLine = card.deprecated
-    ? html`<div class="card-desc deprecated-msg"><span class="codicon codicon-warning"></span> ${card.deprecated}${cardReplacementLink(card.replacedBy)}</div>`
-    : nothing;
+  // Deprecation on a card is styling only — struck-through, dimmed name (the
+  // .card.deprecated rule). The message itself is a tooltip here and a banner
+  // on the details view; a coloured warning line per card made a browse list of
+  // them unreadable.
   const title = html`
     <div class="card-title">
-      <span class="card-name">${card.name}</span>
+      <span class="card-name" title="${ifDefined(card.deprecated ?? undefined)}">${card.name}</span>
       ${version}
       ${kindBadge(card.kind)}
     </div>`;
@@ -241,14 +234,12 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
       card.kind === 'bundle'
         ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
         : nothing;
-    body = html`${title}${deprecatedLine}
+    body = html`${title}
     <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}
       <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button></span>
     </div>`;
   } else {
-    const description = card.deprecated
-      ? deprecatedLine
-      : html`<div class="card-desc">${card.description ?? ''}</div>`;
+    const description = html`<div class="card-desc">${card.description ?? ''}</div>`;
     // Private registries (a stored credential) get a lock glyph before the
     // host; the meta line shows host + first org segment (design html:227/277).
     const lock = card.privateRegistry

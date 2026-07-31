@@ -290,24 +290,6 @@ vscode-textfield#search {
   overflow: hidden;
 }
 
-.deprecated-msg {
-  color: var(--vscode-editorWarning-foreground);
-  display: flex;
-  gap: 5px;
-  align-items: baseline;
-}
-
-.deprecated-msg .codicon {
-  font-size: 12px;
-  position: relative;
-  top: 1px;
-}
-
-.deprecated-msg a {
-  color: var(--vscode-textLink-foreground);
-  text-decoration: none;
-}
-
 .card-delta {
   font-size: 10.5px;
   color: var(--vscode-descriptionForeground);

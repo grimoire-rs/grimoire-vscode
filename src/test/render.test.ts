@@ -64,15 +64,12 @@ suite('escaping', () => {
     assert.ok(!html.includes('"><script>'));
   });
 
-  test('a hostile registry-sourced replacedBy ref stays escaped in the card switch-to-replacement link', async () => {
+  test('a hostile registry-sourced deprecation message stays escaped in the card name tooltip', async () => {
     const hostile = '"><script>alert(1)</script>';
-    const html = await litHtml(
-      renderCard(card({ state: 'deprecated', deprecated: 'use x instead', replacedBy: hostile })),
-    );
+    const html = await litHtml(renderCard(card({ state: 'deprecated', deprecated: hostile })));
     assert.ok(!html.includes('"><script>'));
     const escaped = '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;';
-    assert.ok(html.includes(`data-repo="${escaped}"`), 'attribute position stays escaped');
-    assert.ok(html.includes(`>${escaped}</a>`), 'text-content position stays escaped');
+    assert.ok(html.includes(`title="${escaped}"`), 'attribute position stays escaped');
   });
 
   test('a hostile replacedBy stays escaped in the card-menu Switch entry (label + data)', async () => {
@@ -437,20 +434,24 @@ suite('card rendering', () => {
     assert.ok(!noDrift.includes('drift-badge'), 'empty arrays render no badge');
   });
 
-  test('deprecated card struck through with warning', async () => {
+  test('deprecated card marks the name only — no warning line', async () => {
     const html = await litHtml(
-      renderCard(card({ state: 'deprecated', deprecated: 'use x instead' })),
+      renderCard(card({ state: 'deprecated', deprecated: 'use x instead', description: 'desc' })),
     );
+    // The struck/dimmed name is the whole signal (.card.deprecated .card-name).
     assert.ok(html.includes('class="card deprecated"'));
-    assert.ok(html.includes('codicon-warning'));
-    assert.ok(html.includes('use x instead'));
-    assert.ok(
-      !html.includes('data-action="open-details"'),
-      'no replacement link when replacedBy is null',
-    );
+    assert.ok(!html.includes('deprecated-msg'), 'no coloured deprecation line on cards');
+    assert.ok(!html.includes('codicon-warning'));
+    assert.ok(html.includes('title="use x instead"'), 'message survives as a tooltip');
+    assert.ok(html.includes('desc'), 'description keeps its slot');
   });
 
-  test('deprecated card with replacedBy gains a "use <replacedBy>" switch-to-replacement link', async () => {
+  test('a card without deprecation emits no title attribute', async () => {
+    const html = await litHtml(renderCard(card({ deprecated: null })));
+    assert.ok(!html.includes('<span class="card-name" title='));
+  });
+
+  test('replacedBy adds nothing to a card — the details banner owns the switch', async () => {
     const html = await litHtml(
       renderCard(
         card({
@@ -460,10 +461,8 @@ suite('card rendering', () => {
         }),
       ),
     );
-    assert.ok(html.includes('data-action="open-details"'));
-    assert.ok(html.includes('data-repo="ghcr.io/grimoire-rs/skills/new-skill"'));
-    assert.ok(html.includes('>ghcr.io/grimoire-rs/skills/new-skill<'));
-    assert.ok(html.includes('use'), 'link copy names the replacement');
+    assert.ok(!html.includes('data-action="open-details"'));
+    assert.ok(!html.includes('new-skill'));
   });
 
   test('gear menu disables uninstall for a via-bundle install', async () => {
