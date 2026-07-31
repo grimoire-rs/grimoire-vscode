@@ -44,12 +44,24 @@ function rmGrimHome(dir: string): void {
   }
 }
 
+// Every test here that asserts an EXACT refresh count shares one file — the
+// workspace grimoire.toml each of them writes and restores. A restore still in
+// flight is delivered to the next test's freshly-armed watcher and counts as a
+// second refresh (CI, Linux: `2 !== 1`). So: arm, let the queue drain, THEN
+// start counting. The 40ms debounce the other tests use is also far tighter
+// than production's 1000ms — tight enough that one write's create+change pair
+// can straddle it on a loaded runner — so the counting tests debounce at
+// EXACT_DEBOUNCE_MS and settle for longer than that before asserting.
+const EXACT_DEBOUNCE_MS = 250;
+const DRAIN_MS = 600;
+const drain = () => new Promise((r) => setTimeout(r, DRAIN_MS));
+
 suite('watchers', () => {
   test('fires (debounced) on grimoire.toml change in the workspace', async () => {
     let fired = 0;
     const watchers = new Watchers(() => {
       fired += 1;
-    }, 40);
+    }, EXACT_DEBOUNCE_MS);
     try {
       watchers.rebuild(undefined);
       const folder = vscode.workspace.workspaceFolders?.[0];
@@ -57,6 +69,8 @@ suite('watchers', () => {
       const file = path.join(folder.uri.fsPath, 'grimoire.toml');
       const original = fs.readFileSync(file, 'utf8');
       try {
+        await drain();
+        fired = 0;
         fs.writeFileSync(file, original + `\n# touched ${Date.now()}\n`);
         await waitFor(() => fired > 0);
         assert.strictEqual(fired, 1, 'debounce collapses bursts to one event');
@@ -149,6 +163,8 @@ suite('watchers', () => {
       const file = path.join(folder.uri.fsPath, 'grimoire.toml');
       const original = fs.readFileSync(file, 'utf8');
       try {
+        await drain();
+        fired = 0;
         // Simulate a mutating action that writes the watched file while suspended.
         await watchers.suspendWhile(async () => {
           fs.writeFileSync(file, original + `\n# during action ${Date.now()}\n`);
@@ -169,7 +185,7 @@ suite('watchers', () => {
     let fired = 0;
     const watchers = new Watchers(() => {
       fired += 1;
-    }, 40);
+    }, EXACT_DEBOUNCE_MS);
     try {
       watchers.rebuild(undefined);
       const folder = vscode.workspace.workspaceFolders?.[0];
@@ -177,9 +193,11 @@ suite('watchers', () => {
       const file = path.join(folder.uri.fsPath, 'grimoire.toml');
       const original = fs.readFileSync(file, 'utf8');
       try {
+        await drain();
+        fired = 0;
         fs.writeFileSync(file, original + `\n# external ${Date.now()}\n`);
         await waitFor(() => fired > 0);
-        await new Promise((r) => setTimeout(r, 150)); // settle past the debounce
+        await new Promise((r) => setTimeout(r, DRAIN_MS)); // settle past the debounce
         assert.strictEqual(fired, 1, 'a single external edit debounces to one refresh');
       } finally {
         fs.writeFileSync(file, original);
