@@ -9,6 +9,27 @@ let item: vscode.StatusBarItem | undefined;
 let refs = 0;
 let visible = false;
 
+type BusyListener = (busy: string | null) => void;
+const busyListeners = new Set<BusyListener>();
+
+/** Subscribes to "a mutating grim run is in flight" — the running title while
+ *  one is, null once the last settles. The views lock their action buttons on
+ *  it: grim serializes on its own lock, so a second install started from
+ *  another card while a slow one (a bundle) runs just stalls behind it and
+ *  reads as a dead button. Driven by the same refcount as the status-bar item
+ *  below, which every mutating path already goes through — install, update,
+ *  uninstall, switch, forced retry, version pick, update-all. */
+export function onBusyChange(listener: BusyListener): vscode.Disposable {
+  busyListeners.add(listener);
+  return new vscode.Disposable(() => busyListeners.delete(listener));
+}
+
+function emitBusy(busy: string | null): void {
+  for (const listener of busyListeners) {
+    listener(busy);
+  }
+}
+
 /** The one shared status-bar item, created on first use. Click opens the
  *  Grimoire output channel (command registered in extension.ts). */
 function statusItem(): vscode.StatusBarItem {
@@ -34,12 +55,16 @@ export async function runWithStatusProgress<T>(title: string, fn: () => Promise<
   refs++;
   visible = true;
   bar.show();
+  if (refs === 1) {
+    emitBusy(title);
+  }
   try {
     return await fn();
   } finally {
     if (--refs === 0) {
       visible = false;
       bar.hide();
+      emitBusy(null);
     }
   }
 }

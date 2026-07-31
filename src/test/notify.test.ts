@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { _statusState, notifyError, runWithStatusProgress } from '../notify';
+import { _statusState, notifyError, onBusyChange, runWithStatusProgress } from '../notify';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -66,5 +66,36 @@ suite('notify', () => {
     await b;
     assert.strictEqual(_statusState().refs, 0);
     assert.strictEqual(_statusState().visible, false, 'hides when the last settles');
+  });
+
+  test('onBusyChange locks on the first run and unlocks only after the last settles', async () => {
+    const seen: (string | null)[] = [];
+    const sub = onBusyChange((busy) => seen.push(busy));
+    try {
+      let releaseA: () => void = () => {};
+      let releaseB: () => void = () => {};
+      const a = runWithStatusProgress('Installing', () => new Promise<void>((r) => (releaseA = r)));
+      // A nested run (a forced retry inside an install) must NOT re-announce —
+      // the views would unlock as soon as the inner one settles.
+      const b = runWithStatusProgress('Overwriting', () => new Promise<void>((r) => (releaseB = r)));
+      assert.deepStrictEqual(seen, ['Installing'], 'one lock for the whole burst');
+
+      releaseB();
+      await b;
+      assert.deepStrictEqual(seen, ['Installing'], 'still locked while the outer run holds grim');
+
+      releaseA();
+      await a;
+      assert.deepStrictEqual(seen, ['Installing', null], 'unlocks once nothing is in flight');
+    } finally {
+      sub.dispose();
+    }
+  });
+
+  test('onBusyChange stops firing once disposed', async () => {
+    const seen: (string | null)[] = [];
+    onBusyChange((busy) => seen.push(busy)).dispose();
+    await runWithStatusProgress('Updating', () => Promise.resolve());
+    assert.deepStrictEqual(seen, []);
   });
 });

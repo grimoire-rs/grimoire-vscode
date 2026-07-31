@@ -27,6 +27,15 @@ const repo = root.dataset['repo'] ?? vscode.getState()?.repo ?? '';
 vscode.setState({ repo });
 
 let vm: DetailsVM | null = null;
+// Host-broadcast action lock (notify.ts's onBusyChange), held OUTSIDE the VM:
+// every 'artifact' post carries busy:null — the refresh an action ends in, or a
+// panel opened while some other view's install runs — and taking that at face
+// value would unlock the page while grim still holds its lock.
+let busy: string | null = null;
+// Actions that run a grim command. Refused outright while `busy`, not only
+// dimmed by .details-header.busy: pointer-events leaves a button reachable by
+// keyboard, and the deprecation banner's Switch sits outside .scope-actions.
+const MUTATING_ACTIONS = new Set(['install', 'update', 'uninstall', 'switch', 'pick-version']);
 // The artifact currently rendered. The preview tab is retargeted in place (no
 // webview reboot), so a VM for a different repo can arrive; null until the first
 // render lands.
@@ -207,6 +216,10 @@ root.addEventListener('click', (event) => {
     return;
   }
   event.preventDefault();
+  if (busy !== null && MUTATING_ACTIONS.has(action)) {
+    closeScopeMenus();
+    return;
+  }
   switch (action) {
     case 'scope-menu':
       toggleScopeMenu(target.closest('.split-button')?.querySelector('.scope-menu'));
@@ -339,10 +352,14 @@ window.addEventListener('message', (event: MessageEvent<HostToDetails>) => {
     currentRepo = message.vm.repo;
     vscode.setState({ repo: currentRepo }); // keep serialization truth in sync across retargets
     vm = message.vm;
+    vm.busy = busy; // the lock outlives the VM that arrives mid-run
     render();
-  } else if (message.type === 'busy' && vm) {
-    vm.busy = message.action;
-    render();
+  } else if (message.type === 'busy') {
+    busy = message.action;
+    if (vm) {
+      vm.busy = busy;
+      render();
+    }
   } else if (message.type === 'revalidate') {
     setRevalidate(message.state, message.message);
   } else if (message.type === 'promoted' && vm) {

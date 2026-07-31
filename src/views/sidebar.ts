@@ -187,6 +187,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'focusSearch' });
   }
 
+  /** Locks (title) or unlocks (null) every action control in the view while a
+   *  grim run is in flight anywhere — see notify.ts's onBusyChange. */
+  setBusy(busy: string | null): void {
+    this.post({ type: 'busy', busy });
+  }
+
   /** Switches the webview's internal tab bar (the activity-bar Updates row). */
   showTab(tab: SidebarState['mode']): void {
     this.post({ type: 'setTab', tab });

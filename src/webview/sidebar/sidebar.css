@@ -349,6 +349,21 @@ vscode-textfield#search {
   gap: 6px;
 }
 
+/* While a grim run is in flight anywhere in the extension (#root.busy, posted
+   by the host), every action control is inert — grim serializes on its own
+   lock, so a second install started mid-run would just stall behind the first
+   and read as a dead button. Visual half only: the click guard in main.ts is
+   what actually refuses the action, including keyboard activation, which
+   pointer-events cannot. pointer-events is inherited, so the cluster selectors
+   reach every descendant control. Mirrors .details-header.busy in details.css. */
+#root.busy .card-actions,
+#root.busy .card-menu,
+#root.busy .init-notification vscode-button,
+#root.busy .empty-state vscode-button {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 vscode-button.sm {
   font-size: 11px;
 }

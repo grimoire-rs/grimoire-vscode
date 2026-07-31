@@ -231,6 +231,23 @@ function post(message: SidebarToHost): void {
   vscode.postMessage(message);
 }
 
+// Every action that runs a grim command. While one is in flight ANYWHERE (the
+// host's `busy` post — this view, a details panel, a command), all of them are
+// refused here, not merely dimmed by the .busy CSS: pointer-events still leaves
+// a button reachable by keyboard, and Enter would fire the same click that grim
+// can only stall on behind its lock.
+const MUTATING_ACTIONS = new Set([
+  'install',
+  'uninstall',
+  'update',
+  'switch',
+  'pin',
+  'pick-version',
+  'init-project',
+  'install-grim',
+]);
+let busy: string | null = null;
+
 root.addEventListener('click', (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
   const card = (event.target as HTMLElement).closest<HTMLElement>('.card');
@@ -250,6 +267,11 @@ root.addEventListener('click', (event) => {
   }
   event.stopPropagation();
   const action = target.dataset['action'];
+  if (busy !== null && MUTATING_ACTIONS.has(action ?? '')) {
+    closeCardMenu();
+    closeContextMenu();
+    return;
+  }
   const repo = target.dataset['repo'] ?? card?.dataset['repo'] ?? '';
   switch (action) {
     case 'menu': {
@@ -508,6 +530,11 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
     refreshInFlight = false;
     state = message.state;
     render();
+  } else if (message.type === 'busy') {
+    // Class only — no render(): the lock is CSS plus the click guard above, and
+    // a repaint here would drop any open card menu for no reason.
+    busy = message.busy;
+    root.classList.toggle('busy', busy !== null);
   } else if (message.type === 'focusSearch') {
     // Search focus always means Browse (deep links, the details tag click, the
     // focusSearch command) — flip the tab first so the box exists and is the

@@ -152,6 +152,12 @@ export type SidebarToHost =
 
 export type HostToSidebar =
   | { type: 'state'; state: SidebarState }
+  /** A mutating grim run started (title) or the last one settled (null) —
+   *  ANYWHERE in the extension, not just from this view. Every action control
+   *  goes inert meanwhile: grim serializes on its own lock, so a second install
+   *  fired mid-run stalls behind the first and reads as a dead button. Kept off
+   *  {@link SidebarState} so it survives the refresh posts an action ends in. */
+  | { type: 'busy'; busy: string | null }
   | { type: 'focusSearch' }
   /** Switches the internal tab bar from the host — the Updates row in the
    *  activity-bar tree view clicks through to the Updates tab. */
@@ -257,7 +263,9 @@ export type RevalidateState = 'checking' | 'done' | 'failed';
 
 export type HostToDetails =
   | { type: 'artifact'; vm: DetailsVM }
-  | { type: 'busy'; action: string }
+  /** Action in flight (title) or cleared (null). Broadcast to EVERY open panel,
+   *  not only the one that acted — the run holds grim's lock for all of them. */
+  | { type: 'busy'; action: string | null }
   /** message is set only on 'failed' (the concrete revalidate error). */
   | { type: 'revalidate'; state: RevalidateState; message?: string }
   /** The panel was promoted out of the preview slot — clear the pin. */

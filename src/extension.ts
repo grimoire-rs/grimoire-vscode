@@ -22,7 +22,7 @@ import {
   installGrim,
   updateDecision,
 } from './installer';
-import { initNotify, notifyError, runWithStatusProgress } from './notify';
+import { initNotify, notifyError, onBusyChange, runWithStatusProgress } from './notify';
 import { Prefetcher } from './prefetch';
 import { ScopeService, type CheckStore, type CheckedFields } from './scopes';
 import { DetailsManager, DETAILS_VIEW_TYPE } from './views/details';
@@ -354,6 +354,18 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   };
 
   const sidebar = new SidebarProvider(context.extensionUri, scopes, catalog, delegate, output);
+
+  // One grim run at a time is all grim's lock allows, so while any mutating
+  // action is in flight every view's action controls go inert — otherwise a
+  // click during a slow install (a bundle) stalls behind it and reads as a dead
+  // button. One signal, every surface: the sidebar cards and all open details
+  // panels, whichever view started the run.
+  context.subscriptions.push(
+    onBusyChange((busy) => {
+      sidebar.setBusy(busy);
+      details.setBusy(busy);
+    }),
+  );
 
   const settings = new SettingsManager(
     context.extensionUri,

@@ -313,6 +313,18 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   /** Re-sends fresh view models to every open panel (after installs etc.),
    *  including the reusable preview slot. postVM re-checks the panel's repo, so
    *  a preview retargeted mid-refresh discards the stale VM. */
+  /** Locks (title) or unlocks (null) the action controls of EVERY open panel
+   *  while a grim run is in flight anywhere — see notify.ts's onBusyChange. The
+   *  acting panel posts its own busy title first (actionInner, for immediate
+   *  feedback); this is what reaches the others. */
+  setBusy(busy: string | null): void {
+    for (const panel of [...this.panels.values(), this.preview?.panel]) {
+      if (panel && !this.disposedPanels.has(panel)) {
+        void panel.webview.postMessage({ type: 'busy', action: busy } satisfies HostToDetails);
+      }
+    }
+  }
+
   async refreshOpenPanels(options: { check?: boolean } = {}): Promise<void> {
     for (const [repo, panel] of this.panels) {
       if (!this.disposedPanels.has(panel)) {
