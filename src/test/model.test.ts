@@ -188,6 +188,18 @@ suite('card building', () => {
     assert.deepStrictEqual(cards[0]?.installs, []);
   });
 
+  // grim flattens its per-source groups, so one repo listed by two configured
+  // sources (an index and the registry it indexes) arrives twice. `repeat()`
+  // keys cards on `repo` and lit-html requires unique keys.
+  test('a repo listed by two sources yields one card, the first', () => {
+    const cards = buildCards(
+      [searchItem({ description: 'from the index' }), searchItem({ description: 'from _catalog' })],
+      [],
+    );
+    assert.strictEqual(cards.length, 1);
+    assert.strictEqual(cards[0]?.description, 'from the index');
+  });
+
   test('deprecated wins over installed', () => {
     const cards = buildCards([searchItem({ deprecated: 'use x instead' })], [projectScope]);
     assert.strictEqual(cards[0]?.state, 'deprecated');

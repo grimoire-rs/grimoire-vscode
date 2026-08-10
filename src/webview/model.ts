@@ -318,8 +318,18 @@ export function buildCards(
 ): CardVM[] {
   const indexes = scopes.map((s) => installIndex(s));
   const cards: CardVM[] = [];
+  // One card per repository. `grim search` flattens its per-source groups, so
+  // the SAME repo arrives twice whenever two configured sources list it — an
+  // index and the registry it indexes, most obviously. The cards render through
+  // a `repeat()` keyed on `repo`, and lit-html requires those keys to be
+  // unique, so a duplicate is a rendering fault, not a cosmetic one. First
+  // occurrence wins: groups arrive in registry declaration order, so the card
+  // comes from the source that would resolve the reference.
   const seen = new Set<string>();
   for (const item of items) {
+    if (seen.has(item.repo)) {
+      continue;
+    }
     seen.add(item.repo);
     const installs = indexes.flatMap((index) => index.get(item.repo) ?? []);
     const deprecated = item.deprecated ?? null;
