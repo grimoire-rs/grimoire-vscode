@@ -8,6 +8,7 @@ import {
   configSetArgs,
   configUnsetArgs,
   contextArgs,
+  editRegistrySteps,
   initArgs,
   isRetryable,
   registryAddArgs,
@@ -25,6 +26,7 @@ import {
   type RegistryLocator,
   type Scope,
 } from '../grim';
+import { supportsRegistryEditing } from '../installer';
 import {
   isProjectNotDiscovered,
   projectSearchable,
@@ -54,6 +56,14 @@ const LOCK_RETRY_DELAY_MS = 300;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Names a write step by its leading subcommand words (`grim config registry
+ *  set`), stopping at the first flag so no user value is echoed back into an
+ *  error message. */
+function stepName(args: string[]): string {
+  const firstFlag = args.findIndex((token) => token.startsWith('-'));
+  return `grim ${(firstFlag === -1 ? args : args.slice(0, firstFlag)).join(' ')}`;
 }
 
 export class SettingsManager {
@@ -155,29 +165,44 @@ export class SettingsManager {
         await this.postState(panel, message.scope);
         return;
       case 'setValue':
-        await this.write(
-          panel,
-          message.scope,
-          message.key,
+        await this.write(panel, message.scope, message.key, [
           configSetArgs(message.key, message.value),
-        );
+        ]);
         return;
       case 'unsetValue':
-        await this.write(panel, message.scope, message.key, configUnsetArgs(message.key));
+        await this.write(panel, message.scope, message.key, [configUnsetArgs(message.key)]);
         return;
       case 'addRegistry':
+        await this.write(panel, message.scope, message.alias, [
+          registryAddArgs(message.alias, message.locator, {
+            default: message.default,
+            include: message.include,
+            exclude: message.exclude,
+          }),
+        ]);
+        return;
+      case 'editRegistry':
         await this.write(
           panel,
           message.scope,
           message.alias,
-          registryAddArgs(message.alias, message.locator, { default: message.default }),
+          editRegistrySteps(
+            message.alias,
+            message.locator,
+            {
+              default: message.default,
+              include: message.include,
+              exclude: message.exclude,
+            },
+            message.previous,
+          ),
         );
         return;
       case 'removeRegistry':
-        await this.write(panel, message.scope, message.alias, registryRmArgs(message.alias));
+        await this.write(panel, message.scope, message.alias, [registryRmArgs(message.alias)]);
         return;
       case 'useRegistry':
-        await this.write(panel, message.scope, message.alias, registryUseArgs(message.alias));
+        await this.write(panel, message.scope, message.alias, [registryUseArgs(message.alias)]);
         return;
       case 'initProject':
         await this.initScope(panel, 'project');
@@ -265,7 +290,20 @@ export class SettingsManager {
     // Read off the last snapshot the sidebar took rather than probing again —
     // undefined until one exists, and then nothing is claimed.
     const searchScope = this.browseSearchScope();
-    const shared = { registryFields, ...(searchScope ? { searchScope } : {}) };
+    // grim-polyfill<0.13.0: an older grim rejects `config registry add
+    // --include/--exclude` as unknown flags and the whole `config registry set`
+    // verb as an unknown subcommand (clap, exit 64), so the form's pattern
+    // repeaters and every row's edit button stay hidden below that version.
+    // Only the 'ready' phase renders either, so every non-ready branch below
+    // can carry `false` unconditionally; the ready branch overrides it from
+    // grim's own reported version. Delete the flag, its override and the two
+    // render gates when MINIMUM_GRIM_VERSION reaches 0.13.0.
+    const shared = {
+      registryFields,
+      registryEditSupported: false,
+      grimVersion: null,
+      ...(searchScope ? { searchScope } : {}),
+    };
     if (scope === 'project' && !projectOpen) {
       // No workspace folder: `grim context` has no project cwd to discover
       // from — skip the round trip entirely rather than run it against the
@@ -384,6 +422,11 @@ export class SettingsManager {
       entries: list.value.items,
       registries: registries.value.items,
       ...shared,
+      // grim-polyfill<0.13.0: see the `shared` comment above — the authoritative
+      // answer, from the version grim just reported for this very scope.
+      registryEditSupported: supportsRegistryEditing(ctx.value.version),
+      // Shown beside the required version in the gate hints, never compared.
+      grimVersion: ctx.value.version,
     };
     return buildSettingsVM(source);
   }
@@ -406,44 +449,66 @@ export class SettingsManager {
    *  own watcher events are redundant with the state repost it ends in), and
    *  a retryable failure (see isRetryable — lock contention, exit 75) gets
    *  one retry after a short delay. Success re-fetches + reposts state via
-   *  repostAfterChange (a single
-   *  fetch, see its own doc); failure posts writeError only — nothing was
-   *  written, so no state repost follows (protocol contract, stage 2
-   *  handoff). Returns the failure message, or undefined on success, for a
-   *  caller with no panel to receive writeError (see addRegistry).
+   *  repostAfterChange (a single fetch, see its own doc); failure posts
+   *  writeError, preceded by a state repost only when an earlier step already
+   *  landed (see writeInner). Returns the failure message, or undefined on
+   *  success, for a caller with no panel to receive writeError (see addRegistry).
    *  `panel` is undefined for exactly that caller — Settings may be closed. */
   private async write(
     panel: vscode.WebviewPanel | undefined,
     scope: Scope,
     key: string,
-    args: string[],
+    steps: string[][],
   ): Promise<string | undefined> {
     const prior = this.writeChains.get(scope) ?? Promise.resolve();
     const run = prior.then(
-      () => this.writeInner(panel, scope, key, args),
-      () => this.writeInner(panel, scope, key, args),
+      () => this.writeInner(panel, scope, key, steps),
+      () => this.writeInner(panel, scope, key, steps),
     );
     this.writeChains.set(scope, run);
     return await run;
   }
 
+  /** `steps` are argv lists applied in order, aborting at the first failure —
+   *  ONE writeError, whatever the length. Almost every caller passes a single
+   *  step; editRegistry is why the plural exists (a demote cannot ride along
+   *  on `registry set`, whose `--default` only ever promotes — see
+   *  editRegistrySteps). Aborting keeps a step from acting on a change the
+   *  preceding one was refused.
+   *
+   *  grim has no transaction across steps: whatever succeeded before the
+   *  failure stays on disk. So a failure with earlier successes reposts state
+   *  BEFORE the error — the panel would otherwise keep rendering rows the
+   *  config file no longer has — and the message names what did land. A
+   *  failure on the first step wrote nothing and posts writeError alone. */
   private async writeInner(
     panel: vscode.WebviewPanel | undefined,
     scope: Scope,
     key: string,
-    args: string[],
+    steps: string[][],
   ): Promise<string | undefined> {
     return await this.suspendWhile(async () => {
-      let result = await this.scopes.run<ConfigWriteResult>(args, scope);
-      if (!result.ok && result.kind === 'error' && isRetryable(result)) {
-        await sleep(LOCK_RETRY_DELAY_MS);
-        result = await this.scopes.run<ConfigWriteResult>(args, scope);
-      }
-      if (!result.ok) {
-        const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
-        this.output.appendLine(`error: grim ${args.join(' ')}: ${message}`);
-        this.post(panel, { type: 'writeError', scope, key, message });
-        return message;
+      const applied: string[] = [];
+      for (const args of steps) {
+        let result = await this.scopes.run<ConfigWriteResult>(args, scope);
+        if (!result.ok && result.kind === 'error' && isRetryable(result)) {
+          await sleep(LOCK_RETRY_DELAY_MS);
+          result = await this.scopes.run<ConfigWriteResult>(args, scope);
+        }
+        if (!result.ok) {
+          const reason = result.kind === 'not-found' ? 'grim executable not found' : result.message;
+          this.output.appendLine(`error: grim ${args.join(' ')}: ${reason}`);
+          if (applied.length === 0) {
+            this.post(panel, { type: 'writeError', scope, key, message: reason });
+            return reason;
+          }
+          const landed = applied.join(', ');
+          const message = `Partly applied: ${landed} succeeded and was not rolled back. ${reason}`;
+          await this.repostAfterChange(panel, scope);
+          this.post(panel, { type: 'writeError', scope, key, message });
+          return message;
+        }
+        applied.push(stepName(args));
       }
       await this.repostAfterChange(panel, scope);
       return undefined;
@@ -454,9 +519,25 @@ export class SettingsManager {
    *  never call this without that confirmation). Routed through the same
    *  per-scope write chain as the panel's own add-registry form, so a link
    *  arriving mid-edit queues behind that edit instead of racing it, and an
-   *  open Settings panel reposts itself afterwards for free. */
-  async addRegistry(alias: string, locator: RegistryLocator, scope: Scope): Promise<void> {
-    const failure = await this.write(this.panel, scope, alias, registryAddArgs(alias, locator));
+   *  open Settings panel reposts itself afterwards for free.
+   *
+   *  `filters` are the link's browse-filter patterns, already validated and
+   *  shown verbatim in that modal. A filter-carrying link is refused at the
+   *  caller (extension.ts) when the resolved grim predates the flags, so it
+   *  never reaches here — the modal must not confirm a write that is already
+   *  known to fail. That gate needs a known version, so when none has been
+   *  resolved yet the link still arrives and grim itself refuses it (exit 64):
+   *  an error naming the reason with nothing written, never a registry
+   *  silently added without the filters the user was asked to approve. */
+  async addRegistry(
+    alias: string,
+    locator: RegistryLocator,
+    scope: Scope,
+    filters: { include: string[]; exclude: string[] },
+  ): Promise<void> {
+    const failure = await this.write(this.panel, scope, alias, [
+      registryAddArgs(alias, locator, filters),
+    ]);
     if (failure !== undefined) {
       notifyError(`Grimoire: could not add registry ${alias}: ${failure}`);
       return;

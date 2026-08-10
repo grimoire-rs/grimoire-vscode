@@ -1105,13 +1105,186 @@ suite('add-registry deep link', () => {
     assert.deepStrictEqual(parseAddRegistryLink('index=https://index.grimoire.rs&alias=grimoire'), {
       alias: 'grimoire',
       index: 'https://index.grimoire.rs/',
+      include: [],
+      exclude: [],
     });
     assert.deepStrictEqual(
       parseAddRegistryLink(
         `index=${encodeURIComponent('https://idx.example.com/v1/')}&alias=my_idx-2`,
       ),
-      { alias: 'my_idx-2', index: 'https://idx.example.com/v1/' },
+      { alias: 'my_idx-2', index: 'https://idx.example.com/v1/', include: [], exclude: [] },
     );
+  });
+
+  test('reads browse filters as REPEATED params, keeping a comma inside one pattern', () => {
+    // A comma is glob alternation syntax, so the wire format repeats the
+    // parameter rather than joining — `acme/{tools,libs}/**` is ONE pattern.
+    assert.deepStrictEqual(
+      parseAddRegistryLink(
+        'index=https://idx.example.com&alias=acme' +
+          `&include=${encodeURIComponent('acme/platform/**')}` +
+          `&include=${encodeURIComponent('acme/{tools,libs}/**')}` +
+          `&exclude=${encodeURIComponent('acme/platform/legacy/**')}`,
+      ),
+      {
+        alias: 'acme',
+        index: 'https://idx.example.com/',
+        include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+        exclude: ['acme/platform/legacy/**'],
+      },
+    );
+  });
+
+  test('rejects a filter pattern that could forge a line in the confirmation modal', () => {
+    // The modal IS the authorization and renders each pattern as a plain line.
+    // A newline lets the page write its own "Index:" line under the real one;
+    // a bidi override lets it reverse what is displayed. The rule is an
+    // ALLOWLIST of printable ASCII, so everything below the two bidi entries is
+    // rejected for being outside it — not because anyone enumerated it.
+    for (const pattern of [
+      'acme/**\nIndex: https://evil.example.com',
+      'acme/**\r\nAlias: other',
+      'acme/\t**',
+      'acme/\x7f**',
+      'acme/\u202e**', // RIGHT-TO-LEFT OVERRIDE
+      'acme/\u2066**', // LEFT-TO-RIGHT ISOLATE
+      'acme/\u2028Index: https://evil.example.com', // LINE SEPARATOR: a break, like \n
+      'acme/\u2029Index: https://evil.example.com', // PARAGRAPH SEPARATOR: likewise
+      'acme/\u200f**', // RIGHT-TO-LEFT MARK
+      'acme/\u00a0**', // NO-BREAK SPACE
+      'acme/\ufeff**', // ZERO WIDTH NO-BREAK SPACE
+      'acme/\u00e9**', // any non-ASCII: OCI paths and globset syntax are ASCII
+      'acme/**    Index: https://evil.example.com', // padding forges a line without a break
+      '',
+      '   ',
+    ]) {
+      assert.strictEqual(
+        parseAddRegistryLink(
+          `index=https://idx.example.com&alias=ok&include=${encodeURIComponent(pattern)}`,
+        ),
+        null,
+        `rejected: ${JSON.stringify(pattern)}`,
+      );
+    }
+  });
+
+  test('rejects an over-budget pattern list outright rather than truncating it', () => {
+    // Truncating would show fewer patterns than get written — the one failure
+    // this modal exists to prevent.
+    const many = Array.from({ length: 11 }, (_, i) => `exclude=acme/p${i}/**`).join('&');
+    assert.strictEqual(
+      parseAddRegistryLink(`index=https://idx.example.com&alias=ok&${many}`),
+      null,
+    );
+    const long = 'a'.repeat(201);
+    assert.strictEqual(
+      parseAddRegistryLink(`index=https://idx.example.com&alias=ok&include=${long}`),
+      null,
+    );
+    // The caps are per list, and each documented limit itself is ACCEPTED —
+    // asserted on both sides so a `>=`/`>` slip cannot silently reject the
+    // number the doc comment promises.
+    const ten = Array.from({ length: 10 }, (_, i) => `include=acme/p${i}/**`).join('&');
+    assert.ok(parseAddRegistryLink(`index=https://idx.example.com&alias=ok&${ten}`));
+    assert.deepStrictEqual(
+      parseAddRegistryLink(`index=https://idx.example.com&alias=ok&include=${'a'.repeat(200)}`)
+        ?.include,
+      ['a'.repeat(200)],
+    );
+  });
+
+  test('a pattern may start with a dash — the link never makes it a flag', () => {
+    // Argument injection is handled where argv is built (the patterns ride
+    // behind `--include=`), so the parser has no business rejecting a leading
+    // `-` the way the alias rule does.
+    assert.deepStrictEqual(
+      parseAddRegistryLink('index=https://idx.example.com&alias=ok&include=-x')?.include,
+      ['-x'],
+    );
+  });
+
+  test('the confirmation modal lists every pattern it is about to write', () => {
+    const detail = addRegistryPrompt(
+      {
+        alias: 'acme',
+        index: 'https://idx.example.com/',
+        include: ['acme/platform/**', 'acme/tools/**'],
+        exclude: ['acme/platform/legacy/**'],
+      },
+      true,
+    ).detail;
+    for (const pattern of ['acme/platform/**', 'acme/tools/**', 'acme/platform/legacy/**']) {
+      assert.ok(detail.includes(pattern), `modal names ${pattern}`);
+    }
+    assert.ok(detail.includes('2 include') === false, 'patterns verbatim, not summarized');
+    // "excluded" reads like access control and is not — a direct reference to a
+    // hidden package still resolves and installs.
+    assert.ok(detail.includes('do not stop anything from being installed'));
+  });
+
+  test('the trust sentence stays ABOVE the pattern block', () => {
+    const detail = addRegistryPrompt(
+      {
+        alias: 'acme',
+        index: 'https://idx.example.com/',
+        // The caps allow ~2000 characters per list, and showWarningMessage's
+        // detail neither scrolls nor truncates visibly: patterns rendered
+        // before the trust sentence push it out of view with plain text alone.
+        include: Array.from({ length: 10 }, (_, i) => `acme/p${i}/${'x'.repeat(180)}`),
+        exclude: ['acme/legacy/**'],
+      },
+      true,
+    ).detail;
+    assert.ok(
+      detail.indexOf('Only continue if you trust that page') < detail.indexOf('acme/p0/'),
+      'the sentence that authorizes the write comes first',
+    );
+    assert.ok(
+      detail.indexOf('Alias: acme') < detail.indexOf('Only continue if you trust that page'),
+      'index and alias still lead',
+    );
+    assert.ok(detail.includes('acme/legacy/**'), 'every pattern still rendered verbatim');
+  });
+
+  test('a rejected link reports WHY, without echoing anything the page supplied', () => {
+    // The reason is for the output channel only — a hostile page must learn
+    // nothing from the extension's response — and it quotes no query value, so
+    // a pattern cannot forge a line in the log either.
+    const reasons: string[] = [];
+    const record = (reason: string): void => {
+      reasons.push(reason);
+    };
+    const hostile = 'zzhostilezz';
+    for (const query of [
+      `index=https://idx.example.com&alias=${hostile}.bad`,
+      `index=http://idx.example.com&alias=ok&x=${hostile}`,
+      `index=https://idx.example.com&alias=ok&${Array.from(
+        { length: 11 },
+        (_, i) => `include=${hostile}${i}/**`,
+      ).join('&')}`,
+      `index=https://idx.example.com&alias=ok&exclude=${hostile}${'a'.repeat(201)}`,
+      `index=https://idx.example.com&alias=ok&include=${encodeURIComponent(`${hostile}\n`)}`,
+    ]) {
+      assert.strictEqual(parseAddRegistryLink(query, record), null, query);
+    }
+    assert.strictEqual(reasons.length, 5, 'one reason per rejected link');
+    assert.ok(
+      reasons.every((r) => !r.includes(hostile) && !r.includes('\n')),
+      `reasons quote no query value: ${reasons.join(' | ')}`,
+    );
+    assert.ok(
+      reasons[2]?.includes('include') && reasons[3]?.includes('exclude'),
+      `the reason names which list failed: ${reasons.join(' | ')}`,
+    );
+  });
+
+  test('the modal omits a filter clause it has nothing to say about', () => {
+    const detail = addRegistryPrompt(
+      { alias: 'acme', index: 'https://idx.example.com/', include: ['acme/**'], exclude: [] },
+      true,
+    ).detail;
+    assert.ok(detail.includes('Include: acme/**'));
+    assert.ok(!detail.includes('Exclude'), 'no empty Exclude line');
   });
 
   test('rejects every non-https or unparseable index', () => {
@@ -1159,7 +1332,12 @@ suite('add-registry deep link', () => {
   });
 
   test('prompt targets project scope, falling back to global with that said out loud', () => {
-    const link = { alias: 'grimoire', index: 'https://index.grimoire.rs/' };
+    const link = {
+      alias: 'grimoire',
+      index: 'https://index.grimoire.rs/',
+      include: [],
+      exclude: [],
+    };
     const project = addRegistryPrompt(link, true);
     assert.strictEqual(project.scope, 'project');
     assert.ok(project.detail.includes('https://index.grimoire.rs/'), 'names the exact index');

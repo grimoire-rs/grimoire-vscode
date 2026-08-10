@@ -1,6 +1,7 @@
 // Pure view-model builders and reducers for the Settings panel. No vscode, no
 // DOM — fully unit-testable, same split as webview/model.ts.
 import type {
+  RegistryFieldState,
   RegistryLocator,
   Scope,
   ScopesVM,
@@ -12,6 +13,7 @@ import type {
   SettingsRowConstraints,
   SettingsRowVM,
   SettingsState,
+  SettingsToHost,
 } from '../protocol';
 
 // Wire shapes (duplicated from grim.ts's ConfigEntry/RegistryEntry — same
@@ -38,6 +40,10 @@ export interface WireRegistryEntry {
   alias: string | null;
   oci: string | null;
   index: string | null;
+  /** Browse filters — additive, so absent on an older grim (see grim.ts's
+   *  RegistryEntry). buildRegistryRow normalizes both to `[]`. */
+  include?: string[];
+  exclude?: string[];
   default: boolean;
 }
 
@@ -140,6 +146,10 @@ export function buildRegistryRow(entry: WireRegistryEntry): SettingsRegistryVM {
     type: entry.oci !== null ? 'oci' : entry.index !== null ? 'index' : 'unknown',
     locator: entry.oci ?? entry.index ?? '',
     default: entry.default,
+    // isArray, not `?? []`: a hand-edited config can make grim report a bare
+    // string here, and every downstream reader calls .join()/.map() on it.
+    include: Array.isArray(entry.include) ? entry.include : [],
+    exclude: Array.isArray(entry.exclude) ? entry.exclude : [],
     legacy: entry.alias === null,
   };
 }
@@ -158,9 +168,20 @@ const GROUP_OF: Record<string, (typeof GROUP_ORDER)[number]> = {
   expand_levels: 'TUI',
 };
 
+/** `config list --all` emits one row per registry per field
+ *  (`registry.<alias>.oci`, `.include`, …) alongside the fixed `options.*`
+ *  keys. Those belong to the Registries table, which reads them from
+ *  `registry list` instead — left in, `shortKey` would strip the prefix and
+ *  drop every one of them into "Options" as an unlabelled duplicate. Worse for
+ *  the two filter lists: their wire type is `string-list`, so renderControl
+ *  would hand them the comma-joining chip editor, and editing one there splits
+ *  `{tools,libs}/**` into two fragments that no longer compile. */
 export function buildGroups(entries: WireConfigEntry[]): SettingsGroupVM[] {
   const byTitle = new Map<string, SettingsRowVM[]>();
   for (const entry of entries) {
+    if (entry.key.startsWith('registry.')) {
+      continue;
+    }
     const title = GROUP_OF[shortKey(entry.key)] ?? 'Options';
     byTitle.set(title, [...(byTitle.get(title) ?? []), buildSettingsRow(entry)]);
   }
@@ -188,6 +209,8 @@ export interface SettingsSource {
    *  (see SettingsManager.ensureRegistryFields) — threaded straight through
    *  to the VM regardless of phase. */
   registryFields: SettingsRegistryFieldVM[];
+  registryEditSupported: boolean;
+  grimVersion: string | null;
 }
 
 /** The four data-driven empty/init phases; 'loading' and 'error' are
@@ -233,6 +256,8 @@ export function buildSettingsVM(source: SettingsSource): SettingsState {
     groups: ready ? buildGroups(source.entries) : [],
     registries: ready ? source.registries.map(buildRegistryRow) : [],
     registryFields: source.registryFields,
+    registryEditSupported: source.registryEditSupported,
+    grimVersion: source.grimVersion,
   };
 }
 
@@ -310,6 +335,28 @@ export function shouldBlockNumberWheel(isNumberInput: boolean, isFocused: boolea
   return isNumberInput && isFocused;
 }
 
+/** Extra margin below the registry form when scrolling it into view. */
+export const FORM_REVEAL_MARGIN_PX = 24;
+
+/** How far to scroll so a just-opened registry form is fully visible, in the
+ *  same viewport coordinates `getBoundingClientRect` reports. 0 means "already
+ *  visible enough, do not scroll".
+ *
+ *  The clamp is the whole point and is why this is worth extracting: scrolling
+ *  by the raw overshoot would push the form's TOP off the viewport whenever the
+ *  form is taller than the space below it, so the result never exceeds
+ *  `rectTop` — the form's title stays reachable no matter how tall the form
+ *  grows. Pure, so that invariant is testable without a DOM (main.ts is a
+ *  browser-only entry and is not unit-tested, same as every other main.ts). */
+export function revealScrollDelta(
+  rectTop: number,
+  rectBottom: number,
+  viewportHeight: number,
+): number {
+  const overshoot = rectBottom + FORM_REVEAL_MARGIN_PX - viewportHeight;
+  return overshoot <= 0 ? 0 : Math.min(overshoot, Math.max(0, rectTop));
+}
+
 export function splitList(value: string | null): string[] {
   return value ? value.split(',').filter((s) => s.length > 0) : [];
 }
@@ -324,7 +371,33 @@ export interface AddRegistryDraft {
   alias: string;
   kind: 'oci' | 'index';
   locator: string;
+  /** Browse-filter globs, one entry per pattern. Authored here because the
+   *  repeatable `--include`/`--exclude` flags — on `registry add` for a new
+   *  entry, `registry set` for an existing one — are the only CLI path that
+   *  writes a multi-pattern list. */
+  include: string[];
+  exclude: string[];
   default: boolean;
+}
+
+/** Seeds the form from the row being edited. The VM already carries every
+ *  field `registry set` can write, so the draft is a straight copy — no
+ *  refetch, and the arrays are copied rather than aliased so cancelling an
+ *  edit cannot leave the table showing patterns that were never saved.
+ *
+ *  A `type` of 'unknown' means grim reported an entry with neither locator,
+ *  which only a hand-edited config produces; 'index' is the safe landing
+ *  because it is what the empty draft picks too, and the user has to fill the
+ *  locator in either way before the form will submit. */
+export function draftFromRegistry(r: SettingsRegistryVM): AddRegistryDraft {
+  return {
+    alias: r.alias ?? '',
+    kind: r.type === 'oci' ? 'oci' : 'index',
+    locator: r.locator,
+    include: [...r.include],
+    exclude: [...r.exclude],
+    default: r.default,
+  };
 }
 
 // Index locator is the common case (curated catalogs like the hosted
@@ -333,6 +406,8 @@ export const EMPTY_REGISTRY_DRAFT: AddRegistryDraft = {
   alias: '',
   kind: 'index',
   locator: '',
+  include: [],
+  exclude: [],
   default: false,
 };
 
@@ -408,6 +483,24 @@ export function resolveScopeSwitch(
   return { vm: current, refreshing: false };
 }
 
+/** Which entry the one registry form is writing. One form serves both modes:
+ *  the fields are the same five, the validation is the same, and grim's own
+ *  `registry set` mirrors `registry add` flag for flag.
+ *
+ *  A TAG, not a pair of nullables. The alias being edited and the row's state
+ *  at open are meaningless apart — either both are known (edit) or neither is
+ *  (add) — and as two independent `string | null` / `{…} | null` fields the
+ *  half-set combinations were representable and silently wrong: an alias with
+ *  no previous state posted `addRegistry` for an entry that already exists,
+ *  and previous state with no alias posted `editRegistry` named by whatever
+ *  the readonly draft field happened to hold. */
+export type AddRegistryMode =
+  | { kind: 'add' }
+  /** `previous` is captured at OPEN, not re-read at submit: an unrelated state
+   *  repost can replace the VM while the form is up, and the host uses it to
+   *  decide whether the subtractive steps are needed at all. */
+  | { kind: 'edit'; alias: string; previous: RegistryFieldState };
+
 /** Ephemeral, webview-only UI state for the add-registry form — threaded into
  *  render.ts as a second argument alongside the host-posted SettingsState,
  *  the same split webview/model.ts's CardFilter uses alongside SidebarState. */
@@ -418,13 +511,133 @@ export interface AddRegistryUI {
   /** Which per-radio info tooltip is open, if any (design item 4) — `null`
    *  when neither is. Only one is ever open at a time. */
   helpOpen: AddRegistryDraft['kind'] | null;
+  /** Only `open: true` makes this meaningful — one form, so an edit and an add
+   *  can never both be in progress. */
+  mode: AddRegistryMode;
+  /** A submit is in flight. Every control goes disabled and the submit button
+   *  becomes a spinner, because a registry write is several grim invocations
+   *  behind a per-scope queue and a lock retry — without this the form looks
+   *  frozen, and a second click is silently swallowed by submitAddRegistry's
+   *  in-flight guard. Cleared by the state repost (success) or the writeError
+   *  (failure); both already reset this object. */
+  saving: boolean;
+  /** Which pattern chip is open as a text box, by list and position, or
+   *  `null` when none is. Editing by INDEX rather than by value, because a
+   *  half-typed pattern is routinely equal to another one in the list and
+   *  position is what the user is pointing at. Draft-only, like the rest of
+   *  this object — nothing reaches grim until the form is submitted. */
+  editingPattern: { field: 'include' | 'exclude'; index: number } | null;
 }
 
 export const CLOSED_ADD_REGISTRY: AddRegistryUI = {
   open: false,
   draft: EMPTY_REGISTRY_DRAFT,
   helpOpen: null,
+  mode: { kind: 'add' },
+  saving: false,
+  editingPattern: null,
 };
+
+/** Opens the form on an existing row, seeding the draft and capturing what to
+ *  diff against at submit. `null` for a legacy alias-less row: grim has no
+ *  name to address it by, so it carries no edit button and there is no
+ *  edit-mode state that could describe it. */
+export function editRegistryUI(row: SettingsRegistryVM): AddRegistryUI | null {
+  if (row.alias === null) {
+    return null;
+  }
+  return {
+    open: true,
+    draft: draftFromRegistry(row),
+    helpOpen: null,
+    saving: false,
+    editingPattern: null,
+    mode: {
+      kind: 'edit',
+      alias: row.alias,
+      previous: { include: [...row.include], exclude: [...row.exclude], default: row.default },
+    },
+  };
+}
+
+/** The write the open form submits. One construction for both modes — the six
+ *  shared fields were duplicated across two literals, where a field added to
+ *  one and forgotten in the other is a silent data loss on that path. */
+export function registrySubmitMessage(
+  scope: Scope,
+  ui: AddRegistryUI,
+): Extract<SettingsToHost, { type: 'addRegistry' | 'editRegistry' }> {
+  const { draft, mode } = ui;
+  const fields = {
+    scope,
+    locator: draftToLocator(draft),
+    include: draft.include,
+    exclude: draft.exclude,
+    default: draft.default,
+  };
+  return mode.kind === 'edit'
+    ? { type: 'editRegistry', alias: mode.alias, ...fields, previous: mode.previous }
+    : { type: 'addRegistry', alias: draft.alias.trim(), ...fields };
+}
+
+// --- Pattern repeater (draft-only; nothing here reaches grim until submit) ---
+
+/** Outcome of a pattern add/edit. A duplicate is REPORTED rather than applied:
+ *  dropping the typed value (add) or collapsing the edited chip into its twin
+ *  (edit) both read as the form eating input, so the caller surfaces
+ *  {@link DUPLICATE_PATTERN_ERROR} on the form's existing error line instead. */
+export type PatternResult = { ok: true; patterns: string[] } | { ok: false; reason: 'duplicate' };
+
+export const DUPLICATE_PATTERN_ERROR = 'That pattern is already in the list.';
+
+/** Folds the repeater's scratch text into the list. Trim-and-drop-empty is the
+ *  whole client-side rule: grim owns glob validity and rejects an
+ *  uncompilable pattern with exit 65, and a comma is legal ALTERNATION here,
+ *  so neither the row chip editor's single-character check nor its comma
+ *  refusal applies. An empty box adds nothing and is not an error. */
+export function appendPattern(patterns: string[], value: string): PatternResult {
+  const text = value.trim();
+  if (text === '') {
+    return { ok: true, patterns };
+  }
+  if (patterns.includes(text)) {
+    return { ok: false, reason: 'duplicate' };
+  }
+  return { ok: true, patterns: [...patterns, text] };
+}
+
+/** Puts `value` at `index`, or removes that entry when the edit was cleared.
+ *  Out of range is a no-op — an index past the end would otherwise punch a
+ *  sparse hole into the list. */
+export function replacePattern(patterns: string[], index: number, value: string): PatternResult {
+  if (index < 0 || index >= patterns.length) {
+    return { ok: true, patterns };
+  }
+  const text = value.trim();
+  const rest = patterns.filter((_, i) => i !== index);
+  if (text === '') {
+    return { ok: true, patterns: rest };
+  }
+  if (rest.includes(text)) {
+    return { ok: false, reason: 'duplicate' };
+  }
+  const next = [...patterns];
+  next[index] = text;
+  return { ok: true, patterns: next };
+}
+
+/** Drops one entry BY INDEX, matching how the in-place editor addresses the
+ *  same list: removing by value deleted every twin of a repeated glob. */
+export function removePattern(patterns: string[], index: number): string[] {
+  return patterns.filter((_, i) => i !== index);
+}
+
+/** Guards the `data-pattern-field` attribute the delegated click/commit
+ *  handlers read — the only thing standing between a typo'd attribute and
+ *  indexing the draft with it. */
+export function isPatternField(v: unknown): v is 'include' | 'exclude' {
+  return v === 'include' || v === 'exclude';
+}
 
 /** Click-toggle transition for a per-radio info icon (design item 4):
  *  clicking the icon whose tooltip is already open closes it; clicking the

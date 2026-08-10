@@ -5,27 +5,34 @@
 import './settings.css';
 import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
 import { render as litRender } from 'lit-html';
-import type {
-  Scope,
-  SettingsRowVM,
-  SettingsState,
-  SettingsToHost,
-  HostToSettings,
+import {
+  registryFieldKey,
+  type Scope,
+  type SettingsRowVM,
+  type SettingsState,
+  type SettingsToHost,
+  type HostToSettings,
 } from '../protocol';
 import {
   addRegistryDraftValid,
   allRows,
+  appendPattern,
   chipHasComma,
   CLOSED_ADD_REGISTRY,
   consumeAwaitingConfirm,
-  draftToLocator,
-  EMPTY_REGISTRY_DRAFT,
+  DUPLICATE_PATTERN_ERROR,
+  editRegistryUI,
   isModified,
+  isPatternField,
   isValidChip,
   isValidInteger,
   joinList,
+  registrySubmitMessage,
   reloadedKeys,
+  removePattern,
+  replacePattern,
   resolveScopeSwitch,
+  revealScrollDelta,
   shouldBlockNumberWheel,
   splitList,
   toggleRegistryHelp,
@@ -99,6 +106,12 @@ function render(): void {
     return;
   }
   litRender(renderSettings(vm, addRegistry, registryError, refreshing), root);
+  // lit renders synchronously, so an open editor is measurable before paint —
+  // see sizePatternEdit, which owns the one-sizing-path invariant.
+  const editor = root.querySelector<HTMLInputElement>('.pattern-edit');
+  if (editor) {
+    sizePatternEdit(editor);
+  }
 }
 
 /** Rebuilds the last-known-good snapshot (main.ts's revert-on-rejection
@@ -178,9 +191,60 @@ function setRowError(key: string, message: string): void {
 
 // --- Registry form ---
 
+/** Brings the just-opened form fully into view, END included. The registry
+ *  table sits well down a scrollable panel, so a form appended below the last
+ *  row routinely opens off-screen and the click looks like it did nothing.
+ *
+ *  `scrollIntoView` alone is not enough: `block: 'nearest'` top-aligns an
+ *  element taller than the viewport, which is exactly the edit form with both
+ *  repeaters open — the Save button stayed below the fold. So the minimal
+ *  scroll runs first, then an explicit nudge brings the bottom edge up,
+ *  clamped so it can never push the form's own title off the top. lit renders
+ *  synchronously, so the node is measurable by the time this runs. */
+function revealRegistryForm(): void {
+  const form = root.querySelector('.add-registry-form');
+  if (!form) {
+    return;
+  }
+  form.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const rect = form.getBoundingClientRect();
+  const delta = revealScrollDelta(rect.top, rect.bottom, window.innerHeight);
+  if (delta > 0) {
+    window.scrollBy({ top: delta, behavior: 'smooth' });
+  }
+}
+
 function openAddRegistry(): void {
-  addRegistry = { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null };
+  addRegistry = { ...CLOSED_ADD_REGISTRY, open: true };
   render();
+  revealRegistryForm();
+}
+
+/** Opens the same form seeded from an existing row, named by the clicked button
+ *  rather than by the draft (whose alias field is readonly in this mode).
+ *
+ *  Refuses while a form is already open. The panel has ONE form slot — which is
+ *  why the "Add Registry…" button hides whenever it is occupied (render.ts) —
+ *  and every pencil is that same entry point: seeding the form from another row
+ *  would discard every pattern typed into the open one without a word. A row
+ *  that vanished between render and click (another scope's write reposted
+ *  state) and a legacy alias-less row (editRegistryUI refuses it) both do
+ *  nothing at all. */
+function openEditRegistry(alias: string): void {
+  if (addRegistry.open) {
+    registryError = 'Finish or cancel the open registry form first.';
+    render();
+    return;
+  }
+  const row = vm?.registries.find((r) => r.alias === alias);
+  const next = row ? editRegistryUI(row) : null;
+  if (!next) {
+    return;
+  }
+  registryError = null;
+  addRegistry = next;
+  render();
+  revealRegistryForm();
 }
 
 function closeAddRegistry(): void {
@@ -189,24 +253,128 @@ function closeAddRegistry(): void {
   render();
 }
 
+function setDraftPatterns(field: 'include' | 'exclude', patterns: string[]): void {
+  addRegistry = { ...addRegistry, draft: { ...addRegistry.draft, [field]: patterns } };
+  render();
+}
+
+/** Folds a repeater input's text into the draft list and reports which list it
+ *  touched, so the caller can put focus back there. The in-place editor and the
+ *  add box are the same control class with the same commit triggers; only an
+ *  `index` tells them apart, and editing writes back at that position so a
+ *  pattern keeps its place in a list whose order the user can see. The
+ *  trim-and-drop-empty rule itself lives with appendPattern/replacePattern.
+ *
+ *  A duplicate is REFUSED rather than dropped: the typed text stays put and the
+ *  form's error line says why, where eating it silently read as a bug. */
+function commitPattern(input: HTMLInputElement): 'include' | 'exclude' | null {
+  const field = input.dataset['patternField'];
+  // A focusout can still arrive for an input a render already removed (Escape,
+  // or the commit that input just made). Replaying it would re-apply an edit at
+  // an index the list has since shifted — deleting a neighbour, not a twin.
+  if (!isPatternField(field) || !input.isConnected) {
+    return null;
+  }
+  const index = input.dataset['index'];
+  const result =
+    index === undefined
+      ? appendPattern(addRegistry.draft[field], input.value)
+      : replacePattern(addRegistry.draft[field], Number(index), input.value);
+  if (!result.ok) {
+    addRegistry = { ...addRegistry, error: DUPLICATE_PATTERN_ERROR };
+    render();
+    return field;
+  }
+  if (index === undefined) {
+    input.value = '';
+  }
+  addRegistry = { ...addRegistry, editingPattern: null };
+  delete addRegistry.error; // an accepted pattern retires the duplicate banner
+  setDraftPatterns(field, result.patterns);
+  return field;
+}
+
+/** The trailing add box of one repeater — where focus belongs once a commit has
+ *  torn the in-place editor out of the DOM. Without it every commit path leaves
+ *  focus on `<body>`, and a keyboard user resumes from the top of the panel. */
+function focusPatternAdd(field: 'include' | 'exclude'): void {
+  root
+    .querySelector<HTMLInputElement>(
+      `.pattern-input[data-pattern-field="${field}"]:not(.pattern-edit)`,
+    )
+    ?.focus();
+}
+
+/** Puts focus back on the form's title (tabindex="-1") after a rejected save.
+ *  The form was `inert` while the write was in flight, which had already thrown
+ *  focus out to `<body>`; the title is the one focusable anchor above the error
+ *  the user now has to read. */
+function focusRegistryForm(): void {
+  root.querySelector<HTMLElement>('.add-registry-form .form-title')?.focus();
+}
+
+/** Widths the in-place editor to its own text — the ONLY place that does.
+ *  Called from render() when one is open and on every keystroke, so the box
+ *  tracks the text and the chips after it flow rather than jump. `ch` is exact
+ *  per glyph in the monospace face the editor renders in. */
+function sizePatternEdit(input: HTMLInputElement): void {
+  input.style.width = `${Math.max(input.value.length, 1)}ch`;
+}
+
+/** Opens one chip as a text box. The previous edit commits first, so clicking
+ *  straight from one chip to another never silently discards what was typed. */
+function openPatternEdit(field: 'include' | 'exclude', index: number): void {
+  const pending = root.querySelector<HTMLInputElement>('.pattern-edit');
+  if (pending) {
+    commitPattern(pending);
+  }
+  addRegistry = { ...addRegistry, editingPattern: { field, index } };
+  render();
+  const input = root.querySelector<HTMLInputElement>('.pattern-edit');
+  input?.focus();
+  input?.select();
+}
+
+/** Re-reads an edit's `previous` off the row as the VM holds it NOW. The
+ *  snapshot taken when the form opened goes stale the moment an unrelated
+ *  repost replaces `vm` — an external grimoire.toml edit, say — and the host
+ *  omits `--clear-include`/`--clear-exclude` whenever `previous` says the list
+ *  was already empty, so a stale one lets patterns added behind the form
+ *  survive a save that showed an empty list. Every other field is
+ *  last-write-wins; this makes the clear-to-empty case match. Falls back to the
+ *  snapshot when the row is gone, and produces identical argv whenever nothing
+ *  changed externally. */
+function withLivePrevious(ui: AddRegistryUI): AddRegistryUI {
+  const { mode } = ui;
+  if (mode.kind !== 'edit') {
+    return ui;
+  }
+  const row = vm?.registries.find((r) => r.alias === mode.alias);
+  if (!row) {
+    return ui;
+  }
+  return {
+    ...ui,
+    mode: {
+      ...mode,
+      previous: { include: row.include, exclude: row.exclude, default: row.default },
+    },
+  };
+}
+
 function submitAddRegistry(): void {
-  const draft = addRegistry.draft;
   // In-flight guard: without it, a rapid resubmit (e.g. editing the alias and
   // clicking again before the host replies) overwrites `pendingRegistryAlias`
   // with the second alias, so the FIRST submission's eventual writeError no
   // longer matches anything in handleWriteError and is silently dropped.
-  if (!addRegistryDraftValid(draft) || pendingRegistryAlias !== null) {
+  if (!addRegistryDraftValid(addRegistry.draft) || pendingRegistryAlias !== null) {
     return;
   }
-  const alias = draft.alias.trim();
-  const locator = draftToLocator(draft);
-  pendingRegistryAlias = alias;
-  addRegistry = {
-    open: addRegistry.open,
-    draft: addRegistry.draft,
-    helpOpen: addRegistry.helpOpen,
-  };
-  post({ type: 'addRegistry', scope: currentScope, alias, locator, default: draft.default });
+  const message = registrySubmitMessage(currentScope, withLivePrevious(addRegistry));
+  pendingRegistryAlias = message.alias;
+  addRegistry = { ...addRegistry, saving: true, editingPattern: null };
+  delete addRegistry.error; // a fresh attempt starts without the last one's banner
+  post(message);
   render();
 }
 
@@ -277,8 +445,9 @@ function handleWriteError(scope: Scope, key: string, message: string): void {
   }
   if (pendingRegistryAlias === key) {
     pendingRegistryAlias = null;
-    addRegistry = { ...addRegistry, error: message };
+    addRegistry = { ...addRegistry, error: message, saving: false };
     render();
+    focusRegistryForm();
     return;
   }
   // Neither a config row nor the pending add-registry submission matched —
@@ -385,9 +554,34 @@ root.addEventListener('click', (event) => {
       }
       break;
     }
+    case 'remove-pattern': {
+      const field = target.dataset['patternField'];
+      const index = target.dataset['index'];
+      if (isPatternField(field) && index !== undefined) {
+        // By position, like the in-place editor: removing by value deleted
+        // every twin of a repeated glob.
+        setDraftPatterns(field, removePattern(addRegistry.draft[field], Number(index)));
+      }
+      break;
+    }
+    case 'edit-pattern': {
+      const field = target.dataset['patternField'];
+      const index = target.dataset['index'];
+      if (isPatternField(field) && index !== undefined) {
+        openPatternEdit(field, Number(index));
+      }
+      break;
+    }
     case 'open-add-registry':
       openAddRegistry();
       break;
+    case 'edit-registry': {
+      const alias = target.dataset['alias'];
+      if (alias) {
+        openEditRegistry(alias);
+      }
+      break;
+    }
     case 'cancel-add-registry':
       closeAddRegistry();
       break;
@@ -407,6 +601,25 @@ root.addEventListener('click', (event) => {
       if (alias) {
         registryError = null;
         post({ type: 'useRegistry', scope: currentScope, alias });
+        render();
+      }
+      break;
+    }
+    case 'unset-default-registry': {
+      const alias = target.dataset['alias'];
+      if (alias) {
+        registryError = null;
+        // Demotion goes through the dotted key — grim.ts's editRegistrySteps
+        // owns why. Reusing `setValue` needs no new host case, and since
+        // `registry.<alias>.default` is not one of the panel's config rows a
+        // rejection falls through handleWriteError to the registry banner,
+        // where a row-level action belongs.
+        post({
+          type: 'setValue',
+          scope: currentScope,
+          key: registryFieldKey(alias, 'default'),
+          value: 'false',
+        });
         render();
       }
       break;
@@ -463,6 +676,12 @@ document.addEventListener('click', (event) => {
 // delegated listener is all it needs, no separate render target.
 root.addEventListener('input', (event) => {
   const target = event.target as HTMLInputElement;
+  if (target.classList.contains('pattern-edit')) {
+    // Deliberately not `render()`: that would rebuild the input and drop the
+    // caret on every keystroke.
+    sizePatternEdit(target);
+    return;
+  }
   const field = target.dataset['field'];
   if (field === 'alias' || field === 'locator') {
     addRegistry = { ...addRegistry, draft: { ...addRegistry.draft, [field]: target.value } };
@@ -593,6 +812,17 @@ root.addEventListener(
       flushChipAdd(target);
       return;
     }
+    if (target.classList.contains('pattern-input')) {
+      // Only the in-place editor is torn out by the commit's re-render — the
+      // add box survives and keeps focus on its own. And only a focus heading
+      // NOWHERE needs rescuing: a Tab or a click already picked its target.
+      const wasEditor = target.classList.contains('pattern-edit');
+      const field = commitPattern(target);
+      if (field && wasEditor && event.relatedTarget === null) {
+        focusPatternAdd(field);
+      }
+      return;
+    }
     const key = target.dataset['key'];
     if (key && (target.classList.contains('settings-input') || target.type === 'number')) {
       flushCommit(key, target.value);
@@ -602,13 +832,43 @@ root.addEventListener(
 );
 
 root.addEventListener('keydown', (event) => {
+  const target = event.target as HTMLElement;
+  // Escape abandons an in-place pattern edit, leaving the stored pattern as it
+  // was. Only the in-place editor has something to abandon — the add box's
+  // scratch text is not yet part of the draft.
+  if (
+    event.key === 'Escape' &&
+    target instanceof HTMLInputElement &&
+    target.classList.contains('pattern-edit')
+  ) {
+    event.preventDefault();
+    const field = target.dataset['patternField'];
+    addRegistry = { ...addRegistry, editingPattern: null };
+    render();
+    if (isPatternField(field)) {
+      focusPatternAdd(field);
+    }
+    return;
+  }
   if (event.key !== 'Enter') {
     return;
   }
-  const target = event.target as HTMLElement;
   if (target instanceof HTMLInputElement && target.classList.contains('chip-input')) {
     event.preventDefault();
     flushChipAdd(target);
+    return;
+  }
+  // Enter inside the add-registry form would otherwise fall through to nothing
+  // — the pattern repeater is the one field where it has to mean "add this
+  // one", not "submit the form".
+  if (target instanceof HTMLInputElement && target.classList.contains('pattern-input')) {
+    event.preventDefault();
+    const field = commitPattern(target);
+    if (field) {
+      // Refocusing the add box is what keeps an in-place edit from dropping
+      // focus to <body>; committing from the add box refocuses itself.
+      focusPatternAdd(field);
+    }
   }
 });
 

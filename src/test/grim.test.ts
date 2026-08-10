@@ -15,7 +15,9 @@ import {
   isRetryable,
   parseReport,
   positionalOf,
+  editRegistrySteps,
   registryAddArgs,
+  registrySetArgs,
   registryFieldsArgs,
   registryListArgs,
   registryRmArgs,
@@ -187,6 +189,7 @@ suite('grim arg builders', () => {
     assert.deepStrictEqual(configUnsetArgs('options.tui.default_view'), [
       'config',
       'unset',
+      '--',
       'options.tui.default_view',
     ]);
   });
@@ -263,6 +266,50 @@ suite('grim arg builders', () => {
     );
   });
 
+  test('registryAddArgs repeats a flag per browse-filter pattern, never comma-joining', () => {
+    assert.deepStrictEqual(
+      registryAddArgs(
+        'acme',
+        { index: 'https://index.acme.internal' },
+        {
+          // A brace-alternation pattern is exactly what comma-joining would
+          // destroy: grim splits neither flag, so this must survive as ONE arg.
+          include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+          exclude: ['acme/platform/legacy/**'],
+          default: true,
+        },
+      ),
+      [
+        'config',
+        'registry',
+        'add',
+        '--index=https://index.acme.internal',
+        '--include=acme/platform/**',
+        '--include=acme/{tools,libs}/**',
+        '--exclude=acme/platform/legacy/**',
+        '--default',
+        '--',
+        'acme',
+      ],
+    );
+  });
+
+  test('registryAddArgs emits no filter flag for empty lists (argv unchanged from before the feature)', () => {
+    assert.deepStrictEqual(
+      registryAddArgs('acme', { oci: 'ghcr.io/acme' }, { include: [], exclude: [] }),
+      registryAddArgs('acme', { oci: 'ghcr.io/acme' }),
+    );
+  });
+
+  test('registryAddArgs keeps a leading-hyphen glob a flag VALUE, not a flag', () => {
+    // `--` cannot protect these — they are flag values, and everything after
+    // the separator parses positionally. `=` is what delimits them.
+    assert.deepStrictEqual(
+      registryAddArgs('acme', { oci: 'ghcr.io/acme' }, { include: ['--global'] }),
+      ['config', 'registry', 'add', '--oci=ghcr.io/acme', '--include=--global', '--', 'acme'],
+    );
+  });
+
   test('registryAddArgs forces a leading-hyphen alias positional and protects the locator via --flag=value', () => {
     assert.deepStrictEqual(registryAddArgs('-x', { oci: '--not-a-flag' }), [
       'config',
@@ -272,6 +319,204 @@ suite('grim arg builders', () => {
       '--',
       '-x',
     ]);
+  });
+
+  test('registrySetArgs mirrors registryAddArgs flag for flag', () => {
+    assert.deepStrictEqual(
+      registrySetArgs(
+        'acme',
+        { index: 'https://index.acme.internal' },
+        {
+          include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+          exclude: ['acme/platform/legacy/**'],
+          default: true,
+        },
+      ),
+      [
+        'config',
+        'registry',
+        'set',
+        '--index=https://index.acme.internal',
+        '--include=acme/platform/**',
+        '--include=acme/{tools,libs}/**',
+        '--exclude=acme/platform/legacy/**',
+        '--default',
+        '--',
+        'acme',
+      ],
+    );
+  });
+
+  test('registrySetArgs spells an emptied list with --clear-*, never alongside the pattern flags', () => {
+    // A flag given zero times means "untouched", so an empty list needs the
+    // clear flag — and the two are mutually exclusive per field even when a
+    // caller names both.
+    assert.deepStrictEqual(
+      registrySetArgs(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { include: ['ignored/**'], clearInclude: true, exclude: ['b/**'] },
+      ),
+      [
+        'config',
+        'registry',
+        'set',
+        '--oci=ghcr.io/acme',
+        '--clear-include',
+        '--exclude=b/**',
+        '--',
+        'acme',
+      ],
+    );
+  });
+
+  test('registrySetArgs keeps a leading-hyphen glob a flag VALUE, not a flag', () => {
+    assert.deepStrictEqual(registrySetArgs('-x', { oci: '--not-a-flag' }, { exclude: ['-y'] }), [
+      'config',
+      'registry',
+      'set',
+      '--oci=--not-a-flag',
+      '--exclude=-y',
+      '--',
+      '-x',
+    ]);
+  });
+
+  test('editRegistrySteps is a single set when both lists are non-empty and default is on', () => {
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { default: true, include: ['a/**'], exclude: ['b/**'] },
+        { default: true, include: ['old/**'], exclude: ['old/**'] },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--oci=ghcr.io/acme',
+          '--include=a/**',
+          '--exclude=b/**',
+          '--default',
+          '--',
+          'acme',
+        ],
+      ],
+    );
+  });
+
+  test('editRegistrySteps clears an emptied list on the same set, per side', () => {
+    // Emptying one side rides on the single `registry set` as a clear flag and
+    // leaves the other side's patterns untouched.
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { default: true, include: [], exclude: ['b/**'] },
+        { default: true, include: ['was/**'], exclude: ['b/**'] },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--oci=ghcr.io/acme',
+          '--clear-include',
+          '--exclude=b/**',
+          '--default',
+          '--',
+          'acme',
+        ],
+      ],
+    );
+  });
+
+  test('editRegistrySteps demotes a cleared default through config set false', () => {
+    // `--default` only ever promotes (it clears every OTHER entry's flag, like
+    // `registry use`), so unchecking the box cannot ride on the set.
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { default: false, include: ['a/**'], exclude: ['b/**'] },
+        { default: true, include: ['a/**'], exclude: ['b/**'] },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--oci=ghcr.io/acme',
+          '--include=a/**',
+          '--exclude=b/**',
+          '--',
+          'acme',
+        ],
+        ['config', 'set', '--', 'registry.acme.default', 'false'],
+      ],
+    );
+  });
+
+  test('editRegistrySteps promotes to default on the set itself, with no follow-up', () => {
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { default: true, include: ['a/**'], exclude: [] },
+        { default: false, include: ['a/**'], exclude: [] },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--oci=ghcr.io/acme',
+          '--include=a/**',
+          '--default',
+          '--',
+          'acme',
+        ],
+      ],
+    );
+  });
+
+  test('editRegistrySteps emits nothing subtractive when nothing was there to subtract', () => {
+    // The ordinary save: a registry that is not the default, with a list that
+    // was already empty, is ONE process spawn and carries no clear flag.
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { oci: 'ghcr.io/acme' },
+        { default: false, include: ['a/**'], exclude: [] },
+        { default: false, include: [], exclude: [] },
+      ),
+      [['config', 'registry', 'set', '--oci=ghcr.io/acme', '--include=a/**', '--', 'acme']],
+    );
+  });
+
+  test('editRegistrySteps clearing everything is one set with both clear flags, then a demotion', () => {
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'acme',
+        { index: 'https://index.acme.internal' },
+        { default: false, include: [], exclude: [] },
+        { default: true, include: ['a/**'], exclude: ['b/**'] },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--index=https://index.acme.internal',
+          '--clear-include',
+          '--clear-exclude',
+          '--',
+          'acme',
+        ],
+        ['config', 'set', '--', 'registry.acme.default', 'false'],
+      ],
+    );
   });
 });
 
@@ -566,6 +811,14 @@ suite('grim report parsing', () => {
     assert.ok(registryAdded.ok);
     assert.strictEqual(registryAdded.value.action, 'registry-added');
     assert.strictEqual(registryAdded.value.scope, 'global');
+
+    const registrySet = parseReport<ConfigWriteResult>(
+      '{"action":"registry-set","key":"registry.acme","value":"ghcr.io/acme","scope":"global"}',
+      0,
+      '',
+    );
+    assert.ok(registrySet.ok);
+    assert.strictEqual(registrySet.value.action, 'registry-set');
   });
 
   test('ConfigWriteResult carries dry_run verbatim: true for --dry-run, false for a real write', () => {

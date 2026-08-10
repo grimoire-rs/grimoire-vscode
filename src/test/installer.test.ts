@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   MINIMUM_GRIM_VERSION,
+  REGISTRY_EDIT_GRIM_VERSION,
   RELEASE_PAGE,
   SKIP_VERSION,
   UPDATE_GRIM,
@@ -17,6 +18,7 @@ import {
   parseSha256,
   selectAsset,
   sha256Hex,
+  supportsRegistryEditing,
   targetTriple,
   tooOldMessage,
   updateDecision,
@@ -184,6 +186,26 @@ suite('installer update check', () => {
       grimTooOld('0.10.0'),
       true,
       'MINIMUM_GRIM_VERSION must move past 0.10.0 for the forceable/anchor-escape contract',
+    );
+  });
+
+  test('supportsRegistryEditing gates on the release that adds the two flags', () => {
+    assert.strictEqual(supportsRegistryEditing(REGISTRY_EDIT_GRIM_VERSION), true);
+    assert.strictEqual(supportsRegistryEditing('0.12.1'), false, 'the release before it');
+    assert.strictEqual(supportsRegistryEditing('0.13.1'), true);
+    assert.strictEqual(supportsRegistryEditing('1.0.0'), true);
+    assert.strictEqual(supportsRegistryEditing(''), false);
+    assert.strictEqual(supportsRegistryEditing('garbage'), false);
+  });
+
+  test('supportsRegistryEditing sits ABOVE the floor, so both answers are reachable', () => {
+    // If the floor ever reaches it, the gate is dead code and every marker
+    // naming this version is due for deletion — which compatMarkers.test.ts
+    // turns into a failing test rather than a thing someone remembers.
+    assert.strictEqual(
+      isNewerVersion(REGISTRY_EDIT_GRIM_VERSION, MINIMUM_GRIM_VERSION),
+      true,
+      'a gate at or below MINIMUM_GRIM_VERSION can never answer false',
     );
   });
 

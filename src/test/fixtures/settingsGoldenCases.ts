@@ -8,9 +8,12 @@ import {
   buildGroups,
   buildRegistryRow,
   buildSettingsRow,
+  CLOSED_ADD_REGISTRY,
+  editRegistryUI,
   EMPTY_REGISTRY_DRAFT,
   type AddRegistryUI,
 } from '../../webview/settings/model';
+import type { SettingsRegistryVM } from '../../webview/protocol';
 import type * as render from '../../webview/settings/render';
 import {
   settingsState,
@@ -91,27 +94,105 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
       }),
     ),
     buildRegistryRow(wireRegistryEntry({ alias: null, oci: 'ghcr.io/legacy-org', default: false })),
+    buildRegistryRow(
+      wireRegistryEntry({
+        alias: 'acme',
+        oci: null,
+        index: 'https://index.acme.internal',
+        include: ['acme/platform/**', 'acme/tools/**'],
+        exclude: ['acme/platform/legacy/**'],
+        default: false,
+      }),
+    ),
   ];
-  const readyState = settingsState({ groups: readyGroups, registries: readyRegistries });
+  // registryEditSupported is explicit in every case that renders an edit
+  // affordance: the fixture default is the shipping `false` (settingsVms.ts).
+  const readyState = settingsState({
+    groups: readyGroups,
+    registries: readyRegistries,
+    registryEditSupported: true,
+  });
 
   add('settings-ready-full', r.renderSettings(readyState));
   add(
     'settings-ready-empty-registries',
     r.renderSettings(settingsState({ groups: readyGroups, registries: [] })),
   );
+  // grim-polyfill<0.13.0: the SAME populated table on a grim that has no
+  // `registry set` — every row's edit button gone, and the line that says which
+  // grim brings them back. This is what most installs render today, so it is
+  // frozen rather than left to the two form-level cases. Delete with the gate.
+  add(
+    'settings-ready-registries-no-edit',
+    r.renderSettings(
+      settingsState({
+        groups: readyGroups,
+        registries: readyRegistries,
+        registryEditSupported: false,
+      }),
+    ),
+  );
   add(
     'settings-ready-add-registry-open',
-    r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
+    r.renderSettings(readyState, { ...CLOSED_ADD_REGISTRY, open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: null }),
   );
   add(
     'settings-ready-add-registry-help-open',
-    r.renderSettings(readyState, { open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: 'index' }),
+    r.renderSettings(readyState, { ...CLOSED_ADD_REGISTRY, open: true, draft: EMPTY_REGISTRY_DRAFT, helpOpen: 'index' }),
+  );
+  // grim-polyfill<0.13.0: the form with the version line in place of its
+  // pattern repeaters, which is what an older grim gets. Delete with the gate.
+  add(
+    'settings-ready-add-registry-no-filters',
+    r.renderSettings(settingsState({ groups: readyGroups, registryEditSupported: false }), {
+      ...CLOSED_ADD_REGISTRY,
+      open: true,
+      draft: EMPTY_REGISTRY_DRAFT,
+      helpOpen: null,
+    }),
+  );
+  add(
+    'settings-ready-add-registry-patterns',
+    r.renderSettings(readyState, {
+      ...CLOSED_ADD_REGISTRY,
+      open: true,
+      draft: {
+        alias: 'acme',
+        kind: 'index',
+        locator: 'https://index.acme.internal',
+        include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+        exclude: ['acme/platform/legacy/**'],
+        default: false,
+      },
+      helpOpen: null,
+    } satisfies AddRegistryUI),
+  );
+  // The same form in edit mode: readonly alias, "Edit registry" title, "Save"
+  // button, and the draft seeded from the filtered `acme` row above — the
+  // whole point being that a multi-pattern list arrives editable. Opened
+  // through the app's own opener, so the frozen markup is what a pencil click
+  // actually produces. The `??` never fires (that row has an alias); it is
+  // there because editRegistryUI answers null for a legacy row.
+  const editAcme = editRegistryUI(readyRegistries[3] as SettingsRegistryVM) ?? CLOSED_ADD_REGISTRY;
+  add('settings-ready-edit-registry-open', r.renderSettings(readyState, editAcme));
+  // Mid-save: the whole form inert, the submit a spinner, Cancel disabled.
+  add(
+    'settings-ready-edit-registry-saving',
+    r.renderSettings(readyState, { ...editAcme, saving: true } satisfies AddRegistryUI),
   );
   add(
     'settings-ready-add-registry-error',
     r.renderSettings(readyState, {
+      ...CLOSED_ADD_REGISTRY,
       open: true,
-      draft: { alias: 'ghcr', kind: 'oci', locator: 'ghcr.io/dup', default: false },
+      draft: {
+        alias: 'ghcr',
+        kind: 'oci',
+        locator: 'ghcr.io/dup',
+        include: [],
+        exclude: [],
+        default: false,
+      },
       helpOpen: null,
       error: 'Registry alias "ghcr" already exists.',
     } satisfies AddRegistryUI),

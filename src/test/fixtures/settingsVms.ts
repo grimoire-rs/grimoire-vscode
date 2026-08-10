@@ -183,6 +183,8 @@ export function settingsSource(overrides: Partial<SettingsSource> = {}): Setting
       }),
     ],
     registryFields: [],
+    registryEditSupported: true,
+    grimVersion: '0.13.0',
     ...overrides,
   };
 }
@@ -198,6 +200,14 @@ export function settingsState(overrides: Partial<SettingsState> = {}): SettingsS
     groups: [],
     registries: [],
     registryFields: [],
+    // grim-polyfill<0.13.0: the SHIPPING default. Registry editing is opt-in on
+    // the resolved grim's version, so a case that does not say otherwise must
+    // render what the majority of installs actually see today; a `true` default
+    // quietly tested a configuration no user had.
+    registryEditSupported: false,
+    // Paired with the flag above: the gate hints name what is running beside
+    // what is required, so the shipping default has to carry a version too.
+    grimVersion: '0.12.1',
     ...overrides,
   };
 }

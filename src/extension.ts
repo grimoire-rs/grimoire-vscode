@@ -14,12 +14,14 @@ import {
   type UpdateEntry,
 } from './grim';
 import {
+  REGISTRY_EDIT_GRIM_VERSION,
   RELEASE_PAGE,
   SKIP_VERSION,
   UPDATE_GRIM,
   VIEW_RELEASE,
   fetchLatestVersion,
   installGrim,
+  supportsRegistryEditing,
   updateDecision,
 } from './installer';
 import { initNotify, notifyError, onBusyChange, runWithStatusProgress } from './notify';
@@ -384,8 +386,28 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   // and alias — the link alone never authorizes a write.
   const handleUri = async (uri: vscode.Uri): Promise<void> => {
     if (uri.path === '/add-registry') {
-      const link = parseAddRegistryLink(uri.query);
+      // A rejection is LOG-ONLY: a hostile page must learn nothing from the
+      // response, but silence alone leaves a legitimate over-budget link
+      // indistinguishable from a dead click.
+      const link = parseAddRegistryLink(uri.query, (reason) =>
+        output.appendLine(`add-registry link ignored: ${reason}`),
+      );
       if (!link) {
+        return;
+      }
+      // grim-polyfill<0.13.0: an older grim rejects --include/--exclude as
+      // unknown arguments (exit 64), so a filtered link would confirm the write
+      // in a modal and only then fail with raw clap stderr. Refuse first. An
+      // unknown version does not refuse ("update grim" would be a guess), and a
+      // pattern-free link is unaffected on any grim.
+      const snapshot = scopes.cachedSnapshot();
+      const version = snapshot?.global?.context.version ?? snapshot?.project?.context.version;
+      const filtered = link.include.length > 0 || link.exclude.length > 0;
+      if (filtered && version !== undefined && !supportsRegistryEditing(version)) {
+        notifyError(
+          `Grimoire: browse filters need grim ${REGISTRY_EDIT_GRIM_VERSION} or newer — ` +
+            `update grim (${RELEASE_PAGE}).`,
+        );
         return;
       }
       const { scope, detail } = addRegistryPrompt(link, scopes.projectFolder() !== undefined);
@@ -397,7 +419,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       if (choice !== 'Add Registry') {
         return;
       }
-      await settings.addRegistry(link.alias, { index: link.index }, scope);
+      await settings.addRegistry(link.alias, { index: link.index }, scope, {
+        include: link.include,
+        exclude: link.exclude,
+      });
       return;
     }
     if (uri.path !== '/open') {

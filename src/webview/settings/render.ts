@@ -29,6 +29,25 @@ import {
 // Full documentation site (../grimoire/README.md's `[docs]: https://grimoire.rs/`).
 const DOCS_URL = 'https://grimoire.rs/';
 
+/** grim-polyfill<0.13.0: first grim accepting `config registry add
+ *  --include/--exclude` and the `config registry set` verb. Copied from
+ *  installer.ts's REGISTRY_EDIT_GRIM_VERSION, not imported — that module is
+ *  host-only and this one is bundled into the webview. */
+const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
+
+/** The visible half of the version gate. A control that is merely absent reads
+ *  as a feature this panel never had; naming the version it needs — and the one
+ *  actually running, when that is known — is what turns it into something the
+ *  user can act on. The running clause is omitted rather than guessed: a phase
+ *  that never resolved a version would otherwise print "(running null)". */
+const FILTER_GATE_LEAD = 'Browse filters need';
+const EDIT_GATE_LEAD = 'Editing a registry needs';
+
+function gateHint(lead: string, grimVersion: string | null): TemplateResult {
+  const running = grimVersion === null ? '' : ` (running ${grimVersion})`;
+  return html`<div class="row-hint">${lead} grim ${REGISTRY_EDIT_GRIM_VERSION} or newer${running}.</div>`;
+}
+
 const md = createMarkdown();
 
 /** Row description rendered as inline markdown, same html:false + unsafeHTML
@@ -179,41 +198,91 @@ function renderGroup(group: SettingsGroupVM): TemplateResult {
 
 // --- Registries ---
 
-function renderRegistryRow(r: SettingsRegistryVM): TemplateResult {
+function renderRegistryRow(r: SettingsRegistryVM, editSupported: boolean): TemplateResult {
   const aliasCell = r.legacy
-    ? html`<span class="registry-alias legacy-alias">(no alias)</span>`
-    : html`<span class="registry-alias">${r.alias}</span>`;
+    ? html`<span class="registry-alias legacy-alias">(no alias)${renderFilterMark(r)}</span>`
+    : html`<span class="registry-alias">${r.alias}${renderFilterMark(r)}</span>`;
   // Default star: gold when set (design "#e2c08d" — mapped here to
   // --vscode-gitDecoration-modifiedResourceForeground, the closest existing
   // gold-ish token in the theme's default palette; no prior binding for this
   // hex exists elsewhere in the codebase, so this is the one place it's picked).
+  // Both states are the same control. Promoting is `registry use`, which
+  // clears the prior default in one atomic write; demoting has no verb of its
+  // own — `--default` only ever sets — so it goes through the dotted key, the
+  // same write the edit form's unchecked box makes.
   const defaultCell = r.default
-    ? html`<span class="codicon codicon-star-full registry-star" title="Default registry"></span>`
+    ? html`<button class="icon-button registry-star" data-action="unset-default-registry" data-alias="${r.alias ?? ''}" title="Clear default" ?disabled="${r.legacy}"><span class="codicon codicon-star-full"></span></button>`
     : html`<button class="icon-button registry-star-empty" data-action="use-registry" data-alias="${r.alias ?? ''}" title="Set default" ?disabled="${r.legacy}"><span class="codicon codicon-star-empty"></span></button>`;
+  // grim-polyfill<0.13.0: an older grim rejects `config registry set` as an
+  // unknown subcommand (clap, exit 64), so the button is hidden and
+  // renderRegistries says why once, under the table. A legacy row stays
+  // uneditable at every version — grim addresses entries by alias, and this one
+  // has none. Delete the `editSupported` half of the condition with the gate.
+  const editButton =
+    r.legacy || !editSupported
+      ? nothing
+      : html`<button class="icon-button" data-action="edit-registry" data-alias="${r.alias ?? ''}" title="Edit"><span class="codicon codicon-edit"></span></button>`;
+  // One grid child, whatever it holds: `.registry-row` is a five-column grid,
+  // so an unwrapped pair of buttons would claim two columns and shift the row.
   const actionCell = r.legacy
     ? html`<span class="codicon codicon-lock registry-lock" title="Legacy entry — read-only"></span>`
-    : html`<button class="icon-button" data-action="remove-registry" data-alias="${r.alias ?? ''}" title="Remove"><span class="codicon codicon-trash"></span></button>`;
+    : html`<span class="registry-actions">${editButton}<button class="icon-button" data-action="remove-registry" data-alias="${r.alias ?? ''}" title="Remove"><span class="codicon codicon-trash"></span></button></span>`;
   const footnote = r.legacy
     ? html`<div class="registry-footnote">Legacy entry has no alias — add one by editing grimoire.toml directly.</div>`
     : nothing;
+  // Filters are read-only in the table (renderFilterMark, in the alias cell).
+  // Editing them happens in the form the pencil opens, never inline: `config
+  // set` REPLACES the whole list and reports what it discarded to its log
+  // rather than the JSON envelope, so a per-pattern control over that path
+  // could save one and lose two undetectably. The form sends `registry set`
+  // with one repeated flag per pattern, which writes the list whole.
   return html`
-<div class="registry-row${r.legacy ? ' legacy' : ''}">
-  ${aliasCell}
-  <span class="registry-type mono">${r.type.toUpperCase()}</span>
-  <span class="registry-locator mono">${r.locator}</span>
-  ${defaultCell}
-  ${actionCell}
-</div>
-${footnote}`;
+<div class="registry-entry${r.legacy ? ' legacy' : ''}">
+  <div class="registry-row">
+    ${defaultCell}
+    ${aliasCell}
+    <span class="registry-type mono">${r.type.toUpperCase()}</span>
+    <span class="registry-locator mono">${r.locator}</span>
+    ${actionCell}
+  </div>
+  ${footnote}
+</div>`;
 }
 
-function renderRegistryTable(registries: SettingsRegistryVM[]): TemplateResult {
+/** A marker beside the alias, only on an entry that actually carries filters —
+ *  the unfiltered default needs no words. Counts and patterns live in its
+ *  tooltip, listed per side, since which side a pattern is on IS its meaning. */
+function renderFilterMark(r: SettingsRegistryVM): TemplateResult | typeof nothing {
+  if (r.include.length === 0 && r.exclude.length === 0) {
+    return nothing;
+  }
+  const tooltip = [
+    r.include.length > 0 ? `Include (${r.include.length}):\n${r.include.join('\n')}` : '',
+    r.exclude.length > 0 ? `Exclude (${r.exclude.length}):\n${r.exclude.join('\n')}` : '',
+  ]
+    .filter((s) => s !== '')
+    .join('\n\n');
+  return html`<span class="codicon codicon-filter registry-filter-mark" title="${tooltip}"></span>`;
+}
+
+function renderRegistryTable(
+  registries: SettingsRegistryVM[],
+  editSupported: boolean,
+): TemplateResult {
+  // The star column leads and carries no header: "DEFAULT" is four times wider
+  // than the 20px track it would sit over, so restoring it means widening the
+  // column at LOCATOR's expense. Each star states its own action in its
+  // `title` ("Set default" / "Clear default") instead.
   return html`
 <div class="registry-table">
   <div class="registry-row registry-header">
-    <span>ALIAS</span><span>TYPE</span><span>LOCATOR</span><span>DEFAULT</span><span></span>
+    <span></span><span>ALIAS</span><span>TYPE</span><span>LOCATOR</span><span></span>
   </div>
-  ${repeat(registries, (r) => r.alias ?? r.locator, renderRegistryRow)}
+  ${repeat(
+    registries,
+    (r) => r.alias ?? r.locator,
+    (r) => renderRegistryRow(r, editSupported),
+  )}
 </div>`;
 }
 
@@ -224,14 +293,21 @@ function renderRegistries(
 ): TemplateResult {
   const body =
     state.registries.length > 0
-      ? renderRegistryTable(state.registries)
+      ? renderRegistryTable(state.registries, state.registryEditSupported)
       : html`<div class="registries-empty">No registries configured</div>`;
+  // grim-polyfill<0.13.0: said once under the table rather than per row, and
+  // only where a row would otherwise have carried an edit button — a legacy
+  // row has none at any version, so an all-legacy table is not gated at all.
+  const editGate =
+    !state.registryEditSupported && state.registries.some((r) => !r.legacy)
+      ? gateHint(EDIT_GATE_LEAD, state.grimVersion)
+      : nothing;
   const form = addRegistry.open
     ? renderAddRegistryForm(
+        addRegistry,
         state.registryFields,
-        addRegistry.draft,
-        addRegistry.helpOpen,
-        addRegistry.error,
+        state.registryEditSupported,
+        state.grimVersion,
       )
     : nothing;
   // A rejected remove/set-default click is keyed by alias (neither a config
@@ -246,7 +322,16 @@ function renderRegistries(
   <p class="registries-blurb">Registries configured in this scope. Aliases can be used in place of full references.</p>
   ${errorLine}
   ${body}
-  <button class="btn secondary" data-action="open-add-registry">Add Registry…</button>
+  ${editGate}
+  ${
+    // The form REPLACES the button rather than stacking under it: they are two
+    // states of one affordance, and an "Add Registry…" button live beneath an
+    // open Edit form offers a second, conflicting entry point into the single
+    // form slot the panel has. Cancelling or saving brings it back.
+    addRegistry.open
+      ? nothing
+      : html`<button class="btn secondary" data-action="open-add-registry">Add Registry…</button>`
+  }
   ${form}
 </div>`;
 }
@@ -312,21 +397,125 @@ function renderRegistryKindOption(
 </span>`;
 }
 
-function renderAddRegistryForm(
+/** The two glob lists' "what is this?". A native `<details>` rather than the
+ *  radios' popover: `helpOpen` names a registry KIND, so a third topic cannot
+ *  live in it, and a disclosure keeps its own state in the DOM. */
+function renderFilterHelp(): TemplateResult {
+  return html`
+<details class="filter-help">
+  <summary>How browse filters match</summary>
+  <ul class="filter-help-list">
+    <li>Patterns match the repository path with the registry host stripped — <code class="inline-code">acme/platform/**</code>, not <code class="inline-code">ghcr.io/acme/platform/**</code>.</li>
+    <li>An empty include list shows everything; an empty exclude list hides nothing.</li>
+    <li>Exclude wins — a path matched by both is hidden.</li>
+    <li>A comma is glob alternation, so <code class="inline-code">acme/{a,b}/**</code> is ONE pattern, not two.</li>
+  </ul>
+</details>`;
+}
+
+/** One repeatable glob list in the add-registry form. The chip VISUALS are the
+ *  settings-row chip editor's, but nothing else is: that editor commits a
+ *  comma-JOINED string to a single config key, and a comma is glob alternation
+ *  here. This one only edits the draft; the list ships as repeated
+ *  `--include=`/`--exclude=` flags, the sole CLI path that writes more than one
+ *  pattern.
+ *
+ *  The "enter to add" hint lives on the label row rather than the placeholder,
+ *  which clears as soon as the list has an entry — an example the user has
+ *  already followed is noise, but the key still needs naming. */
+function renderPatternField(
   fields: SettingsRegistryFieldVM[],
-  draft: AddRegistryDraft,
-  helpOpen: AddRegistryDraft['kind'] | null,
-  error?: string,
+  field: 'include' | 'exclude',
+  patterns: string[],
+  fallbackLabel: string,
+  placeholder: string,
+  editingIndex: number | null,
 ): TemplateResult {
+  return html`
+<div class="form-field">
+  <span class="form-label pattern-label">${registryFieldLabel(fields, field, fallbackLabel)}<span class="pattern-hint">enter to add</span></span>
+  <div class="chip-editor pattern-editor">
+    ${repeat(
+      patterns,
+      // Keyed by position, not by value: the editing chip's value changes as
+      // it is typed into, and a value key would tear the input down and lose
+      // focus on every keystroke.
+      (_p, i) => `${field}:${i}`,
+      (p, i) =>
+        i === editingIndex
+          ? // Width is deliberately NOT set here. main.ts measures the element
+            // after every render and on every keystroke (sizePatternEdit), and
+            // one sizing path is the point: when the template also guessed a
+            // width, the two disagreed and the editor opened far wider than
+            // the text it held, snapping right only once the first keystroke
+            // handed it to the path that measures.
+            html`<input type="text" class="pattern-input pattern-edit mono" data-pattern-field="${field}" data-index="${i}" .value="${p}" />`
+          : // Both buttons name their pattern — unlabelled, the pair announced
+            // as "acme/** button, button" — and address it by INDEX, the way
+            // model.ts's removePattern does: by value, a repeated glob loses
+            // every twin instead of the one that was clicked.
+            html`<span class="chip chip-free mono"><button class="chip-label" data-action="edit-pattern" data-pattern-field="${field}" data-index="${i}" title="Edit" aria-label="Edit ${p}">${p}</button><button class="chip-remove" data-action="remove-pattern" data-pattern-field="${field}" data-index="${i}" data-value="${p}" aria-label="Remove ${p}"><span class="codicon codicon-close"></span></button></span>`,
+    )}
+    <input type="text" class="pattern-input mono" data-pattern-field="${field}" placeholder="${patterns.length === 0 ? placeholder : ''}" aria-label="Add ${field} pattern" />
+  </div>
+</div>`;
+}
+
+/** The one registry form, in both its modes (`addRegistry.mode`). Editing
+ *  reuses it wholesale rather than growing a second form: the fields are the
+ *  same five, the validation is the same, and grim's `registry set` mirrors
+ *  `registry add` flag for flag — a separate editor would be the same markup
+ *  with a different submit action, and would drift.
+ *
+ *  Takes the whole `AddRegistryUI` rather than six splatted members: they all
+ *  arrive from one object at the call site, and two of them were adjacent
+ *  booleans no reader could tell apart at the call. */
+function renderAddRegistryForm(
+  addRegistry: AddRegistryUI,
+  fields: SettingsRegistryFieldVM[],
+  registryEditSupported: boolean,
+  grimVersion: string | null,
+): TemplateResult {
+  const { draft, helpOpen, mode, saving, editingPattern, error } = addRegistry;
+  const editing = mode.kind === 'edit';
+  const editingIndex = (field: 'include' | 'exclude'): number | null =>
+    editingPattern?.field === field ? editingPattern.index : null;
+  // role="alert": the failure arrives while focus is wherever the save left it
+  // (`inert` moved it to document.body), so the message has to announce itself
+  // rather than wait to be found.
   const errorLine = error
-    ? html`<div class="row-error"><span class="codicon codicon-error"></span>${error}</div>`
+    ? html`<div class="row-error" role="alert"><span class="codicon codicon-error"></span>${error}</div>`
+    : nothing;
+  // grim-polyfill<0.13.0: an older grim rejects the two flags as unknown (clap,
+  // exit 64), so the repeaters are replaced by the line that says which grim
+  // grows them back. Filters are optional, so the rest of the form is
+  // unaffected. Delete the gate (keep the fields) with the version constant.
+  const filterFields = registryEditSupported
+    ? html`
+  ${renderFilterHelp()}
+  ${renderPatternField(fields, 'include', draft.include, 'Include patterns', 'acme/platform/**', editingIndex('include'))}
+  ${renderPatternField(fields, 'exclude', draft.exclude, 'Exclude patterns', 'acme/platform/legacy/**', editingIndex('exclude'))}`
+    : gateHint(FILTER_GATE_LEAD, grimVersion);
+  // A registry write is several grim invocations behind a per-scope queue and a
+  // lock retry, so it is visibly slow. `inert` takes the whole subtree out of
+  // interaction in one attribute — including the repeaters' delegated handlers
+  // — and the spinner says which of "slow" and "stuck" this is.
+  const submitLabel = editing ? 'Save' : 'Add Registry';
+  // The alias is readonly while editing because grim has no rename: changing
+  // one is `rm` + `add`, a destructive round trip this form will not perform.
+  // Visible text, not the `title` it used to be — the field otherwise looks
+  // editable and swallows every keystroke. INSIDE the label, so it is part of
+  // the field's accessible name too rather than a floating sentence.
+  const aliasHint = editing
+    ? html`<div class="row-hint">grim has no rename — remove and re-add to change an alias.</div>`
     : nothing;
   return html`
-<div class="add-registry-form">
-  <div class="form-title">Add registry</div>
+<div class="add-registry-form${saving ? ' saving' : ''}" ?inert="${saving}">
+  <div class="form-title" tabindex="-1">${editing ? 'Edit registry' : 'Add registry'}</div>
   <label class="form-field">
     <span class="form-label">Alias</span>
-    <input type="text" class="settings-input form-alias${error ? ' error' : ''}" data-field="alias" value="${draft.alias}" />
+    <input type="text" class="settings-input form-alias${error ? ' error' : ''}" data-field="alias" value="${draft.alias}" ?readonly="${editing}" />
+    ${aliasHint}
   </label>
   <div class="form-field">
     <span class="form-label">Type</span>
@@ -339,11 +528,12 @@ function renderAddRegistryForm(
     <span class="form-label">Locator</span>
     <input type="text" class="settings-input form-locator" data-field="locator" placeholder="${LOCATOR_PLACEHOLDER[draft.kind]}" value="${draft.locator}" />
   </label>
+  ${filterFields}
   <label class="checkbox-label"><input type="checkbox" data-field="default" ?checked="${draft.default}" />${registryFieldLabel(fields, 'default', 'Set as default registry')}</label>
   ${errorLine}
   <div class="form-actions">
-    <button class="btn primary" data-action="submit-add-registry" ?disabled="${!addRegistryDraftValid(draft)}">Add Registry</button>
-    <button class="btn secondary" data-action="cancel-add-registry">Cancel</button>
+    <button class="btn primary" data-action="submit-add-registry" ?disabled="${saving || !addRegistryDraftValid(draft)}">${saving ? html`<span class="codicon codicon-loading codicon-modifier-spin"></span>Saving…` : submitLabel}</button>
+    <button class="btn secondary" data-action="cancel-add-registry" ?disabled="${saving}">Cancel</button>
   </div>
 </div>`;
 }

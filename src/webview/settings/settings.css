@@ -350,7 +350,8 @@ body {
   font-size: 10px;
 }
 
-.chip-input {
+.chip-input,
+.pattern-input {
   flex: 1;
   min-width: 90px;
   border: none;
@@ -360,8 +361,15 @@ body {
   font-size: 12px;
 }
 
-.chip-input::placeholder {
+.chip-input::placeholder,
+.pattern-input::placeholder {
   color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+}
+
+/* Same chip editor, in the add-registry form rather than a settings row: the
+   row variant's fixed column width would ignore the form's own layout. */
+.chip-editor.pattern-editor {
+  width: auto;
 }
 
 /* --- Buttons --- */
@@ -438,21 +446,48 @@ body {
   overflow: hidden;
 }
 
+/* The rule belongs to the ENTRY, not the row: the filter/legacy footnotes are
+   part of the same record, so a border on the row alone drew a line through
+   the middle of an entry and left the last entry's footnotes hanging below the
+   table's last rule. */
+.registry-entry {
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, #232323);
+}
+
+.registry-entry:last-child {
+  border-bottom: none;
+}
+
 .registry-row {
   display: grid;
-  grid-template-columns: 120px 64px 1fr 76px 76px;
+  /* Every column is intrinsic-free — fixed, or a fraction of the same slack.
+     That is load-bearing, not tidiness: the header and each entry are
+     SEPARATE grid containers, so a content-sized track (`auto`, `max-content`)
+     resolves per row and the columns stop lining up. LOCATOR absorbs the slack
+     and truncates — it is the one cell whose tail can be lost without losing
+     the meaning. */
+  grid-template-columns: 20px 116px 52px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 10px;
   padding: 7px 12px;
   font-size: 12px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, #232323);
 }
 
-.registry-row:last-child {
-  border-bottom: none;
+/* Edit + remove share the last column; one grid child so the column template
+   still lines the header up with every row. Pinned to the right edge, and no
+   wider than the two glyphs need. */
+.registry-actions,
+.registry-lock {
+  justify-self: end;
 }
 
-.registry-row:not(.registry-header):hover {
+.registry-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.registry-entry:hover {
   background: var(--vscode-list-hoverBackground);
 }
 
@@ -469,7 +504,7 @@ body {
   font-weight: 600;
 }
 
-.registry-row.legacy {
+.registry-entry.legacy {
   opacity: 0.55;
 }
 
@@ -484,6 +519,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Both stars sit in the same 20px cell, so neither may carry side padding. */
+.registry-star,
+.registry-star-empty {
+  padding: 0;
+  line-height: 1;
 }
 
 .registry-star {
@@ -502,9 +544,31 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+/* Indented to the ALIAS column (12px table padding + the 20px star column +
+   its 10px gap), so a footnote reads as belonging to the entry above it rather
+   than starting a new one. */
 .registry-footnote {
-  padding: 0 12px 8px;
+  padding: 0 12px 7px 42px;
   font-size: 10.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* `inert` already blocks interaction; this is the visible half of it, so a
+   slow save reads as busy rather than broken. */
+.add-registry-form.saving {
+  opacity: 0.6;
+}
+
+.add-registry-form .btn .codicon {
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+
+/* Sits inside the alias cell, so it must not push the alias text around. */
+.registry-filter-mark {
+  margin-left: 5px;
+  font-size: 11px;
+  vertical-align: -1px;
   color: var(--vscode-descriptionForeground);
 }
 
@@ -543,8 +607,62 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+/* Label left, key hint right: the hint is guidance, not a field name, so it
+   is set apart by weight and case rather than given its own row. */
+.pattern-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* 11px, matching .form-label, and no opacity: `--vscode-descriptionForeground`
+   already sits near the AA floor on the stock light theme, and dimming it
+   further put this line under it (measured ~2.5:1 on Light+). */
+.pattern-hint {
+  font-style: italic;
+  font-size: 11px;
+}
+
 .form-alias.error {
   border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
+}
+
+/* grim has no rename, so edit mode makes this field readonly — it has to LOOK
+   inert, or it takes keystrokes and drops them with no explanation. */
+.form-alias[readonly] {
+  color: var(--vscode-descriptionForeground);
+  cursor: default;
+}
+
+/* A hint that belongs to the form (the readonly alias's reason, a version
+   gate) sits in the flex column's own 12px gap, or in its label's 4px one —
+   the settings-row variant's top margin would double it. */
+.add-registry-form .row-hint {
+  margin-top: 0;
+}
+
+/* The table-level version gate, in the 14px the table already leaves below
+   itself and clear of the Add Registry button under it. */
+.registries-group > .row-hint {
+  margin: 0 0 12px;
+}
+
+/* The two glob lists' "what is this?", as a native disclosure rather than the
+   radios' popover: it needs no state to reduce and keeps its own open/closed
+   across the re-render every keystroke in this form triggers. */
+.filter-help > summary {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+}
+
+.filter-help-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--vscode-descriptionForeground);
 }
 
 .radio-row {
@@ -701,4 +819,39 @@ body {
   flex: none;
   font-size: 14px;
   color: var(--vscode-notificationsInfoIcon-foreground, var(--vscode-textLink-foreground));
+}
+
+/* A stored pattern is click-to-edit: the chip's label is the button. Styled
+   flat so it still reads as the chip's text, not as a control inside it —
+   the affordance is the cursor and the hover underline. */
+.chip-label {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: text;
+}
+
+.chip-label:hover {
+  text-decoration: underline;
+}
+
+/* The in-place editor stands in for the chip it replaced, so it wears the
+   chip's own box — same padding, radius, background, border and font size, so
+   opening one changes the text's affordance and nothing about its shape. The
+   inline `ch` width is set from the value's length (render.ts, then main.ts on
+   every keystroke); `content-box` keeps that width the TEXT's, with the chip's
+   padding around it rather than eaten out of it. `flex: none` and
+   `min-width: 0` stop the shared `.pattern-input` rule — which makes the
+   trailing ADD box greedy — from stretching this one to fill the row. */
+.pattern-edit {
+  flex: none;
+  min-width: 0;
+  box-sizing: content-box;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--vscode-toolbar-hoverBackground, #2d2d2d);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  font-size: 11.5px;
 }

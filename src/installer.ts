@@ -25,6 +25,22 @@ export const RELEASE_PAGE = 'https://github.com/grimoire-rs/grimoire/releases/la
  *  error contract offerForcedRetry depends on. */
 export const MINIMUM_GRIM_VERSION = '0.11.0';
 
+/** First grim that accepts `config registry add --include/--exclude` and the
+ *  `config registry set` verb — one release shipped both, so one constant
+ *  gates both. Above the floor, so both answers are live: see
+ *  {@link supportsRegistryEditing}. */
+export const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
+
+/** True when the resolved grim can be handed browse-filter patterns and asked
+ *  to edit a registry in place. An older one rejects the two flags and the
+ *  whole `set` verb as unknown (clap, exit 64), so the panel hides the add
+ *  form's pattern repeaters and every row's edit button rather than offering
+ *  controls whose every save fails. Unparseable versions read as unsupported,
+ *  same reasoning as {@link grimTooOld}. Pure; exported for tests. */
+export function supportsRegistryEditing(version: string): boolean {
+  return !isNewerVersion(REGISTRY_EDIT_GRIM_VERSION, version);
+}
+
 /** True when a resolved grim is older than {@link MINIMUM_GRIM_VERSION}.
  *  Unparseable versions compare as 0.0.0 and therefore read as too old — a grim
  *  that can't state its version can't be trusted to speak the current contract.

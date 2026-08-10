@@ -681,10 +681,14 @@ export function isValidRepo(repo: string): boolean {
 // query as hostile — the host still confirms modally before writing.
 
 /** A validated add-registry link. `index` is the normalized URL, which is both
- *  what the modal shows and what is written — never the raw query value. */
+ *  what the modal shows and what is written — never the raw query value.
+ *  `include`/`exclude` are browse-filter globs, `[]` when the link carries
+ *  none. */
 export interface AddRegistryLink {
   alias: string;
   index: string;
+  include: string[];
+  exclude: string[];
 }
 
 /** Alias charset: TOML bare-key safe (a `.` would split the key path, quotes
@@ -692,9 +696,62 @@ export interface AddRegistryLink {
  *  Rejected outright rather than escaped — nothing legitimate needs the rest. */
 const REGISTRY_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 
+/** The whole charset a browse-filter pattern may use: printable ASCII, space
+ *  excluded. Not a glob-syntax rule — grim owns that, and rejects an
+ *  uncompilable pattern with exit 65. This is about the CONFIRMATION: the modal
+ *  authorizes the write and renders each pattern as a plain line, so a `\n` or
+ *  U+2028 forges an extra "Index:" line, a bidi override reverses one, a run of
+ *  spaces forges one without a break, and a zero-width character hides part of
+ *  what is being asked for. An ALLOWLIST, because enumerating those accepts
+ *  every code point nobody thought of; OCI repository paths and globset
+ *  metacharacters (`* ? [ ] { }`) are ASCII by specification, so nothing
+ *  legitimate is lost. `index` needs no equivalent — `URL.href` percent-encodes
+ *  everything outside this range already. */
+const FILTER_PATTERN_CHARS = /^[\x21-\x7e]+$/;
+
+/** Caps on a link's pattern lists. Grim itself caps neither (it compiles each
+ *  GlobSet once per registry at config load, so count costs it nothing) — these
+ *  exist because the modal has to render every pattern legibly, and
+ *  showWarningMessage's detail neither scrolls nor documents a limit. Violating
+ *  either rejects the whole link rather than truncating: a confirmation that
+ *  shows fewer patterns than it writes is worse than no link at all. */
+const MAX_FILTER_PATTERNS = 10;
+const MAX_FILTER_PATTERN_LENGTH = 200;
+
+/** Reads one repeated query parameter as a pattern list, or null when any
+ *  entry — or the list itself — is outside what the modal can honestly show.
+ *  An empty or blank entry fails {@link FILTER_PATTERN_CHARS} like any other. */
+function parseFilterPatterns(
+  params: URLSearchParams,
+  key: string,
+  onReject: (reason: string) => void,
+): string[] | null {
+  const patterns = params.getAll(key);
+  if (patterns.length > MAX_FILTER_PATTERNS) {
+    onReject(`more than ${MAX_FILTER_PATTERNS} ${key} patterns`);
+    return null;
+  }
+  for (const pattern of patterns) {
+    if (pattern.length > MAX_FILTER_PATTERN_LENGTH) {
+      onReject(`${key} pattern longer than ${MAX_FILTER_PATTERN_LENGTH} characters`);
+      return null;
+    }
+    if (!FILTER_PATTERN_CHARS.test(pattern)) {
+      onReject(`${key} pattern outside printable ASCII`);
+      return null;
+    }
+  }
+  return patterns;
+}
+
 /**
- * Reads `?index=<url>&alias=<name>` out of an /add-registry query string, or
- * null when it is anything grim should not be handed.
+ * Reads `?index=<url>&alias=<name>&include=<p>&exclude=<p>` out of an
+ * /add-registry query string, or null when it is anything grim should not be
+ * handed.
+ *
+ * `include`/`exclude` repeat once per pattern and are NEVER comma-separated:
+ * a comma is glob alternation syntax, so `acme/{platform,tools}/**` is one
+ * pattern, and grim's own flags do not split either.
  *
  * `https:` only: an index locator is fetched with whatever credentials the
  * user configures for it, so a link that downgrades to plain http is refused
@@ -705,30 +762,75 @@ const REGISTRY_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
  * strips tabs and newlines the query can legally carry, so normalizing here is
  * what guarantees the string in the confirmation modal is byte-for-byte the
  * string that reaches the config file.
+ *
+ * `onReject` names which rule refused the link, for the caller's log — a
+ * rejected link is otherwise indistinguishable from a dead click. It quotes NO
+ * query value: the log must not become a second surface a page can forge lines
+ * in, and nothing here is ever shown to the user.
  */
-export function parseAddRegistryLink(query: string): AddRegistryLink | null {
+export function parseAddRegistryLink(
+  query: string,
+  onReject: (reason: string) => void = () => {},
+): AddRegistryLink | null {
   const params = new URLSearchParams(query);
   const alias = params.get('alias') ?? '';
   const index = params.get('index') ?? '';
-  if (!REGISTRY_ALIAS.test(alias) || index.length > 2048) {
+  if (!REGISTRY_ALIAS.test(alias)) {
+    onReject('alias is not a bare, flag-safe identifier');
     return null;
   }
-  let url: URL;
-  try {
-    url = new URL(index);
-  } catch {
+  let url: URL | undefined;
+  if (index.length <= 2048) {
+    try {
+      url = new URL(index);
+    } catch {
+      url = undefined;
+    }
+  }
+  if (!url || url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+    onReject('index is not a plain https URL under 2048 characters');
     return null;
   }
-  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') {
+  const include = parseFilterPatterns(params, 'include', onReject);
+  if (include === null) {
     return null;
   }
-  return { alias, index: url.href };
+  const exclude = parseFilterPatterns(params, 'exclude', onReject);
+  if (exclude === null) {
+    return null;
+  }
+  return { alias, index: url.href, include, exclude };
+}
+
+/** One "Include: …" / "Exclude: …" clause, continuation lines hanging under
+ *  the label. Empty lists produce nothing at all rather than "Include: none" —
+ *  same "empty panels are omitted" rule the panels follow. */
+function patternClause(label: string, patterns: string[]): string {
+  if (patterns.length === 0) {
+    return '';
+  }
+  const indent = ' '.repeat(label.length + 2);
+  return `\n${label}: ${patterns.join(`\n${indent}`)}`;
 }
 
 /** Where an add-registry link writes, plus the modal text that says so. The
  *  Settings UX defaults to project scope; with no folder open there is no
  *  project config to write, so it falls back to global — named in the modal
- *  rather than done silently, since global is a machine-wide change. */
+ *  rather than done silently, since global is a machine-wide change.
+ *
+ *  Every pattern is listed in full: this modal IS the authorization, so it
+ *  must show exactly what reaches grimoire.toml — the same reason the index is
+ *  the normalized URL. parseAddRegistryLink has already rejected any link whose
+ *  lists are too long or carry a character that could forge a line here. The
+ *  clause about what a filter does not do sits with the trust sentence, because
+ *  "excluded" reads like access control and is not: a direct reference to a
+ *  hidden package still resolves and installs.
+ *
+ *  ORDER IS PART OF THE CONTROL. The pattern block goes LAST, under the
+ *  sentence that says where this writes: `showWarningMessage`'s detail neither
+ *  scrolls nor truncates, and the caps still allow thousands of characters of
+ *  page-supplied pattern text — enough, with no special characters at all, to
+ *  push whatever follows it out of view. */
 export function addRegistryPrompt(
   link: AddRegistryLink,
   projectOpen: boolean,
@@ -738,11 +840,16 @@ export function addRegistryPrompt(
     scope === 'project'
       ? "this project's grimoire.toml"
       : 'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
+  const filters = patternClause('Include', link.include) + patternClause('Exclude', link.exclude);
+  const filterNote = filters
+    ? ' These patterns only narrow what browsing shows — they do not stop anything from being installed.'
+    : '';
   return {
     scope,
     detail:
       `A web page is asking to add an index registry.\n\nIndex: ${link.index}\nAlias: ${link.alias}\n\n` +
-      `This writes to ${where}. Only continue if you trust that page.`,
+      `This writes to ${where}. Only continue if you trust that page.${filterNote}` +
+      (filters ? `\n${filters}` : ''),
   };
 }
 

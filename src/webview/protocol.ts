@@ -352,6 +352,13 @@ export interface SettingsRegistryVM {
   type: 'oci' | 'index' | 'unknown';
   locator: string;
   default: boolean;
+  /** Browse filters, already normalized to `[]` by buildRegistryRow — the
+   *  webview never sees the wire's optionality. Display-only: nothing here
+   *  edits them, because grim's only single-key write path (`config set`)
+   *  REPLACES the whole list and reports the discarded patterns to its log
+   *  rather than the JSON envelope. */
+  include: string[];
+  exclude: string[];
   /** alias === null: a legacy pre-alias row — read-only (no remove action). */
   legacy: boolean;
 }
@@ -388,6 +395,19 @@ export interface SettingsState {
    *  regardless of phase, so render.ts never needs to special-case its
    *  absence. */
   registryFields: SettingsRegistryFieldVM[];
+  /** The resolved grim accepts `registry add --include/--exclude` and the
+   *  `registry set` verb — one release shipped both. Gates the add-registry
+   *  form's pattern repeaters AND each row's edit button: false hides them, so
+   *  the panel never offers a control whose save is guaranteed to fail. Only
+   *  meaningful in the 'ready' phase; every other phase omits both. */
+  registryEditSupported: boolean;
+  /** The version grim reported for this scope, or null when none was resolved.
+   *  Display only, and only ever to say what is running next to what is
+   *  required — a gate hint that names the needed version but not the present
+   *  one leaves the user to go find it. Never compared in the webview: the
+   *  version→capability decision is the host's, and arrives as
+   *  {@link registryEditSupported}. */
+  grimVersion: string | null;
   error?: string;
 }
 
@@ -395,6 +415,32 @@ export interface SettingsState {
  *  this shared, dependency-free module stays independent of the host-only
  *  grim.ts at runtime (same convention as webview/model.ts's WireSearchItem). */
 export type RegistryLocator = { oci: string } | { index: string };
+
+/** grim's dotted config key for one field of one registry entry.
+ *
+ *  Lives here for the same reason {@link RegistryFieldState} does: the webview
+ *  spells this key when it demotes a default, and grim.ts spells it again when
+ *  it builds the argv, so a rename in grim's key grammar would otherwise fix
+ *  one caller and silently leave the other. `webview/protocol.ts` is the only
+ *  module both a host file and a bundled webview file may import. */
+export function registryFieldKey(alias: string, field: 'default' | 'include' | 'exclude'): string {
+  return `registry.${alias}.${field}`;
+}
+
+/** The three registry fields an edit cannot clear by omission, held both as
+ *  the desired state and as the starting point so the host can tell a real
+ *  clear from a field that was already empty or already off. The locator is
+ *  not here: it is always written, so it travels as its own field.
+ *
+ *  Declared HERE, in the module both sides already import, because it is the
+ *  one shape the webview authors, the wire carries and the host hands to
+ *  grim.ts's editRegistrySteps — a second declaration on either side can
+ *  drift from the wire without any type error to say so. */
+export interface RegistryFieldState {
+  include: string[];
+  exclude: string[];
+  default: boolean;
+}
 
 export type SettingsToHost =
   | { type: 'ready'; scope: Scope }
@@ -406,7 +452,33 @@ export type SettingsToHost =
       scope: Scope;
       alias: string;
       locator: RegistryLocator;
+      /** Browse-filter globs, one entry per pattern. The repeated
+       *  `--include`/`--exclude` flags are the only CLI path that writes a
+       *  multi-pattern list; both are `[]` for an unfiltered registry. */
+      include: string[];
+      exclude: string[];
       default: boolean;
+    }
+  | {
+      /** Edit an existing entry in place. Carries the COMPLETE desired state
+       *  of every editable field, not a delta: the webview seeded its form
+       *  from the row it is editing, so it is the side that knows both halves,
+       *  and the host stays a translator. An empty `include`/`exclude`
+       *  therefore means "clear it", which the one `config registry set` call
+       *  spells as `--clear-include`/`--clear-exclude`. Only DEMOTION needs a
+       *  second grim run (`config set registry.<alias>.default false`) —
+       *  `--default` has no negative form. */
+      type: 'editRegistry';
+      scope: Scope;
+      alias: string;
+      locator: RegistryLocator;
+      include: string[];
+      exclude: string[];
+      default: boolean;
+      /** The row's state when the form was opened. Sent so the host can leave
+       *  out the `--clear-*` flags and the demotion step when they would change
+       *  nothing, and only the webview knows what the user started from. */
+      previous: RegistryFieldState;
     }
   | { type: 'removeRegistry'; scope: Scope; alias: string }
   | { type: 'useRegistry'; scope: Scope; alias: string }
@@ -421,6 +493,16 @@ export type HostToSettings =
   | { type: 'state'; state: SettingsState }
   /** A write was rejected (grim exit 65/64, or the write-queue's lock-retry
    *  gave up): `key` is the config key OR the attempted registry alias — the
-   *  one row/form the message belongs to. The state itself is unchanged
-   *  (nothing was written), so no accompanying 'state' post follows. */
+   *  one row/form the message belongs to.
+   *
+   *  A write can be a SEQUENCE of grim runs, applied in order and ABORTED at
+   *  the first failure — so every step before the failing one is already on
+   *  disk. Only `editRegistry` is ever more than one today (grim.ts's
+   *  editRegistrySteps: the single `config registry set`, then the demotion
+   *  `config set registry.<alias>.default false` when the entry is losing the
+   *  default flag), and a failure of that second step is therefore NOT
+   *  "nothing was written" — the locator/filter half already landed. A 'state'
+   *  post accompanies such a partial write, so the webview shows the error
+   *  against the config that actually exists now rather than the one the form
+   *  asked for. A single-step write that fails does leave the scope unchanged. */
   | { type: 'writeError'; scope: Scope; key: string; message: string };

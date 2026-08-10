@@ -1,25 +1,36 @@
 import * as assert from 'assert';
+import type { WireRegistryEntry } from '../webview/settings/model';
 import {
   addRegistryDraftValid,
   allRows,
+  appendPattern,
   buildGroups,
   buildRegistryRow,
   buildSettingsRow,
   buildSettingsVM,
   chipHasComma,
+  CLOSED_ADD_REGISTRY,
   consumeAwaitingConfirm,
   defaultHint,
+  draftFromRegistry,
   draftToLocator,
+  DUPLICATE_PATTERN_ERROR,
+  editRegistryUI,
   EMPTY_REGISTRY_DRAFT,
   enumSelectedValue,
   isModified,
+  isPatternField,
   isValidChip,
   isValidInteger,
   joinList,
   LOCATOR_PLACEHOLDER,
   reloadedKeys,
+  registrySubmitMessage,
+  removePattern,
+  replacePattern,
   resolveScopeSwitch,
   resolveSettingsPhase,
+  revealScrollDelta,
   shouldBlockNumberWheel,
   splitList,
   toggleRegistryHelp,
@@ -176,6 +187,25 @@ suite('buildGroups', () => {
   test('empty input yields no groups (empty panels omitted)', () => {
     assert.deepStrictEqual(buildGroups([]), []);
   });
+
+  test('drops the per-registry rows `config list --all` emits', () => {
+    // grim lists `registry.<alias>.<field>` alongside the fixed keys. Left in,
+    // shortKey strips the prefix and every one lands in Options as an
+    // unlabelled duplicate of the Registries table — and the two `string-list`
+    // filter rows would get the COMMA-JOINING chip editor, which splits
+    // `{tools,libs}/**` into two fragments that no longer compile.
+    const groups = buildGroups([
+      wireConfigEntry({ key: 'options.expand_levels' }),
+      wireConfigEntry({ key: 'registry.acme.oci' }),
+      wireConfigEntry({ key: 'registry.acme.default' }),
+      wireConfigEntry({ key: 'registry.acme.include', type: 'string-list' }),
+      wireConfigEntry({ key: 'registry.acme.exclude', type: 'string-list' }),
+    ]);
+    assert.deepStrictEqual(
+      groups.flatMap((g) => g.rows.map((r) => r.key)),
+      ['options.expand_levels'],
+    );
+  });
 });
 
 suite('buildRegistryRow', () => {
@@ -196,6 +226,39 @@ suite('buildRegistryRow', () => {
     const row = buildRegistryRow(wireRegistryEntry({ alias: null }));
     assert.strictEqual(row.legacy, true);
     assert.strictEqual(row.alias, null);
+  });
+
+  test('browse filters carry through in declaration order', () => {
+    const row = buildRegistryRow(
+      wireRegistryEntry({ include: ['acme/platform/**', 'acme/tools/**'], exclude: ['acme/x/**'] }),
+    );
+    assert.deepStrictEqual(row.include, ['acme/platform/**', 'acme/tools/**']);
+    assert.deepStrictEqual(row.exclude, ['acme/x/**']);
+  });
+
+  test('a grim that omits the filter fields reads as unfiltered, never undefined', () => {
+    // Additive JSON fields: absent means "this binary does not report them",
+    // which is the same view as "no filter" — never a crash at the render site.
+    const row = buildRegistryRow(wireRegistryEntry());
+    assert.deepStrictEqual(row.include, []);
+    assert.deepStrictEqual(row.exclude, []);
+  });
+
+  test('a non-array filter field reads as unfiltered rather than reaching .join()', () => {
+    // A hand-edited config can make grim report a bare string here. `?? []`
+    // guarded only null/undefined, so the value flowed straight to
+    // renderFilterMark's row.include.join() and blanked the whole panel with a
+    // TypeError. Normalizing at the boundary keeps every reader honest.
+    const row = buildRegistryRow({
+      alias: 'x',
+      oci: 'ghcr.io/x',
+      index: null,
+      default: false,
+      include: 'acme/**',
+      exclude: 7,
+    } as unknown as WireRegistryEntry);
+    assert.deepStrictEqual(row.include, []);
+    assert.deepStrictEqual(row.exclude, []);
   });
 });
 
@@ -290,6 +353,33 @@ suite('resolveSettingsPhase / buildSettingsVM: empty and init states', () => {
   });
 });
 
+suite('revealScrollDelta', () => {
+  test('does not scroll a form that already fits, margin included', () => {
+    // bottom 400 + 24 margin = 424, inside an 800 viewport.
+    assert.strictEqual(revealScrollDelta(100, 400, 800), 0);
+    // Exactly flush with the margin is still no scroll.
+    assert.strictEqual(revealScrollDelta(100, 776, 800), 0);
+  });
+
+  test('scrolls by the overshoot when the form runs past the bottom', () => {
+    // bottom 900 + 24 - 800 = 124 of overshoot, and top 300 leaves room for it.
+    assert.strictEqual(revealScrollDelta(300, 900, 800), 124);
+  });
+
+  test('never scrolls further than the form top — the clamp invariant', () => {
+    // A form taller than the space below it: raw overshoot is 224, but
+    // scrolling that far would push the title 194px off the top of the
+    // viewport. Clamped to the top offset, so the title stays reachable.
+    assert.strictEqual(revealScrollDelta(30, 1000, 800), 30);
+  });
+
+  test('never scrolls up, even when the form starts above the viewport', () => {
+    // A negative top means the form already runs off the top; scrolling down
+    // by a negative amount would be a scroll UP, away from the Save row.
+    assert.strictEqual(revealScrollDelta(-50, 1000, 800), 0);
+  });
+});
+
 suite('shouldBlockNumberWheel', () => {
   test('blocks only a wheel event over a FOCUSED number input', () => {
     assert.strictEqual(shouldBlockNumberWheel(true, true), true);
@@ -316,6 +406,44 @@ suite('buildSettingsVM: registries', () => {
   test('empty registries list', () => {
     const vm = buildSettingsVM(settingsSource({ registries: [] }));
     assert.deepStrictEqual(vm.registries, []);
+  });
+});
+
+suite('draftFromRegistry', () => {
+  test('seeds every editable field from the row', () => {
+    const row = buildRegistryRow(
+      wireRegistryEntry({
+        alias: 'acme',
+        oci: null,
+        index: 'https://index.acme.internal',
+        include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+        exclude: ['acme/platform/legacy/**'],
+        default: true,
+      }),
+    );
+    assert.deepStrictEqual(draftFromRegistry(row), {
+      alias: 'acme',
+      kind: 'index',
+      locator: 'https://index.acme.internal',
+      include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+      exclude: ['acme/platform/legacy/**'],
+      default: true,
+    });
+  });
+
+  test('copies the pattern arrays rather than aliasing them', () => {
+    // A cancelled edit must not leave the table showing patterns that were
+    // never saved — the draft is mutated in place as the user types.
+    const row = buildRegistryRow(wireRegistryEntry({ include: ['a/**'] }));
+    const draft = draftFromRegistry(row);
+    draft.include.push('b/**');
+    assert.deepStrictEqual(row.include, ['a/**']);
+  });
+
+  test('an entry with neither locator lands on index, the empty draft default', () => {
+    const row = buildRegistryRow(wireRegistryEntry({ alias: 'broken', oci: null, index: null }));
+    assert.strictEqual(row.type, 'unknown');
+    assert.strictEqual(draftFromRegistry(row).kind, 'index');
   });
 });
 
@@ -552,5 +680,270 @@ suite('resolveScopeSwitch', () => {
       vm: null,
       refreshing: false,
     });
+  });
+});
+
+suite('replacePattern', () => {
+  test('writes back at the same position', () => {
+    // Position is what the user pointed at, and the list order is visible in
+    // the form — an edit must not reorder the neighbours.
+    assert.deepStrictEqual(replacePattern(['a/**', 'b/**', 'c/**'], 1, 'z/**'), {
+      ok: true,
+      patterns: ['a/**', 'z/**', 'c/**'],
+    });
+  });
+
+  test('clearing the box removes the entry', () => {
+    assert.deepStrictEqual(replacePattern(['a/**', 'b/**'], 0, '   '), {
+      ok: true,
+      patterns: ['b/**'],
+    });
+  });
+
+  // Regression: editing a chip into a duplicate used to COLLAPSE it — the
+  // chip the user was editing simply vanished, which reads as the form eating
+  // input. The list stays untouched and the caller shows the error line.
+  test('editing into an existing pattern reports duplicate instead of deleting the chip', () => {
+    assert.deepStrictEqual(replacePattern(['a/**', 'b/**'], 0, 'b/**'), {
+      ok: false,
+      reason: 'duplicate',
+    });
+  });
+
+  test('re-committing a chip unchanged is not a duplicate of itself', () => {
+    assert.deepStrictEqual(replacePattern(['a/**', 'b/**'], 0, 'a/**'), {
+      ok: true,
+      patterns: ['a/**', 'b/**'],
+    });
+  });
+
+  test('trims, and keeps a comma as glob alternation', () => {
+    assert.deepStrictEqual(replacePattern(['a/**'], 0, '  {x,y}/**  '), {
+      ok: true,
+      patterns: ['{x,y}/**'],
+    });
+  });
+
+  test('an out-of-range index is a no-op, never a sparse hole in the list', () => {
+    assert.deepStrictEqual(replacePattern(['a/**'], 4, 'z/**'), { ok: true, patterns: ['a/**'] });
+    assert.deepStrictEqual(replacePattern(['a/**'], -1, 'z/**'), { ok: true, patterns: ['a/**'] });
+    assert.deepStrictEqual(replacePattern([], 0, 'z/**'), { ok: true, patterns: [] });
+  });
+});
+
+suite('appendPattern', () => {
+  test('appends the trimmed value at the end', () => {
+    assert.deepStrictEqual(appendPattern(['a/**'], '  b/**  '), {
+      ok: true,
+      patterns: ['a/**', 'b/**'],
+    });
+  });
+
+  test('an empty or whitespace-only box adds nothing and is not an error', () => {
+    assert.deepStrictEqual(appendPattern(['a/**'], ''), { ok: true, patterns: ['a/**'] });
+    assert.deepStrictEqual(appendPattern(['a/**'], '   '), { ok: true, patterns: ['a/**'] });
+  });
+
+  // Regression: the add path used to drop a duplicate silently, so the box
+  // cleared and nothing appeared — indistinguishable from a broken button.
+  test('a duplicate is reported, not silently dropped', () => {
+    assert.deepStrictEqual(appendPattern(['a/**', 'b/**'], 'b/**'), {
+      ok: false,
+      reason: 'duplicate',
+    });
+    assert.deepStrictEqual(appendPattern(['a/**'], '  a/**  '), { ok: false, reason: 'duplicate' });
+  });
+
+  // A comma is glob ALTERNATION here, not a list separator (unlike the
+  // comma-joined string-list chip editor) — splitting it produces two
+  // fragments that no longer compile.
+  test('a comma-bearing glob survives as ONE pattern', () => {
+    assert.deepStrictEqual(appendPattern([], 'acme/{a,b}/**'), {
+      ok: true,
+      patterns: ['acme/{a,b}/**'],
+    });
+  });
+
+  test('does not mutate the input list', () => {
+    const patterns = ['a/**'];
+    appendPattern(patterns, 'b/**');
+    assert.deepStrictEqual(patterns, ['a/**']);
+  });
+
+  test('the duplicate reason carries one shared message for the form error line', () => {
+    assert.strictEqual(typeof DUPLICATE_PATTERN_ERROR, 'string');
+    assert.ok(DUPLICATE_PATTERN_ERROR.length > 0);
+  });
+});
+
+suite('removePattern', () => {
+  test('removes by index', () => {
+    assert.deepStrictEqual(removePattern(['a/**', 'b/**', 'c/**'], 1), ['a/**', 'c/**']);
+  });
+
+  // Regression: removal used to address by VALUE while the in-place editor
+  // addressed by INDEX, so removing one of two identical globs deleted BOTH.
+  test('duplicate values: only the indexed entry goes', () => {
+    assert.deepStrictEqual(removePattern(['a/**', 'a/**'], 0), ['a/**']);
+  });
+
+  test('an out-of-range index leaves the list alone', () => {
+    assert.deepStrictEqual(removePattern(['a/**'], 3), ['a/**']);
+    assert.deepStrictEqual(removePattern(['a/**'], -1), ['a/**']);
+    assert.deepStrictEqual(removePattern([], 0), []);
+  });
+
+  test('does not mutate the input list', () => {
+    const patterns = ['a/**', 'b/**'];
+    removePattern(patterns, 0);
+    assert.deepStrictEqual(patterns, ['a/**', 'b/**']);
+  });
+});
+
+suite('isPatternField', () => {
+  test('accepts exactly the two filter list names', () => {
+    assert.strictEqual(isPatternField('include'), true);
+    assert.strictEqual(isPatternField('exclude'), true);
+  });
+
+  // The value comes off a data-* attribute, so it is `string | undefined` at
+  // best and anything at all in principle — the three `as` casts it replaces
+  // would have let a typo'd attribute index the draft with garbage.
+  test('rejects everything else, including a missing attribute', () => {
+    for (const v of [undefined, null, '', 'Include', 'default', 'alias', 0, {}]) {
+      assert.strictEqual(isPatternField(v), false, String(v));
+    }
+  });
+});
+
+suite('editRegistryUI', () => {
+  const row = () =>
+    buildRegistryRow(
+      wireRegistryEntry({
+        alias: 'acme',
+        oci: null,
+        index: 'https://index.acme.internal',
+        include: ['acme/platform/**'],
+        exclude: ['acme/platform/legacy/**'],
+        default: true,
+      }),
+    );
+
+  test('opens the form in edit mode, naming the row and capturing its state', () => {
+    assert.deepStrictEqual(editRegistryUI(row()), {
+      open: true,
+      draft: {
+        alias: 'acme',
+        kind: 'index',
+        locator: 'https://index.acme.internal',
+        include: ['acme/platform/**'],
+        exclude: ['acme/platform/legacy/**'],
+        default: true,
+      },
+      helpOpen: null,
+      saving: false,
+      editingPattern: null,
+      mode: {
+        kind: 'edit',
+        alias: 'acme',
+        previous: {
+          include: ['acme/platform/**'],
+          exclude: ['acme/platform/legacy/**'],
+          default: true,
+        },
+      },
+    });
+  });
+
+  test('the captured previous state is a copy — editing the draft cannot rewrite it', () => {
+    const ui = editRegistryUI(row());
+    assert.ok(ui !== null);
+    ui.draft.include.push('acme/extra/**');
+    assert.strictEqual(ui.mode.kind, 'edit');
+    if (ui.mode.kind === 'edit') {
+      assert.deepStrictEqual(ui.mode.previous.include, ['acme/platform/**']);
+    }
+  });
+
+  // A legacy (alias-less) row has no name for grim to address, so it carries
+  // no edit button — and there is no edit-mode state that could describe it.
+  test('a legacy alias-less row yields no edit state at all', () => {
+    assert.strictEqual(editRegistryUI(buildRegistryRow(wireRegistryEntry({ alias: null }))), null);
+  });
+});
+
+suite('registrySubmitMessage', () => {
+  const draft = {
+    alias: '  acme  ',
+    kind: 'oci' as const,
+    locator: '  ghcr.io/acme  ',
+    include: ['acme/**'],
+    exclude: ['acme/legacy/**'],
+    default: true,
+  };
+
+  test('add mode posts addRegistry with the trimmed draft alias', () => {
+    assert.deepStrictEqual(
+      registrySubmitMessage('project', { ...CLOSED_ADD_REGISTRY, open: true, draft }),
+      {
+        type: 'addRegistry',
+        scope: 'project',
+        alias: 'acme',
+        locator: { oci: 'ghcr.io/acme' },
+        include: ['acme/**'],
+        exclude: ['acme/legacy/**'],
+        default: true,
+      },
+    );
+  });
+
+  // The alias comes off the MODE, never the draft: the field is readonly in
+  // edit mode and grim has no rename, so a draft alias could only be wrong.
+  test('edit mode posts editRegistry named by the mode, with the captured previous state', () => {
+    const previous = { include: [], exclude: [], default: false };
+    assert.deepStrictEqual(
+      registrySubmitMessage('global', {
+        ...CLOSED_ADD_REGISTRY,
+        open: true,
+        draft: { ...draft, alias: 'typed-over' },
+        mode: { kind: 'edit', alias: 'acme', previous },
+      }),
+      {
+        type: 'editRegistry',
+        scope: 'global',
+        alias: 'acme',
+        locator: { oci: 'ghcr.io/acme' },
+        include: ['acme/**'],
+        exclude: ['acme/legacy/**'],
+        default: true,
+        previous,
+      },
+    );
+  });
+
+  test('an index draft maps to the {index} locator variant', () => {
+    const message = registrySubmitMessage('project', {
+      ...CLOSED_ADD_REGISTRY,
+      open: true,
+      draft: { ...draft, kind: 'index', locator: 'https://x/index.json' },
+    });
+    assert.deepStrictEqual(message.locator, { index: 'https://x/index.json' });
+  });
+
+  test('round-trips an edit opened from a row', () => {
+    const ui = editRegistryUI(buildRegistryRow(wireRegistryEntry({ alias: 'ghcr' })));
+    assert.ok(ui !== null);
+    const message = registrySubmitMessage('project', ui);
+    assert.strictEqual(message.type, 'editRegistry');
+    assert.strictEqual(message.alias, 'ghcr');
+  });
+});
+
+suite('CLOSED_ADD_REGISTRY', () => {
+  // The closed form is the ADD form: there is no alias and no captured
+  // previous state to edit against, and the tag is the only thing that says so.
+  test('is closed and in add mode', () => {
+    assert.strictEqual(CLOSED_ADD_REGISTRY.open, false);
+    assert.deepStrictEqual(CLOSED_ADD_REGISTRY.mode, { kind: 'add' });
   });
 });

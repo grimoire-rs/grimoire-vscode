@@ -8,6 +8,8 @@
 // subcommands like `describe`.
 import { execFile } from 'child_process';
 
+import { registryFieldKey, type RegistryFieldState } from './webview/protocol';
+
 export type Scope = 'project' | 'global';
 
 // --- Wire types (nullable fields are honest: the default index returns null
@@ -249,6 +251,14 @@ export interface RegistryEntry {
   alias: string | null;
   oci: string | null;
   index: string | null;
+  // Additive (frozen-additive): the entry's browse filters, in declaration
+  // order, `[]` when unfiltered. They narrow what BROWSING shows (search, TUI,
+  // MCP) and nothing else — resolve, lock, install and `status --check` all
+  // ignore them, and a fully-qualified ref to an excluded package still
+  // installs. Absent on older binaries — read as `[]`, never as "no filter
+  // is possible".
+  include?: string[];
+  exclude?: string[];
   default: boolean;
 }
 
@@ -266,9 +276,9 @@ export interface RegistryFieldEntry {
 }
 
 /** The write confirmation shared by `config set`, `config unset`, and every
- *  `config registry add|rm|use` — one report shape, discriminated by `action`. */
+ *  `config registry add|set|rm|use` — one report shape, discriminated by `action`. */
 export type ConfigWriteAction =
-  'set' | 'unset' | 'registry-added' | 'registry-removed' | 'registry-default';
+  'set' | 'unset' | 'registry-added' | 'registry-set' | 'registry-removed' | 'registry-default';
 
 export interface ConfigWriteResult {
   action: ConfigWriteAction;
@@ -634,8 +644,12 @@ export function configSetArgs(
   return args;
 }
 
+/** `--` for the same reason configSetArgs has one: `<key>` is a trailing
+ *  positional with no `allow_hyphen_values`. Today's keys are all
+ *  extension-built, but the separator costs nothing and keeps the two write
+ *  builders one shape. */
 export function configUnsetArgs(key: string): string[] {
-  return ['config', 'unset', key];
+  return ['config', 'unset', '--', key];
 }
 
 export function registryListArgs(): string[] {
@@ -663,19 +677,128 @@ export type RegistryLocator = { oci: string } | { index: string };
  *  unambiguously instead, since `=` delimits the value from the flag name at
  *  the token level regardless of what the value looks like. `alias` IS a
  *  trailing positional (nothing follows it), so it gets searchArgs's `--`
- *  treatment, emitted last. */
+ *  treatment, emitted last.
+ *
+ *  `include`/`exclude` are browse-filter globs and repeat once per pattern —
+ *  never comma-joined, because a comma is glob alternation syntax
+ *  (`acme/{platform,tools}/**` is ONE pattern) and grim splits neither flag.
+ *  They take the same `--flag=value` form and for a stronger reason than the
+ *  locator: a glob legitimately starting with "-" is ordinary, not exotic.
+ *  These repeated flags — here and on registrySetArgs — are the only CLI path
+ *  that writes a multi-pattern list; `config set` takes one pattern and
+ *  replaces the whole list. */
 export function registryAddArgs(
   alias: string,
   locator: RegistryLocator,
-  options: { default?: boolean } = {},
+  options: { default?: boolean; include?: string[]; exclude?: string[] } = {},
 ): string[] {
   const args = ['config', 'registry', 'add'];
   args.push('oci' in locator ? `--oci=${locator.oci}` : `--index=${locator.index}`);
+  for (const pattern of options.include ?? []) {
+    args.push(`--include=${pattern}`);
+  }
+  for (const pattern of options.exclude ?? []) {
+    args.push(`--exclude=${pattern}`);
+  }
   if (options.default) {
     args.push('--default');
   }
   args.push('--', alias);
   return args;
+}
+
+/** `config registry set` — edits an existing entry IN PLACE, keeping its
+ *  position in `[[registries]]`. grim reads an omitted flag as "leave that
+ *  field alone", so this builder emits only what the caller actually names.
+ *
+ *  Same escaping rules as registryAddArgs, which this mirrors flag for flag:
+ *  `--flag=value` for everything (they are flag values, so the `--` separator
+ *  cannot protect a locator or a glob starting with "-"), alias last behind
+ *  `--`, one repetition per pattern and never comma-joined.
+ *
+ *  `include`/`exclude` REPLACE the whole list when given, and a flag given
+ *  zero times means "untouched" — so an empty list has no spelling of its own.
+ *  `--clear-include`/`--clear-exclude` are that spelling. They are mutually
+ *  exclusive with the pattern flags for the SAME field, which the if/else
+ *  below makes unrepresentable in the argv regardless of what a caller
+ *  passes. */
+export function registrySetArgs(
+  alias: string,
+  locator: RegistryLocator,
+  options: {
+    default?: boolean;
+    include?: string[];
+    exclude?: string[];
+    clearInclude?: boolean;
+    clearExclude?: boolean;
+  } = {},
+): string[] {
+  const args = ['config', 'registry', 'set'];
+  args.push('oci' in locator ? `--oci=${locator.oci}` : `--index=${locator.index}`);
+  if (options.clearInclude) {
+    args.push('--clear-include');
+  } else {
+    for (const pattern of options.include ?? []) {
+      args.push(`--include=${pattern}`);
+    }
+  }
+  if (options.clearExclude) {
+    args.push('--clear-exclude');
+  } else {
+    for (const pattern of options.exclude ?? []) {
+      args.push(`--exclude=${pattern}`);
+    }
+  }
+  if (options.default) {
+    args.push('--default');
+  }
+  args.push('--', alias);
+  return args;
+}
+
+/** The three registry fields an edit cannot clear by omission — held twice
+ *  (target and starting point) so {@link editRegistrySteps} can tell a real
+ *  clear from a field that was already empty or already off. The locator is
+ *  not here: it is always written, so it travels as its own parameter.
+ *
+ *  Re-exported from the wire protocol rather than declared again: the webview
+ *  builds this exact object and posts it, so a second declaration here could
+ *  drift from the one on the wire with no type error to say so. This is the
+ *  one direction that stays legal — `webview/protocol.ts` is dependency-free
+ *  precisely so both sides may import it, and it never imports back. */
+export type { RegistryFieldState };
+
+/** The argv sequence that makes an existing registry match `desired`, applied
+ *  in order and aborted at the first failure (see SettingsManager.writeInner).
+ *
+ *  One `registry set` carries the whole edit, emptied pattern lists included
+ *  (see {@link registrySetArgs}). DEMOTION is the one edit that cannot ride
+ *  along: `--default` only ever promotes — it clears every OTHER entry's flag,
+ *  the way `registry use` does, and has no negative form — so unchecking it
+ *  appends a second step, `config set registry.<alias>.default false`.
+ *
+ *  Every subtractive form is emitted only when `previous` shows it would
+ *  change something, so an ordinary save — nothing cleared, not the default —
+ *  is the same argv it was before either feature existed. */
+export function editRegistrySteps(
+  alias: string,
+  locator: RegistryLocator,
+  desired: RegistryFieldState,
+  previous: RegistryFieldState,
+): string[][] {
+  const steps = [
+    registrySetArgs(alias, locator, {
+      default: desired.default,
+      include: desired.include,
+      exclude: desired.exclude,
+      clearInclude: desired.include.length === 0 && previous.include.length > 0,
+      clearExclude: desired.exclude.length === 0 && previous.exclude.length > 0,
+    }),
+  ];
+  if (!desired.default && previous.default) {
+    steps.push(configSetArgs(registryFieldKey(alias, 'default'), 'false'));
+  }
+  return steps;
 }
 
 /** `alias` names an existing registry — but one originally created via

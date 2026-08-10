@@ -14,7 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GrimoireApi } from '../extension';
-import { MINIMUM_GRIM_VERSION } from '../installer';
+import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
 import { ScopeService } from '../scopes';
 import { SettingsManager } from '../views/settings';
 import { Watchers } from '../watchers';
@@ -112,6 +112,11 @@ if [ "$cmd" = "config" ]; then
       reject-value)
         echo '{"error":{"code":"data","exit":65,"message":"invalid value for options.reject-value"}}'
         exit 0 ;;
+      registry.partial-fail.default)
+        # Refuses ONLY the demote step, so an editRegistry whose registry set
+        # already landed can be driven into its partial-write path.
+        echo '{"error":{"code":"data","exit":65,"message":"invalid value for registry.partial-fail.default"}}'
+        exit 0 ;;
       lock-once)
         if [ -f "${dir}/lock-hit" ]; then
           rm -f "${dir}/lock-hit"
@@ -156,6 +161,18 @@ if [ "$cmd" = "config" ]; then
               exit 0
             fi ;;
         esac ;;
+      set)
+        case "$alias_arg" in
+          missing-alias)
+            echo '{"error":{"code":"usage","exit":64,"message":"no registry missing-alias"}}'
+            exit 0 ;;
+          *)
+            if [ -f "${dir}/registry-set.json" ]; then
+              touch_home "registry-set $alias_arg"
+              cat "${dir}/registry-set.json"
+              exit 0
+            fi ;;
+        esac ;;
       rm)
         if [ -f "${dir}/registry-rm.json" ]; then
           touch_home "registry-rm $alias_arg"
@@ -177,9 +194,9 @@ echo '{"error":{"code":"usage","exit":64,"message":"unhandled stub call"}}'
   return { dir, executable, argvLog };
 }
 
-function contextDoc(): Record<string, unknown> {
+function contextDoc(version: string = MINIMUM_GRIM_VERSION): Record<string, unknown> {
   return {
-    version: MINIMUM_GRIM_VERSION,
+    version,
     scope: 'global',
     workspace: null,
     config_path: '/nonexistent/global-grimoire.toml',
@@ -368,6 +385,12 @@ suite('settings host integration', () => {
       value: 'ghcr.io/acme',
       scope: 'global',
     });
+    canned(stub.dir, 'registry-set', {
+      action: 'registry-set',
+      key: 'registry.acme',
+      value: null,
+      scope: 'global',
+    });
     canned(stub.dir, 'registry-rm', {
       action: 'registry-removed',
       key: 'acme',
@@ -473,10 +496,160 @@ suite('settings host integration', () => {
       scope: 'global',
       alias: 'acme',
       locator: { oci: 'ghcr.io/acme' },
+      include: [],
+      exclude: [],
       default: false,
     });
     assert.strictEqual(posts.length, 1);
     assert.strictEqual(posts[0]?.type, 'state');
+  });
+
+  test('addRegistry sends one flag per browse-filter pattern', async () => {
+    const api = await activateExtension();
+    const { panel } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    await send(api, panel, {
+      type: 'addRegistry',
+      scope: 'global',
+      alias: 'filtered',
+      locator: { index: 'https://index.acme.internal' },
+      include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+      exclude: ['acme/platform/legacy/**'],
+      default: false,
+    });
+    const line = argvLines(stub).find((l) => l.includes('-- filtered'));
+    assert.ok(line, 'the add reached grim');
+    assert.ok(line.includes('--include=acme/platform/**'));
+    // The brace pattern must arrive as ONE argument — a comma is glob
+    // alternation, and neither side of the wire splits on it.
+    assert.ok(line.includes('--include=acme/{tools,libs}/**'));
+    assert.ok(line.includes('--exclude=acme/platform/legacy/**'));
+  });
+
+  test('editRegistry sends one registry set carrying every pattern', async () => {
+    const api = await activateExtension();
+    const { panel } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    await send(api, panel, {
+      type: 'editRegistry',
+      scope: 'global',
+      alias: 'acme',
+      locator: { index: 'https://index.acme.internal' },
+      include: ['acme/platform/**', 'acme/{tools,libs}/**'],
+      exclude: ['acme/platform/legacy/**'],
+      default: true,
+      previous: { include: ['old/**'], exclude: ['old/**'], default: true },
+    });
+    const sets = argvLines(stub).filter((l) => l.startsWith('config registry set'));
+    assert.strictEqual(sets.length, 1, 'a fully-populated edit is a single call');
+    const line = sets[0];
+    assert.ok(line);
+    assert.ok(line.includes('--index=https://index.acme.internal'));
+    assert.ok(line.includes('--include=acme/platform/**'));
+    assert.ok(line.includes('--include=acme/{tools,libs}/**'), 'brace alternation stays one arg');
+    assert.ok(line.includes('--exclude=acme/platform/legacy/**'));
+    assert.ok(line.includes('--default'));
+    // argvLines shifts a leading --global to the tail, so the alias is not the
+    // last token here — only that it is the trailing positional behind `--`.
+    assert.ok(line.includes('-- acme'));
+  });
+
+  test('editRegistry clears an emptied list on the same set call', async () => {
+    const api = await activateExtension();
+    const { panel } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    const before = argvLines(stub).length;
+    await send(api, panel, {
+      type: 'editRegistry',
+      scope: 'global',
+      alias: 'acme',
+      locator: { oci: 'ghcr.io/acme' },
+      include: [],
+      exclude: ['legacy/**'],
+      default: true,
+      previous: { include: ['was/**'], exclude: ['legacy/**'], default: true },
+    });
+    const lines = argvLines(stub).slice(before);
+    const sets = lines.filter((l) => l.startsWith('config registry set'));
+    assert.strictEqual(sets.length, 1, 'one call carries the whole edit');
+    const line = sets[0];
+    assert.ok(line);
+    assert.ok(line.includes('--clear-include'));
+    assert.ok(line.includes('--exclude=legacy/**'));
+    assert.ok(!line.includes('--clear-exclude'), 'the side that kept a pattern is not cleared');
+    assert.ok(
+      !lines.some((l) => l.startsWith('config unset')),
+      'clearing rides on the set — no follow-up unset',
+    );
+  });
+
+  test('a rejected editRegistry aborts the sequence and posts one writeError', async () => {
+    // The abort is the safety property: the demote (`config set
+    // registry.<alias>.default false`) running after a refused `set` would
+    // clear the default flag of a registry the edit never reached.
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    const before = argvLines(stub).length;
+    await send(api, panel, {
+      type: 'editRegistry',
+      scope: 'global',
+      alias: 'missing-alias',
+      locator: { oci: 'ghcr.io/gone' },
+      include: [],
+      exclude: [],
+      default: false,
+      previous: { include: ['a/**'], exclude: ['b/**'], default: true },
+    });
+    assert.strictEqual(posts.length, 1, 'expected exactly one post: writeError, no state repost');
+    const message = posts[0];
+    assert.ok(message);
+    assert.strictEqual(message.type, 'writeError');
+    if (message.type === 'writeError') {
+      assert.strictEqual(message.key, 'missing-alias');
+      assert.match(message.message, /no registry/);
+    }
+    const after = argvLines(stub).slice(before);
+    assert.strictEqual(after.length, 1, 'the failing set is the only call made');
+    assert.ok(after[0]?.startsWith('config registry set'));
+  });
+
+  test('an editRegistry failing after a step landed reposts state, then names what was applied', async () => {
+    // grim has no transaction across steps: the `registry set` is on disk the
+    // moment it returns. Leaving the panel on its pre-edit rows would show the
+    // user a table the config file no longer matches.
+    const api = await activateExtension();
+    const { panel, posts } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    posts.length = 0;
+    const before = argvLines(stub).length;
+    await send(api, panel, {
+      type: 'editRegistry',
+      scope: 'global',
+      alias: 'partial-fail',
+      locator: { oci: 'ghcr.io/acme' },
+      include: ['keep/**'],
+      exclude: [],
+      default: false, // demotion is the second step — the one the stub refuses
+      previous: { include: ['keep/**'], exclude: [], default: true },
+    });
+    const ran = argvLines(stub).slice(before);
+    assert.ok(ran[0]?.startsWith('config registry set'), 'the set ran first');
+    assert.ok(
+      ran.some((l) => l.startsWith('config set') && l.includes('registry.partial-fail.default')),
+      'the demote ran and was refused',
+    );
+    assert.strictEqual(posts.length, 2, 'the landed step is reposted BEFORE the error');
+    assert.strictEqual(posts[0]?.type, 'state');
+    const message = posts[1];
+    assert.ok(message);
+    assert.strictEqual(message.type, 'writeError');
+    if (message.type === 'writeError') {
+      assert.strictEqual(message.key, 'partial-fail');
+      assert.match(message.message, /config registry set/, 'the applied step is named');
+      assert.match(message.message, /invalid value for registry\.partial-fail\.default/);
+    }
   });
 
   test('addRegistry with a duplicate alias (exit 64) posts writeError only', async () => {
@@ -489,6 +662,8 @@ suite('settings host integration', () => {
       scope: 'global',
       alias: 'dup-alias',
       locator: { oci: 'ghcr.io/dup' },
+      include: [],
+      exclude: [],
       default: false,
     });
     assert.strictEqual(posts.length, 1, 'expected exactly one post: writeError, no state repost');
@@ -499,6 +674,27 @@ suite('settings host integration', () => {
       assert.strictEqual(message.key, 'dup-alias');
       assert.match(message.message, /already exists/);
     }
+  });
+
+  test('clearing the default writes the dotted key rather than a registry verb', async () => {
+    // `registry use` only ever promotes, so demoting has to go through
+    // `config set registry.<alias>.default false` — the same write the edit
+    // form's unchecked box makes.
+    const api = await activateExtension();
+    const { panel } = fakeSettingsPanel();
+    await send(api, panel, { type: 'ready', scope: 'global' });
+    await send(api, panel, {
+      type: 'setValue',
+      scope: 'global',
+      key: 'registry.acme.default',
+      value: 'false',
+    });
+    const line = argvLines(stub).find((l) => l.includes('registry.acme.default'));
+    assert.ok(line, 'the demote reached grim');
+    assert.ok(line.startsWith('config set'), `expected a dotted set; got: ${line}`);
+    // argvLines shifts a leading --global to the tail, so this is not the
+    // last token — only that key and value travel together behind the `--`.
+    assert.ok(line.includes('-- registry.acme.default false'));
   });
 
   test('removeRegistry success re-fetches and reposts state', async () => {
@@ -908,6 +1104,35 @@ suite('settings host integration', () => {
       if (!wasInitialized) {
         fs.rmSync(marker, { force: true });
       }
+    }
+  });
+
+  // Every registry-editing control (the row pencil, the add form's pattern
+  // repeaters) hangs off this one flag, and below REGISTRY_EDIT_GRIM_VERSION
+  // grim rejects those flags and the `set` verb outright (clap, exit 64) — so
+  // both answers have to come from the version grim itself reports.
+  test('registryEditSupported tracks the version grim reports for the scope', async () => {
+    try {
+      for (const [version, supported] of [
+        ['0.12.1', false],
+        [REGISTRY_EDIT_GRIM_VERSION, true],
+      ] as const) {
+        // Every context doc the stub may pick for global scope: an earlier
+        // test cans the before/after pair, which wins over plain context.json.
+        for (const name of ['context', 'context-global-before', 'context-global-after']) {
+          canned(stub.dir, name, contextDoc(version));
+        }
+        const { panel, posts } = fakeSettingsPanel();
+        await freshManager().onMessage(panel, { type: 'ready', scope: 'global' });
+        const posted = posts.at(-1);
+        assert.ok(posted?.type === 'state');
+        assert.strictEqual(posted.state.phase, 'ready', 'the flag is only live on a ready panel');
+        assert.strictEqual(posted.state.registryEditSupported, supported, `grim ${version}`);
+      }
+    } finally {
+      canned(stub.dir, 'context', contextDoc());
+      fs.rmSync(path.join(stub.dir, 'context-global-before.json'), { force: true });
+      fs.rmSync(path.join(stub.dir, 'context-global-after.json'), { force: true });
     }
   });
 });

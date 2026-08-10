@@ -23,7 +23,7 @@ import type {
 import type { GrimoireApi } from '../extension';
 import { addArgs, updateArgs, type ContextInfo, type GrimResult, type Scope } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
-import { MINIMUM_GRIM_VERSION } from '../installer';
+import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
 import { offerForcedRetry } from '../views/forceRetry';
 
 const isWindows = process.platform === 'win32';
@@ -970,7 +970,10 @@ suite('extension integration', () => {
     await waitFor(() => argvLines(stub).some((l) => l.startsWith('remove')));
     const line = argvLines(stub).find((l) => l.startsWith('remove'));
     assert.ok(line);
-    assert.ok(line.startsWith('remove ') && line.includes('-- bundle grim-essentials'), `argv was: ${line}`);
+    assert.ok(
+      line.startsWith('remove ') && line.includes('-- bundle grim-essentials'),
+      `argv was: ${line}`,
+    );
     assert.ok(line.includes('--global'));
     assert.ok(!argvLines(stub).some((l) => l.startsWith('uninstall')), 'no uninstall was issued');
   });
@@ -1538,10 +1541,7 @@ suite('extension integration', () => {
       updates.some((l) => updatesArtifact(l, 'demo')),
       'the per-name update ran',
     );
-    assert.ok(
-      !updates.some(isFullUpdate),
-      `no full update ran: ${updates.join(' | ')}`,
-    );
+    assert.ok(!updates.some(isFullUpdate), `no full update ran: ${updates.join(' | ')}`);
     assert.ok(errored, 'the plain error toast was shown');
     assert.ok(!warned, 'no stale-lock warning for a non-stale error');
   });
@@ -3996,6 +3996,100 @@ suite('extension integration', () => {
       argvLines(stub).filter((l) => l.startsWith('config')),
       [],
     );
+  });
+
+  /** A link carrying one include and one exclude pattern — DISTINCT, so a
+   *  swapped passthrough shows up in the argv assertions below. */
+  const FILTER_QUERY =
+    `${INDEX_QUERY}&include=${encodeURIComponent('acme/platform/**')}` +
+    `&exclude=${encodeURIComponent('acme/platform/legacy/**')}`;
+
+  /** Re-cans `grim context` with `version` and refreshes, so the snapshot the
+   *  deep-link gate reads reports that grim. Returns the restore. */
+  async function withGrimVersion(api: GrimoireApi, version: string): Promise<() => Promise<void>> {
+    canned(stub, 'context', contextDoc({ version }));
+    await api.refresh();
+    return async () => {
+      canned(stub, 'context', contextDoc());
+      await api.refresh();
+    };
+  }
+
+  test('a filtered link writes each pattern on the flag the modal showed it under', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'config', {
+      action: 'registry-added',
+      key: 'grimoire',
+      value: 'https://index.grimoire.rs/',
+      scope: 'project',
+      dry_run: false,
+    });
+    const restoreVersion = await withGrimVersion(api, REGISTRY_EDIT_GRIM_VERSION);
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal('Add Registry');
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(addRegistryUri(FILTER_QUERY));
+      lines = argvLines(stub); // read before the restoring refresh spawns its own
+    } finally {
+      modal.restore();
+      fs.rmSync(path.join(stub.dir, 'config.json'), { force: true });
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    const detail = modal.prompts[0]?.detail ?? '';
+    assert.ok(detail.includes('acme/platform/**'), `modal names the include: ${detail}`);
+    assert.ok(detail.includes('acme/platform/legacy/**'), `modal names the exclude: ${detail}`);
+    const add = lines.find((l) => l.startsWith('config registry add'));
+    assert.ok(add, `registry add ran: ${lines.join(' | ')}`);
+    // The modal authorizing one list while grim writes the other is the whole
+    // failure this asserts against — hence both directions.
+    assert.ok(add.includes('--include=acme/platform/**'), `include flag: ${add}`);
+    assert.ok(add.includes('--exclude=acme/platform/legacy/**'), `exclude flag: ${add}`);
+    assert.ok(!add.includes('--include=acme/platform/legacy/**'), `lists not swapped: ${add}`);
+    assert.ok(!add.includes('--exclude=acme/platform/**'), `lists not swapped: ${add}`);
+  });
+
+  test('a filtered link is refused BEFORE the modal on a grim without the flags', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    // The default fixture reports the version floor, which predates the two
+    // pattern flags; re-assert it so an earlier test's context cannot decide
+    // this one's outcome.
+    const restoreVersion = await withGrimVersion(api, MINIMUM_GRIM_VERSION);
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal('Add Registry');
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const originalError = window.showErrorMessage;
+    const errors: string[] = [];
+    window.showErrorMessage = async (message: string) => {
+      errors.push(message);
+      return undefined;
+    };
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(addRegistryUri(FILTER_QUERY));
+      lines = argvLines(stub); // read before the restoring refresh spawns its own
+    } finally {
+      modal.restore();
+      window.showErrorMessage = originalError;
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    assert.deepStrictEqual(modal.prompts, [], 'never confirms a write that cannot succeed');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('config')),
+      [],
+      'nothing written',
+    );
+    assert.ok(
+      errors.some((e) => e.includes(REGISTRY_EDIT_GRIM_VERSION)),
+      `the refusal names the version needed: ${errors.join(' | ')}`,
+    );
+    // A link carrying NO patterns is unaffected on this same grim — see
+    // 'add-registry deep link writes only after a modal naming the index and
+    // alias', which runs against the default (pre-0.13) context fixture.
   });
 
   test('details rail tag click seeds the Browse search with the tag (item 2)', async function () {
