@@ -122,6 +122,16 @@ on an artifact that may already be installed. Point `grimoire.path.executable`
 at a current build, or run **Grimoire: Show grim Info** to see which binary is
 actually being spawned.
 
+Editing a registry in place needs `grim` 0.13.0 or newer — the release that
+ships the `config registry set` verb and the `--include`/`--exclude` browse
+filters on `config registry add`.
+
+Below that version the feature is absent rather than reduced: registry rows
+carry no edit button, the add-registry form shows no pattern fields, and a
+share link that carries filters is refused outright instead of adding the
+registry without the filters you approved. Adding, removing, and switching the
+default registry are unaffected.
+
 ## Contributing
 
 Bug reports, feature requests, and PRs welcome. See
