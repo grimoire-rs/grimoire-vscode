@@ -178,6 +178,7 @@ export class SettingsManager {
             default: message.default,
             include: message.include,
             exclude: message.exclude,
+            insecure: message.insecure,
           }),
         ]);
         return;
@@ -193,6 +194,7 @@ export class SettingsManager {
               default: message.default,
               include: message.include,
               exclude: message.exclude,
+              insecure: message.insecure,
             },
             message.previous,
           ),

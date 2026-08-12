@@ -110,29 +110,41 @@ never shows up.
 
 ## 3b. If Browse shows no `localhost:*` rows
 
-The local rig registries speak plain HTTP. Without
-`GRIM_INSECURE_REGISTRIES=localhost:5050,localhost:5051` in the extension host's
-environment, grim cannot reach them and reports
+The local rig registries speak plain HTTP. Unless the host is in grim's
+plain-HTTP set, grim cannot reach them and reports
 `catalog for source 'localhost:5050' unavailable: … registry access failed` —
 on **stderr**, as a tracing WARN. `search --format json`'s envelope is `{items}`
 alone, with no warnings channel, so the extension cannot surface it: Browse
 simply comes back short while `grim status` keeps listing the artifacts already
 on disk, i.e. Installed shows registries Browse does not.
 
-Both rig launch configs set that variable. Plain **Run Extension** does not — use
-a rig config, or the local registries stay invisible to Browse.
+Two ways in, and they add up (nothing takes a host back out):
 
-Outside the rig (a real workspace pointed at a plain-HTTP registry) the same
-variable goes in the `grimoire.extraEnv` setting, which is passed to every grim
-child process:
+- **Per registry, in the config** — `insecure = true` on the `[[registries]]`
+  entry (grim 0.13.0+). This is what the Settings panel edits: the registry
+  form's **Plain-HTTP transport** checkbox, on the OCI kind only (an index
+  locator carries its own scheme, and grim rejects the flag there with exit 65).
+  A row that opted in carries an unlock mark beside its alias. The host matches
+  **exactly, including the port** — `localhost:5050` and `localhost` are
+  different hosts.
+- **Per process, in the environment** — `GRIM_INSECURE_REGISTRIES=localhost:5050,localhost:5051`,
+  still the way to reach a host no entry declares. Outside the rig it goes in
+  the `grimoire.extraEnv` setting, which is passed to every grim child process:
 
-```jsonc
-"grimoire.extraEnv": { "GRIM_INSECURE_REGISTRIES": "localhost:5050" }
-```
+  ```jsonc
+  "grimoire.extraEnv": { "GRIM_INSECURE_REGISTRIES": "localhost:5050" }
+  ```
 
-There is no dedicated setting for it, and there should not be: insecure-ness is
-a property of the registry, not of the editor. It belongs in the `[[registries]]`
-entry once grim carries it — see `../grimoire/.agents/handover_insecure_registry_config.md`.
+Both rig launch configs set the variable. Plain **Run Extension** does not — use
+a rig config, or declare `insecure = true` on the entry, or the local registries
+stay invisible to Browse.
+
+Worth testing on the rig: tick the checkbox on a `localhost:5050` OCI entry,
+save, and confirm the mark appears and Browse fills in. `grim context
+--format json` reports the **authored** field — a host reached over HTTP through
+the implicit loopback set (`localhost`, `127.0.0.1`, bare and on `:5000`) or
+through the environment variable still reports `insecure: false`, so an unmarked
+row that browses fine is not a bug.
 
 ## 4. Producing the interesting states
 
@@ -158,6 +170,7 @@ Refresh.
 ## Notes
 
 - The rig's registries are plain HTTP; `GRIM_INSECURE_REGISTRIES` in the launch
-  config is what makes that work, and it is scoped to the debug session.
+  config is what makes that work, and it is scoped to the debug session. The
+  per-entry `insecure = true` is the other half — see §3b.
 - `grim tui` in the same shell is the cross-check for anything tree-shaped —
   see `../grimoire/test/manual/README.md` scenarios 1a and 1c.

@@ -572,6 +572,16 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
+/* Same slot and metrics as the filter mark, but this one is a WARNING, not a
+   fact: --vscode-editorWarning-foreground, the theme's own "you opted into
+   something" amber. */
+.registry-insecure-mark {
+  margin-left: 5px;
+  font-size: 11px;
+  vertical-align: -1px;
+  color: var(--vscode-editorWarning-foreground);
+}
+
 .registries-empty {
   padding: 10px 0;
   font-size: 12px;

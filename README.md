@@ -123,14 +123,21 @@ at a current build, or run **Grimoire: Show grim Info** to see which binary is
 actually being spawned.
 
 Editing a registry in place needs `grim` 0.13.0 or newer — the release that
-ships the `config registry set` verb and the `--include`/`--exclude` browse
-filters on `config registry add`.
+ships the `config registry set` verb, the `--include`/`--exclude` browse
+filters on `config registry add`, and the per-registry `--insecure` plain-HTTP
+opt-in.
 
 Below that version the feature is absent rather than reduced: registry rows
-carry no edit button, the add-registry form shows no pattern fields, and a
-share link that carries filters is refused outright instead of adding the
-registry without the filters you approved. Adding, removing, and switching the
-default registry are unaffected.
+carry no edit button, the add-registry form shows neither pattern fields nor
+the plain-HTTP checkbox, and a share link that carries filters is refused
+outright instead of adding the registry without the filters you approved.
+Adding, removing, and switching the default registry are unaffected.
+
+A registry declared with `insecure = true` is contacted over plain HTTP — for a
+local or in-cluster registry without TLS. The panel marks such a row, because
+`grimoire.toml` is normally committed and the downgrade applies to everyone who
+clones the project. `GRIM_INSECURE_REGISTRIES` (via `grimoire.extraEnv`) still
+covers hosts no entry declares; the two add up.
 
 ## Contributing
 

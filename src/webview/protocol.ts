@@ -468,6 +468,12 @@ export interface SettingsRegistryVM {
    *  rather than the JSON envelope. */
   include: string[];
   exclude: string[];
+  /** The entry's authored plain-HTTP opt-in, already normalized to a boolean by
+   *  buildRegistryRow. The AUTHORED field, not the effective transport: a host
+   *  grim reaches over HTTP through its implicit loopback set or
+   *  GRIM_INSECURE_REGISTRIES reports false here, so this and the config key
+   *  always agree. */
+  insecure: boolean;
   /** alias === null: a legacy pre-alias row — read-only (no remove action). */
   legacy: boolean;
 }
@@ -536,7 +542,7 @@ export function registryFieldKey(alias: string, field: 'default' | 'include' | '
   return `registry.${alias}.${field}`;
 }
 
-/** The three registry fields an edit cannot clear by omission, held both as
+/** The registry fields an edit cannot clear by omission, held both as
  *  the desired state and as the starting point so the host can tell a real
  *  clear from a field that was already empty or already off. The locator is
  *  not here: it is always written, so it travels as its own field.
@@ -549,6 +555,10 @@ export interface RegistryFieldState {
   include: string[];
   exclude: string[];
   default: boolean;
+  /** Omitting `--insecure`/`--no-insecure` leaves the stored value alone, so
+   *  the starting point is what tells the host whether either half is needed —
+   *  same reason the two lists are here. */
+  insecure: boolean;
 }
 
 export type SettingsToHost =
@@ -567,6 +577,9 @@ export type SettingsToHost =
       include: string[];
       exclude: string[];
       default: boolean;
+      /** Plain-HTTP opt-in. Always false for an `index` locator — grim refuses
+       *  the flag there (exit 65) and the checkbox does not exist on that kind. */
+      insecure: boolean;
     }
   | {
       /** Edit an existing entry in place. Carries the COMPLETE desired state
@@ -584,6 +597,10 @@ export type SettingsToHost =
       include: string[];
       exclude: string[];
       default: boolean;
+      /** See addRegistry's — false on an index locator, including a kind swap
+       *  away from an insecure OCI entry (the host then writes the `false`
+       *  half, which grim accepts on an index). */
+      insecure: boolean;
       /** The row's state when the form was opened. Sent so the host can leave
        *  out the `--clear-*` flags and the demotion step when they would change
        *  nothing, and only the webview knows what the user started from. */

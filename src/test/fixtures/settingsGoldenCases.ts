@@ -91,6 +91,7 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
         oci: null,
         index: 'https://index.acme.io/index.json',
         default: false,
+        insecure: false,
       }),
     ),
     buildRegistryRow(wireRegistryEntry({ alias: null, oci: 'ghcr.io/legacy-org', default: false })),
@@ -102,6 +103,18 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
         include: ['acme/platform/**', 'acme/tools/**'],
         exclude: ['acme/platform/legacy/**'],
         default: false,
+        insecure: false,
+      }),
+    ),
+    // The plain-HTTP opt-in, frozen so the warning mark beside the alias cannot
+    // disappear unnoticed. Last, so the `acme` index above keeps the position
+    // the edit-mode cases below address it by.
+    buildRegistryRow(
+      wireRegistryEntry({
+        alias: 'local',
+        oci: 'localhost:5050/grimoire',
+        default: false,
+        insecure: true,
       }),
     ),
   ];
@@ -163,10 +176,16 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
         include: ['acme/platform/**', 'acme/{tools,libs}/**'],
         exclude: ['acme/platform/legacy/**'],
         default: false,
+        insecure: false,
       },
       helpOpen: null,
     } satisfies AddRegistryUI),
   );
+  // Edit mode on the plain-HTTP entry: the checkbox and its warning exist only
+  // on the OCI kind, so this is the one case that freezes them ticked. The
+  // add-registry cases above are all index drafts, where grim refuses the flag.
+  const editLocal = editRegistryUI(readyRegistries[4] as SettingsRegistryVM) ?? CLOSED_ADD_REGISTRY;
+  add('settings-ready-edit-registry-insecure', r.renderSettings(readyState, editLocal));
   // The same form in edit mode: readonly alias, "Edit registry" title, "Save"
   // button, and the draft seeded from the filtered `acme` row above — the
   // whole point being that a multi-pattern list arrives editable. Opened
@@ -192,6 +211,7 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
         include: [],
         exclude: [],
         default: false,
+        insecure: false,
       },
       helpOpen: null,
       error: 'Registry alias "ghcr" already exists.',

@@ -45,6 +45,9 @@ export interface WireRegistryEntry {
   include?: string[];
   exclude?: string[];
   default: boolean;
+  /** Plain-HTTP opt-in — additive, so absent on an older grim (see grim.ts's
+   *  RegistryEntry). buildRegistryRow normalizes it to a boolean. */
+  insecure?: boolean;
 }
 
 const KNOWN_TYPES: readonly SettingsControlType[] = [
@@ -150,6 +153,9 @@ export function buildRegistryRow(entry: WireRegistryEntry): SettingsRegistryVM {
     // string here, and every downstream reader calls .join()/.map() on it.
     include: Array.isArray(entry.include) ? entry.include : [],
     exclude: Array.isArray(entry.exclude) ? entry.exclude : [],
+    // `=== true`, not truthiness: an older grim omits the key entirely, and a
+    // hand-edited config can make it report a string.
+    insecure: entry.insecure === true,
     legacy: entry.alias === null,
   };
 }
@@ -378,6 +384,12 @@ export interface AddRegistryDraft {
   include: string[];
   exclude: string[];
   default: boolean;
+  /** Only meaningful on the `oci` kind — grim refuses `--insecure` on an index
+   *  locator, so the checkbox is absent there and the draft value is ignored
+   *  (registrySubmitMessage pins the write to false). Kept across a kind flip
+   *  rather than reset, so flipping to Index and back does not silently drop an
+   *  opt-in the user already ticked. */
+  insecure: boolean;
 }
 
 /** Seeds the form from the row being edited. The VM already carries every
@@ -397,6 +409,7 @@ export function draftFromRegistry(r: SettingsRegistryVM): AddRegistryDraft {
     include: [...r.include],
     exclude: [...r.exclude],
     default: r.default,
+    insecure: r.insecure,
   };
 }
 
@@ -409,6 +422,7 @@ export const EMPTY_REGISTRY_DRAFT: AddRegistryDraft = {
   include: [],
   exclude: [],
   default: false,
+  insecure: false,
 };
 
 export function addRegistryDraftValid(draft: AddRegistryDraft): boolean {
@@ -555,7 +569,12 @@ export function editRegistryUI(row: SettingsRegistryVM): AddRegistryUI | null {
     mode: {
       kind: 'edit',
       alias: row.alias,
-      previous: { include: [...row.include], exclude: [...row.exclude], default: row.default },
+      previous: {
+        include: [...row.include],
+        exclude: [...row.exclude],
+        default: row.default,
+        insecure: row.insecure,
+      },
     },
   };
 }
@@ -574,6 +593,11 @@ export function registrySubmitMessage(
     include: draft.include,
     exclude: draft.exclude,
     default: draft.default,
+    // The one field the draft cannot be trusted for: grim rejects `--insecure`
+    // on an index locator (exit 65), and the draft deliberately REMEMBERS a
+    // ticked box across a kind flip. Pinned here rather than in the kind
+    // handler so every submit path goes through the same rule.
+    insecure: draft.kind === 'oci' && draft.insecure,
   };
   return mode.kind === 'edit'
     ? { type: 'editRegistry', alias: mode.alias, ...fields, previous: mode.previous }

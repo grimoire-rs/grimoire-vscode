@@ -19,7 +19,9 @@ import {
   buildSettingsRow,
   CLOSED_ADD_REGISTRY,
   EMPTY_REGISTRY_DRAFT,
+  type AddRegistryDraft,
   type AddRegistryMode,
+  type AddRegistryUI,
 } from '../webview/settings/model';
 import type { SettingsState } from '../webview/protocol';
 import { litString } from './litString';
@@ -43,7 +45,7 @@ function editSupported(overrides: Partial<SettingsState> = {}): SettingsState {
 const EDIT_ACME: AddRegistryMode = {
   kind: 'edit',
   alias: 'acme',
-  previous: { include: [], exclude: [], default: false },
+  previous: { include: [], exclude: [], default: false, insecure: false },
 };
 
 suite('settings frozen goldens', () => {
@@ -211,6 +213,7 @@ suite('settings escaping', () => {
               type: 'oci',
               locator: '"><img src=x onerror=alert(1)>',
               default: false,
+              insecure: false,
               include: [],
               exclude: [],
               legacy: false,
@@ -233,6 +236,7 @@ suite('settings escaping', () => {
               type: 'index',
               locator: 'https://index.acme.internal',
               default: false,
+              insecure: false,
               include: ['acme/platform/**', 'acme/tools/**'],
               exclude: ['acme/platform/legacy/**'],
               legacy: false,
@@ -272,6 +276,7 @@ suite('settings escaping', () => {
               type: 'index',
               locator: 'https://index.acme.internal',
               default: false,
+              insecure: false,
               include: ['<script>alert(1)</script>/**'],
               exclude: ['"><img src=x onerror=alert(1)>'],
               legacy: false,
@@ -305,10 +310,10 @@ suite('settings escaping', () => {
     // Naming the running version beside the required one is what makes it
     // actionable rather than a riddle about which grim is on the PATH.
     assert.ok(
-      hidden.includes('Browse filters need grim 0.13.0 or newer (running 0.12.1).'),
+      hidden.includes('Browse filters and the plain-HTTP option need grim 0.13.0 or newer (running 0.12.1).'),
       'the gate says what it needs AND what is running, where the repeaters would have been',
     );
-    assert.ok(!shown.includes('Browse filters need grim'), 'and only when it bites');
+    assert.ok(!shown.includes('Browse filters and the plain-HTTP option need grim'), 'and only when it bites');
 
     // No version resolved yet: the requirement still shows, the clause does not
     // — "(running null)" would be worse than saying nothing.
@@ -318,8 +323,59 @@ suite('settings escaping', () => {
         open,
       ),
     );
-    assert.ok(unknown.includes('Browse filters need grim 0.13.0 or newer.'), 'requirement stands');
+    assert.ok(unknown.includes('Browse filters and the plain-HTTP option need grim 0.13.0 or newer.'), 'requirement stands');
     assert.ok(!unknown.includes('running'), 'no clause invented for an unknown version');
+  });
+
+  test('the plain-HTTP checkbox exists on the OCI kind only, and says what it costs', async () => {
+    const openWith = (draft: AddRegistryDraft): AddRegistryUI => ({
+      ...CLOSED_ADD_REGISTRY,
+      open: true,
+      draft,
+      helpOpen: null,
+    });
+    const oci = await litHtml(
+      render.renderSettings(
+        editSupported(),
+        openWith({ ...EMPTY_REGISTRY_DRAFT, kind: 'oci', locator: 'localhost:5050/grimoire' }),
+      ),
+    );
+    assert.ok(oci.includes('data-field="insecure"'), 'the OCI kind can opt in');
+    assert.ok(
+      oci.includes('downgrades transport for everyone who clones the project'),
+      'the warning ships with the box, not in a tooltip',
+    );
+    // grim refuses `--insecure` on an index locator (exit 65), so there is
+    // nothing the box could mean there.
+    const index = await litHtml(
+      render.renderSettings(editSupported(), openWith(EMPTY_REGISTRY_DRAFT)),
+    );
+    assert.ok(!index.includes('data-field="insecure"'));
+    // And it is gated with the rest of the 0.13.0 surface.
+    const oldGrim = await litHtml(
+      render.renderSettings(
+        settingsState({ registryEditSupported: false }),
+        openWith({ ...EMPTY_REGISTRY_DRAFT, kind: 'oci' }),
+      ),
+    );
+    assert.ok(!oldGrim.includes('data-field="insecure"'));
+  });
+
+  test('an opted-in registry row is marked as plain HTTP', async () => {
+    const row = buildRegistryRow(
+      wireRegistryEntry({ alias: 'local', oci: 'localhost:5050/grimoire', insecure: true }),
+    );
+    const html = await litHtml(
+      render.renderSettings(settingsState({ registries: [row] })),
+    );
+    assert.ok(html.includes('registry-insecure-mark'), 'a transport downgrade is never silent');
+    assert.ok(html.includes('cleartext'));
+    const secure = await litHtml(
+      render.renderSettings(
+        settingsState({ registries: [buildRegistryRow(wireRegistryEntry())] }),
+      ),
+    );
+    assert.ok(!secure.includes('registry-insecure-mark'));
   });
 
   test('the two glob lists ship the rules that make them surprising', async () => {
@@ -416,6 +472,7 @@ suite('settings escaping', () => {
       include: ['acme/{tools,libs}/**'],
       exclude: [],
       default: false,
+      insecure: false,
     };
     const editing = await litHtml(
       render.renderSettings(editSupported(), {
@@ -448,6 +505,7 @@ suite('settings escaping', () => {
       include: ['a/**', 'b/**'],
       exclude: [],
       default: false,
+      insecure: false,
     };
     const closed = await litHtml(
       render.renderSettings(editSupported(), { ...CLOSED_ADD_REGISTRY, open: true, draft }),
@@ -491,6 +549,7 @@ suite('settings escaping', () => {
       locator: 'https://index.acme.internal',
       exclude: [],
       default: false,
+      insecure: false,
     };
     const empty = await litHtml(
       render.renderSettings(editSupported(), {
@@ -529,8 +588,9 @@ suite('settings escaping', () => {
           include: ['<script>alert(1)</script>'],
           exclude: ['" onmouseover="alert(2)'],
           default: false,
+          insecure: false,
         },
-        mode: { kind: 'edit', alias: 'x', previous: { include: [], exclude: [], default: false } },
+        mode: { kind: 'edit', alias: 'x', previous: { include: [], exclude: [], default: false, insecure: false } },
       }),
     );
     assert.ok(!html.includes('<script>alert(1)'));
@@ -551,6 +611,7 @@ suite('settings escaping', () => {
           include: ['a/**'],
           exclude: [],
           default: false,
+          insecure: false,
         },
         mode: EDIT_ACME,
         saving: true,
@@ -583,6 +644,7 @@ suite('settings escaping', () => {
           include: ['a/**', 'b/**'],
           exclude: [],
           default: false,
+          insecure: false,
         },
       }),
     );
@@ -615,6 +677,7 @@ suite('settings escaping', () => {
           include: ['"><img src=x onerror=alert(1)>'],
           exclude: ['<script>alert(1)</script>'],
           default: false,
+          insecure: false,
         },
       }),
     );
@@ -644,7 +707,15 @@ suite('settings escaping', () => {
       render.renderSettings(settingsState(), {
         ...CLOSED_ADD_REGISTRY,
         open: true,
-        draft: { alias: 'x', kind: 'oci', locator: 'y', include: [], exclude: [], default: false },
+        draft: {
+          alias: 'x',
+          kind: 'oci',
+          locator: 'y',
+          include: [],
+          exclude: [],
+          default: false,
+          insecure: false,
+        },
         helpOpen: null,
         error: '<script>alert(1)</script>',
       }),

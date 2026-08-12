@@ -294,6 +294,25 @@ suite('grim arg builders', () => {
     );
   });
 
+  test('registryAddArgs adds --insecure only when the opt-in is on', () => {
+    assert.deepStrictEqual(
+      registryAddArgs('local', { oci: 'localhost:5050/grimoire' }, { insecure: true }),
+      [
+        'config',
+        'registry',
+        'add',
+        '--oci=localhost:5050/grimoire',
+        '--insecure',
+        '--',
+        'local',
+      ],
+    );
+    assert.deepStrictEqual(
+      registryAddArgs('local', { oci: 'localhost:5050/grimoire' }, { insecure: false }),
+      registryAddArgs('local', { oci: 'localhost:5050/grimoire' }),
+    );
+  });
+
   test('registryAddArgs emits no filter flag for empty lists (argv unchanged from before the feature)', () => {
     assert.deepStrictEqual(
       registryAddArgs('acme', { oci: 'ghcr.io/acme' }, { include: [], exclude: [] }),
@@ -370,6 +389,24 @@ suite('grim arg builders', () => {
     );
   });
 
+  test('registrySetArgs writes the plain-HTTP opt-in as a flag pair, and omits it when unset', () => {
+    // grim's own tri-state: the flag absent leaves the stored value alone,
+    // which is why the option is optional rather than a plain boolean.
+    assert.deepStrictEqual(
+      registrySetArgs('acme', { oci: 'localhost:5050/grimoire' }, { insecure: true }).slice(-3),
+      ['--insecure', '--', 'acme'],
+    );
+    assert.deepStrictEqual(
+      registrySetArgs('acme', { oci: 'localhost:5050/grimoire' }, { insecure: false }).slice(-3),
+      ['--no-insecure', '--', 'acme'],
+    );
+    assert.ok(
+      !registrySetArgs('acme', { oci: 'localhost:5050/grimoire' }).some((a) =>
+        a.includes('insecure'),
+      ),
+    );
+  });
+
   test('registrySetArgs keeps a leading-hyphen glob a flag VALUE, not a flag', () => {
     assert.deepStrictEqual(registrySetArgs('-x', { oci: '--not-a-flag' }, { exclude: ['-y'] }), [
       'config',
@@ -387,8 +424,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { oci: 'ghcr.io/acme' },
-        { default: true, include: ['a/**'], exclude: ['b/**'] },
-        { default: true, include: ['old/**'], exclude: ['old/**'] },
+        { default: true, include: ['a/**'], exclude: ['b/**'], insecure: false },
+        { default: true, include: ['old/**'], exclude: ['old/**'], insecure: false },
       ),
       [
         [
@@ -413,8 +450,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { oci: 'ghcr.io/acme' },
-        { default: true, include: [], exclude: ['b/**'] },
-        { default: true, include: ['was/**'], exclude: ['b/**'] },
+        { default: true, include: [], exclude: ['b/**'], insecure: false },
+        { default: true, include: ['was/**'], exclude: ['b/**'], insecure: false },
       ),
       [
         [
@@ -439,8 +476,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { oci: 'ghcr.io/acme' },
-        { default: false, include: ['a/**'], exclude: ['b/**'] },
-        { default: true, include: ['a/**'], exclude: ['b/**'] },
+        { default: false, include: ['a/**'], exclude: ['b/**'], insecure: false },
+        { default: true, include: ['a/**'], exclude: ['b/**'], insecure: false },
       ),
       [
         [
@@ -463,8 +500,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { oci: 'ghcr.io/acme' },
-        { default: true, include: ['a/**'], exclude: [] },
-        { default: false, include: ['a/**'], exclude: [] },
+        { default: true, include: ['a/**'], exclude: [], insecure: false },
+        { default: false, include: ['a/**'], exclude: [], insecure: false },
       ),
       [
         [
@@ -481,6 +518,50 @@ suite('grim arg builders', () => {
     );
   });
 
+  test('editRegistrySteps writes the plain-HTTP opt-in only when it moves', () => {
+    const on = editRegistrySteps(
+      'local',
+      { oci: 'localhost:5050/grimoire' },
+      { default: false, include: [], exclude: [], insecure: true },
+      { default: false, include: [], exclude: [], insecure: false },
+    );
+    assert.deepStrictEqual(on, [
+      ['config', 'registry', 'set', '--oci=localhost:5050/grimoire', '--insecure', '--', 'local'],
+    ]);
+    const unchanged = editRegistrySteps(
+      'local',
+      { oci: 'localhost:5050/grimoire' },
+      { default: false, include: [], exclude: [], insecure: true },
+      { default: false, include: [], exclude: [], insecure: true },
+    );
+    assert.ok(!unchanged[0]?.some((a) => a.includes('insecure')));
+  });
+
+  test('editRegistrySteps turns the opt-in off on a swap to an index locator', () => {
+    // grim REFUSES to load an index entry carrying `insecure` (exit 78), so the
+    // `false` half has to ride along with `--index` — which grim allows; only
+    // ENABLING is refused there.
+    assert.deepStrictEqual(
+      editRegistrySteps(
+        'local',
+        { index: 'https://index.acme.internal' },
+        { default: false, include: [], exclude: [], insecure: false },
+        { default: false, include: [], exclude: [], insecure: true },
+      ),
+      [
+        [
+          'config',
+          'registry',
+          'set',
+          '--index=https://index.acme.internal',
+          '--no-insecure',
+          '--',
+          'local',
+        ],
+      ],
+    );
+  });
+
   test('editRegistrySteps emits nothing subtractive when nothing was there to subtract', () => {
     // The ordinary save: a registry that is not the default, with a list that
     // was already empty, is ONE process spawn and carries no clear flag.
@@ -488,8 +569,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { oci: 'ghcr.io/acme' },
-        { default: false, include: ['a/**'], exclude: [] },
-        { default: false, include: [], exclude: [] },
+        { default: false, include: ['a/**'], exclude: [], insecure: false },
+        { default: false, include: [], exclude: [], insecure: false },
       ),
       [['config', 'registry', 'set', '--oci=ghcr.io/acme', '--include=a/**', '--', 'acme']],
     );
@@ -500,8 +581,8 @@ suite('grim arg builders', () => {
       editRegistrySteps(
         'acme',
         { index: 'https://index.acme.internal' },
-        { default: false, include: [], exclude: [] },
-        { default: true, include: ['a/**'], exclude: ['b/**'] },
+        { default: false, include: [], exclude: [], insecure: false },
+        { default: true, include: ['a/**'], exclude: ['b/**'], insecure: false },
       ),
       [
         [

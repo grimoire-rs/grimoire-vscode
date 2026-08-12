@@ -357,7 +357,12 @@ function withLivePrevious(ui: AddRegistryUI): AddRegistryUI {
     ...ui,
     mode: {
       ...mode,
-      previous: { include: row.include, exclude: row.exclude, default: row.default },
+      previous: {
+        include: row.include,
+        exclude: row.exclude,
+        default: row.default,
+        insecure: row.insecure,
+      },
     },
   };
 }
@@ -702,10 +707,10 @@ root.addEventListener('change', (event) => {
     render();
     return;
   }
-  if (field === 'default') {
+  if (field === 'default' || field === 'insecure') {
     addRegistry = {
       ...addRegistry,
-      draft: { ...addRegistry.draft, default: (target as HTMLInputElement).checked },
+      draft: { ...addRegistry.draft, [field]: (target as HTMLInputElement).checked },
     };
     render();
     return;

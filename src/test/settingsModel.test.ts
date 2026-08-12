@@ -244,6 +244,17 @@ suite('buildRegistryRow', () => {
     assert.deepStrictEqual(row.exclude, []);
   });
 
+  test('the plain-HTTP opt-in carries through, and an omitted one reads as false', () => {
+    assert.strictEqual(buildRegistryRow(wireRegistryEntry({ insecure: true })).insecure, true);
+    // Additive field: an older grim omits it, which is the same view as HTTPS.
+    assert.strictEqual(buildRegistryRow(wireRegistryEntry()).insecure, false);
+    assert.strictEqual(
+      buildRegistryRow({ ...wireRegistryEntry(), insecure: 'yes' } as unknown as WireRegistryEntry)
+        .insecure,
+      false,
+    );
+  });
+
   test('a non-array filter field reads as unfiltered rather than reaching .join()', () => {
     // A hand-edited config can make grim report a bare string here. `?? []`
     // guarded only null/undefined, so the value flowed straight to
@@ -419,6 +430,7 @@ suite('draftFromRegistry', () => {
         include: ['acme/platform/**', 'acme/{tools,libs}/**'],
         exclude: ['acme/platform/legacy/**'],
         default: true,
+        insecure: false,
       }),
     );
     assert.deepStrictEqual(draftFromRegistry(row), {
@@ -428,6 +440,7 @@ suite('draftFromRegistry', () => {
       include: ['acme/platform/**', 'acme/{tools,libs}/**'],
       exclude: ['acme/platform/legacy/**'],
       default: true,
+      insecure: false,
     });
   });
 
@@ -826,6 +839,7 @@ suite('editRegistryUI', () => {
         include: ['acme/platform/**'],
         exclude: ['acme/platform/legacy/**'],
         default: true,
+        insecure: false,
       }),
     );
 
@@ -839,6 +853,7 @@ suite('editRegistryUI', () => {
         include: ['acme/platform/**'],
         exclude: ['acme/platform/legacy/**'],
         default: true,
+        insecure: false,
       },
       helpOpen: null,
       saving: false,
@@ -850,6 +865,7 @@ suite('editRegistryUI', () => {
           include: ['acme/platform/**'],
           exclude: ['acme/platform/legacy/**'],
           default: true,
+          insecure: false,
         },
       },
     });
@@ -880,6 +896,7 @@ suite('registrySubmitMessage', () => {
     include: ['acme/**'],
     exclude: ['acme/legacy/**'],
     default: true,
+    insecure: false,
   };
 
   test('add mode posts addRegistry with the trimmed draft alias', () => {
@@ -893,6 +910,7 @@ suite('registrySubmitMessage', () => {
         include: ['acme/**'],
         exclude: ['acme/legacy/**'],
         default: true,
+        insecure: false,
       },
     );
   });
@@ -900,7 +918,7 @@ suite('registrySubmitMessage', () => {
   // The alias comes off the MODE, never the draft: the field is readonly in
   // edit mode and grim has no rename, so a draft alias could only be wrong.
   test('edit mode posts editRegistry named by the mode, with the captured previous state', () => {
-    const previous = { include: [], exclude: [], default: false };
+    const previous = { include: [], exclude: [], default: false, insecure: false };
     assert.deepStrictEqual(
       registrySubmitMessage('global', {
         ...CLOSED_ADD_REGISTRY,
@@ -916,6 +934,7 @@ suite('registrySubmitMessage', () => {
         include: ['acme/**'],
         exclude: ['acme/legacy/**'],
         default: true,
+        insecure: false,
         previous,
       },
     );
@@ -928,6 +947,25 @@ suite('registrySubmitMessage', () => {
       draft: { ...draft, kind: 'index', locator: 'https://x/index.json' },
     });
     assert.deepStrictEqual(message.locator, { index: 'https://x/index.json' });
+  });
+
+  test('an index draft never posts the plain-HTTP opt-in, whatever the draft remembers', () => {
+    // grim rejects `--insecure` on an index locator (exit 65), and the draft
+    // deliberately keeps a ticked box across a flip to Index and back.
+    const message = registrySubmitMessage('project', {
+      ...CLOSED_ADD_REGISTRY,
+      open: true,
+      draft: { ...draft, kind: 'index', locator: 'https://x/index.json', insecure: true },
+    });
+    assert.strictEqual(message.insecure, false);
+    assert.strictEqual(
+      registrySubmitMessage('project', {
+        ...CLOSED_ADD_REGISTRY,
+        open: true,
+        draft: { ...draft, kind: 'oci', insecure: true },
+      }).insecure,
+      true,
+    );
   });
 
   test('round-trips an edit opened from a row', () => {

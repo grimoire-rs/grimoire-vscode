@@ -274,6 +274,11 @@ export interface RegistryEntry {
   include?: string[];
   exclude?: string[];
   default: boolean;
+  // Additive (frozen-additive): the entry's plain-HTTP opt-in. Reports the
+  // AUTHORED field, not the effective transport — a host reached over HTTP
+  // through grim's implicit loopback set or GRIM_INSECURE_REGISTRIES still
+  // reports false. Absent on older binaries — read as false.
+  insecure?: boolean;
 }
 
 /** One row of `grim config registry fields` — presentation metadata for the
@@ -704,7 +709,7 @@ export type RegistryLocator = { oci: string } | { index: string };
 export function registryAddArgs(
   alias: string,
   locator: RegistryLocator,
-  options: { default?: boolean; include?: string[]; exclude?: string[] } = {},
+  options: { default?: boolean; include?: string[]; exclude?: string[]; insecure?: boolean } = {},
 ): string[] {
   const args = ['config', 'registry', 'add'];
   args.push('oci' in locator ? `--oci=${locator.oci}` : `--index=${locator.index}`);
@@ -716,6 +721,13 @@ export function registryAddArgs(
   }
   if (options.default) {
     args.push('--default');
+  }
+  // grim refuses `--insecure` alongside `--index` (exit 65: an index locator
+  // carries its own scheme), so an index caller must never set this — the
+  // webview's checkbox only exists on the OCI kind, and the submit message
+  // pins it to false for the other (model.ts's registrySubmitMessage).
+  if (options.insecure) {
+    args.push('--insecure');
   }
   args.push('--', alias);
   return args;
@@ -745,6 +757,11 @@ export function registrySetArgs(
     exclude?: string[];
     clearInclude?: boolean;
     clearExclude?: boolean;
+    /** Tri-state, matching grim's own `--insecure`/`--no-insecure` pair:
+     *  omitted leaves the entry's current setting alone. `true` is refused on
+     *  an index entry (exit 65); `false` is accepted on either kind, which is
+     *  what makes it safe to write unconditionally on an ordinary save. */
+    insecure?: boolean;
   } = {},
 ): string[] {
   const args = ['config', 'registry', 'set'];
@@ -766,11 +783,14 @@ export function registrySetArgs(
   if (options.default) {
     args.push('--default');
   }
+  if (options.insecure !== undefined) {
+    args.push(options.insecure ? '--insecure' : '--no-insecure');
+  }
   args.push('--', alias);
   return args;
 }
 
-/** The three registry fields an edit cannot clear by omission — held twice
+/** The registry fields an edit cannot clear by omission — held twice
  *  (target and starting point) so {@link editRegistrySteps} can tell a real
  *  clear from a field that was already empty or already off. The locator is
  *  not here: it is always written, so it travels as its own parameter.
@@ -807,6 +827,12 @@ export function editRegistrySteps(
       exclude: desired.exclude,
       clearInclude: desired.include.length === 0 && previous.include.length > 0,
       clearExclude: desired.exclude.length === 0 && previous.exclude.length > 0,
+      // Written only when it moves, like every other subtractive form here.
+      // The `false` half matters on a kind swap: an `insecure` entry turned
+      // into an index one keeps a field grim REFUSES to load (exit 78), so
+      // `--no-insecure` has to ride along with `--index`, which grim allows
+      // (only ENABLING is refused on an index).
+      ...(desired.insecure === previous.insecure ? {} : { insecure: desired.insecure }),
     }),
   ];
   if (!desired.default && previous.default) {

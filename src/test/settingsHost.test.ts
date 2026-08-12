@@ -499,6 +499,7 @@ suite('settings host integration', () => {
       include: [],
       exclude: [],
       default: false,
+      insecure: false,
     });
     assert.strictEqual(posts.length, 1);
     assert.strictEqual(posts[0]?.type, 'state');
@@ -516,6 +517,7 @@ suite('settings host integration', () => {
       include: ['acme/platform/**', 'acme/{tools,libs}/**'],
       exclude: ['acme/platform/legacy/**'],
       default: false,
+      insecure: false,
     });
     const line = argvLines(stub).find((l) => l.includes('-- filtered'));
     assert.ok(line, 'the add reached grim');
@@ -538,7 +540,8 @@ suite('settings host integration', () => {
       include: ['acme/platform/**', 'acme/{tools,libs}/**'],
       exclude: ['acme/platform/legacy/**'],
       default: true,
-      previous: { include: ['old/**'], exclude: ['old/**'], default: true },
+      insecure: false,
+      previous: { include: ['old/**'], exclude: ['old/**'], default: true, insecure: false },
     });
     const sets = argvLines(stub).filter((l) => l.startsWith('config registry set'));
     assert.strictEqual(sets.length, 1, 'a fully-populated edit is a single call');
@@ -567,7 +570,8 @@ suite('settings host integration', () => {
       include: [],
       exclude: ['legacy/**'],
       default: true,
-      previous: { include: ['was/**'], exclude: ['legacy/**'], default: true },
+      insecure: false,
+      previous: { include: ['was/**'], exclude: ['legacy/**'], default: true, insecure: false },
     });
     const lines = argvLines(stub).slice(before);
     const sets = lines.filter((l) => l.startsWith('config registry set'));
@@ -600,7 +604,8 @@ suite('settings host integration', () => {
       include: [],
       exclude: [],
       default: false,
-      previous: { include: ['a/**'], exclude: ['b/**'], default: true },
+      insecure: false,
+      previous: { include: ['a/**'], exclude: ['b/**'], default: true, insecure: false },
     });
     assert.strictEqual(posts.length, 1, 'expected exactly one post: writeError, no state repost');
     const message = posts[0];
@@ -632,7 +637,8 @@ suite('settings host integration', () => {
       include: ['keep/**'],
       exclude: [],
       default: false, // demotion is the second step — the one the stub refuses
-      previous: { include: ['keep/**'], exclude: [], default: true },
+      insecure: false,
+      previous: { include: ['keep/**'], exclude: [], default: true, insecure: false },
     });
     const ran = argvLines(stub).slice(before);
     assert.ok(ran[0]?.startsWith('config registry set'), 'the set ran first');
@@ -665,6 +671,7 @@ suite('settings host integration', () => {
       include: [],
       exclude: [],
       default: false,
+      insecure: false,
     });
     assert.strictEqual(posts.length, 1, 'expected exactly one post: writeError, no state repost');
     const message = posts[0];

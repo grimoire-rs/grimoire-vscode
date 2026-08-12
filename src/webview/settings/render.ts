@@ -30,7 +30,7 @@ import {
 const DOCS_URL = 'https://grimoire.rs/';
 
 /** grim-polyfill<0.13.0: first grim accepting `config registry add
- *  --include/--exclude` and the `config registry set` verb. Copied from
+ *  --include/--exclude/--insecure` and the `config registry set` verb. Copied from
  *  installer.ts's REGISTRY_EDIT_GRIM_VERSION, not imported — that module is
  *  host-only and this one is bundled into the webview. */
 const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
@@ -40,7 +40,7 @@ const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
  *  actually running, when that is known — is what turns it into something the
  *  user can act on. The running clause is omitted rather than guessed: a phase
  *  that never resolved a version would otherwise print "(running null)". */
-const FILTER_GATE_LEAD = 'Browse filters need';
+const FILTER_GATE_LEAD = 'Browse filters and the plain-HTTP option need';
 const EDIT_GATE_LEAD = 'Editing a registry needs';
 
 function gateHint(lead: string, grimVersion: string | null): TemplateResult {
@@ -199,9 +199,10 @@ function renderGroup(group: SettingsGroupVM): TemplateResult {
 // --- Registries ---
 
 function renderRegistryRow(r: SettingsRegistryVM, editSupported: boolean): TemplateResult {
+  const marks = html`${renderFilterMark(r)}${renderInsecureMark(r)}`;
   const aliasCell = r.legacy
-    ? html`<span class="registry-alias legacy-alias">(no alias)${renderFilterMark(r)}</span>`
-    : html`<span class="registry-alias">${r.alias}${renderFilterMark(r)}</span>`;
+    ? html`<span class="registry-alias legacy-alias">(no alias)${marks}</span>`
+    : html`<span class="registry-alias">${r.alias}${marks}</span>`;
   // Default star: gold when set (design "#e2c08d" — mapped here to
   // --vscode-gitDecoration-modifiedResourceForeground, the closest existing
   // gold-ish token in the theme's default palette; no prior binding for this
@@ -263,6 +264,18 @@ function renderFilterMark(r: SettingsRegistryVM): TemplateResult | typeof nothin
     .filter((s) => s !== '')
     .join('\n\n');
   return html`<span class="codicon codicon-filter registry-filter-mark" title="${tooltip}"></span>`;
+}
+
+/** A transport downgrade the user opted into should be legible in the table,
+ *  not silent — the row otherwise looks exactly like an HTTPS one. Beside the
+ *  filter mark, in the same alias cell, and only on an entry that authored the
+ *  field: grim's implicit loopback set reports `insecure: false`, so a rig
+ *  registry on `localhost:5000` is deliberately unmarked here. */
+function renderInsecureMark(r: SettingsRegistryVM): TemplateResult | typeof nothing {
+  if (!r.insecure) {
+    return nothing;
+  }
+  return html`<span class="codicon codicon-unlock registry-insecure-mark" title="Plain HTTP — credentials and artifact bytes for this host travel in cleartext."></span>`;
 }
 
 function renderRegistryTable(
@@ -496,6 +509,19 @@ function renderAddRegistryForm(
   ${renderPatternField(fields, 'include', draft.include, 'Include patterns', 'acme/platform/**', editingIndex('include'))}
   ${renderPatternField(fields, 'exclude', draft.exclude, 'Exclude patterns', 'acme/platform/legacy/**', editingIndex('exclude'))}`
     : gateHint(FILTER_GATE_LEAD, grimVersion);
+  // OCI only, because grim refuses `--insecure` on an index locator (exit 65:
+  // the locator already carries its own scheme) — hidden rather than disabled,
+  // since on the Index kind there is nothing the box could ever mean. Its
+  // warning is under the box, not in a tooltip: what this ticks is a transport
+  // downgrade for every collaborator who clones the config.
+  const insecureField =
+    registryEditSupported && draft.kind === 'oci'
+      ? html`
+  <div class="form-field">
+    <label class="checkbox-label"><input type="checkbox" data-field="insecure" ?checked="${draft.insecure}" />${registryFieldLabel(fields, 'insecure', 'Plain-HTTP transport')}</label>
+    <div class="row-hint">Contacts this host over <code class="inline-code">http://</code>, exactly as written including its port. <code class="inline-code">grimoire.toml</code> is normally committed, so this downgrades transport for everyone who clones the project.</div>
+  </div>`
+      : nothing;
   // A registry write is several grim invocations behind a per-scope queue and a
   // lock retry, so it is visibly slow. `inert` takes the whole subtree out of
   // interaction in one attribute — including the repeaters' delegated handlers
@@ -528,6 +554,7 @@ function renderAddRegistryForm(
     <span class="form-label">Locator</span>
     <input type="text" class="settings-input form-locator" data-field="locator" placeholder="${LOCATOR_PLACEHOLDER[draft.kind]}" value="${draft.locator}" />
   </label>
+  ${insecureField}
   ${filterFields}
   <label class="checkbox-label"><input type="checkbox" data-field="default" ?checked="${draft.default}" />${registryFieldLabel(fields, 'default', 'Set as default registry')}</label>
   ${errorLine}
