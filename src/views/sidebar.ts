@@ -28,6 +28,7 @@ import {
   type Scope,
 } from '../grim';
 import type { CatalogService } from '../catalog';
+import type { CachedCardMeta } from '../detailsCache';
 import {
   projectSearchable,
   searchScopeFor,
@@ -35,13 +36,16 @@ import {
   type Snapshot,
 } from '../scopes';
 import {
+  applyCardMeta,
   artifactName,
   authenticatedHosts,
   buildCards,
   buildInstalledCards,
   buildShareLink,
   firstUnknownScope,
+  refRepo,
   registryUrlHost,
+  repoForInstall,
   updateCount,
   type ScopeStatus,
 } from '../webview/model';
@@ -73,10 +77,16 @@ export interface SidebarDelegate {
   /** Suspends file watchers for the duration of a mutating action (its own
    *  writes' watcher events are redundant with the completion refresh). */
   suspendWhile<T>(fn: () => Promise<T>): Promise<T>;
-  /** Cached logo data-URIs for the given repos (misses omitted). */
-  cachedLogos(repos: string[]): Promise<Map<string, string>>;
-  /** Background-prefetch the top of a fresh browse result list into the cache. */
-  prefetch(repos: string[]): void;
+  /** Cached logo + latest-version card decorations for the given repos (misses
+   *  omitted). */
+  cachedCardMeta(repos: string[]): Promise<Map<string, CachedCardMeta>>;
+  /** Drops a repo's cached registry snapshot after an action changed that
+   *  artifact, so the refresh that follows re-resolves its version. */
+  forgetCached(repo: string): void;
+  /** Background-prefetch the top of a fresh browse result list into the cache.
+   *  `force` bypasses the cache TTL — an explicit refresh re-resolves versions
+   *  rather than repainting yesterday's answer. */
+  prefetch(repos: string[], options?: { force?: boolean }): void;
   /** Publishes the outdated count to whatever owns the activity-bar badge (see
    *  views/updatesView.ts for why that is not this webview). */
   setUpdateCount(count: number): void;
@@ -129,7 +139,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // passed per post because the two posts that most need it don't have a
   // snapshot to read: the `phase:'loading'` post that opens the next refresh
   // (otherwise the banner blinks out and back every watcher round) and a
-  // repostLogos, whose lastReady predates the failure by construction — it is
+  // repostCardMeta, whose lastReady predates the failure by construction — it is
   // only ever assigned on a round where status worked.
   private lastUnknown:
     | {
@@ -138,13 +148,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         origin?: GrimOrigin;
       }
     | undefined;
-  // In-flight refresh count; repostLogos stays quiet while > 0.
+  // In-flight refresh count; repostCardMeta stays quiet while > 0.
   private refreshing = 0;
   // A logo repost that arrived mid-refresh, replayed once the refresh drains.
   // Without it the signal is LOST: the debounce upstream has already fired, and
-  // the refresh's own enrichLogos may have run before the logo was cached — so
+  // the refresh's own enrichCards may have run before the logo was cached — so
   // the card keeps its codicon tile until some unrelated later refresh.
-  private logoRepostPending = false;
+  private metaRepostPending = false;
   // Monotonic refresh generation. A refresh checks it after every await and
   // bails if a newer one has started, so a slow older refresh can never
   // overwrite a newer refresh's state (stale cards / badge / prefetch).
@@ -276,10 +286,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // probe must not trigger init — see the method's doc.
         const needsInit = message.scope === 'project' && (await this.scopes.projectNeedsInit());
         const steps = needsInit ? [initArgs(), addArgs(message.ref)] : [addArgs(message.ref)];
+        this.delegate.forgetCached(refRepo(message.ref));
         await this.runAction(steps, message.scope, `Installing ${message.ref}…`);
         return;
       }
       case 'uninstall':
+        this.forgetInstalled(message.kind, message.name, message.scope);
         await this.runAction(
           [uninstallOrRemoveArgs(message.kind, message.name)],
           message.scope,
@@ -289,6 +301,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         );
         return;
       case 'update':
+        this.forgetInstalled(message.kind, message.name, message.scope);
         await this.runAction(
           [updateArgs([message.name])],
           message.scope,
@@ -312,6 +325,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         await this.delegate.pin(message.ref);
         return;
       case 'pickVersion':
+        this.delegate.forgetCached(message.repo);
         await this.delegate.pickVersion(message.repo);
         return;
       case 'openDetails':
@@ -377,6 +391,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // diagnostics with no state to plumb back.
         await vscode.commands.executeCommand('grimoire.showGrimInfo');
         return;
+    }
+  }
+
+  /** Cache-forget for an action that names an install (kind + name + scope)
+   *  rather than a repo: the loaded cards carry that mapping, so no grim call
+   *  and no protocol change is needed to find the repo. A card set that no
+   *  longer holds the artifact (a stale webview click) simply forgets nothing. */
+  private forgetInstalled(kind: string, name: string, scope: Scope): void {
+    const cards = [...(this.lastReady?.cards ?? []), ...(this.lastReady?.installed ?? [])];
+    const repo = repoForInstall(cards, kind, name, scope);
+    if (repo !== null) {
+      this.delegate.forgetCached(repo);
     }
   }
 
@@ -456,9 +482,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       await this.doRefresh(options, gen);
     } finally {
       this.refreshing--;
-      if (this.refreshing === 0 && this.logoRepostPending) {
-        this.logoRepostPending = false;
-        void this.repostLogos(); // replay the signal this refresh swallowed
+      if (this.refreshing === 0 && this.metaRepostPending) {
+        this.metaRepostPending = false;
+        void this.repostCardMeta(); // replay the signal this refresh swallowed
       }
     }
   }
@@ -548,8 +574,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       authed,
       defaultRegistryHost,
     );
-    await this.enrichLogos(cards);
-    await this.enrichLogos(installed);
+    await this.enrichCards(cards);
+    await this.enrichCards(installed);
     if (gen !== this.refreshGen) {
       return; // superseded during logo enrichment — don't clobber newer state
     }
@@ -602,7 +628,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Browse results drive the prefetch (top-K handled by the prefetcher).
     // Skip on error results.
     if (catalogError === undefined) {
-      this.delegate.prefetch(cards.map((c) => c.repo));
+      // An explicit refresh/check re-resolves the cached describes too: they are
+      // where an index-backed row's version comes from, and a TTL-fresh entry
+      // would otherwise outlive several deliberate refreshes.
+      this.delegate.prefetch(cards.map((c) => c.repo), {
+        force: options.refresh === true || options.check === true,
+      });
     }
   }
 
@@ -620,38 +651,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.delegate.setUpdateCount(count);
   }
 
-  /** Sets card.logoUri from the details cache (misses stay codicon tiles). */
-  private async enrichLogos(cards: CardVM[]): Promise<void> {
+  /** Sets card.logoUri and — for a card the catalog gave no version — its
+   *  latestVersion from the details cache (misses stay codicon tiles / blank).
+   *
+   *  The version fallback is what makes index-backed rows show a version at all:
+   *  `grim search` reports null `version`/`latest_tag` for every repo behind an
+   *  index (a phone book carries no tags), so the row's only source is the live
+   *  describe the prefetch already caches. A catalog-supplied version always
+   *  wins — it is the same round's answer, not a snapshot of an older one.
+   *
+   *  ponytail: rides the existing prefetch, so it reaches its top-K and honors
+   *  grimoire.prefetchDetails. Rows past that ceiling stay blank — give them a
+   *  describe-only sweep if the catalogs get big enough to notice. */
+  private async enrichCards(cards: CardVM[]): Promise<void> {
     if (cards.length === 0) {
       return;
     }
-    const logos = await this.delegate.cachedLogos(cards.map((c) => c.repo));
-    for (const card of cards) {
-      const logo = logos.get(card.repo);
-      if (logo) {
-        card.logoUri = logo;
-      }
-    }
+    applyCardMeta(cards, await this.delegate.cachedCardMeta(cards.map((c) => c.repo)));
   }
 
-  /** Re-enriches the last ready result's logos and reposts WITHOUT the loading
-   *  flash — pops in logos as prefetches land (debounced by the prefetcher). */
-  async repostLogos(): Promise<void> {
+  /** Re-enriches the last ready result's cards and reposts WITHOUT the loading
+   *  flash — pops in logos and versions as prefetches land (debounced by the
+   *  prefetcher). */
+  async repostCardMeta(): Promise<void> {
     if (this.refreshing > 0) {
-      this.logoRepostPending = true; // replayed when the refresh drains
+      this.metaRepostPending = true; // replayed when the refresh drains
       return;
     }
     const ready = this.lastReady;
     if (!ready) {
       return; // nothing painted yet — the first ready post enriches from cache
     }
-    await this.enrichLogos(ready.cards);
-    await this.enrichLogos(ready.installed);
+    await this.enrichCards(ready.cards);
+    await this.enrichCards(ready.installed);
     // Re-check after the await gap: a refresh may have started (or replaced
     // lastReady) while the logo reads were in flight — posting now would emit
     // a stale ready state that cancels the webview's refreshing footer.
     if (this.refreshing > 0) {
-      this.logoRepostPending = true;
+      this.metaRepostPending = true;
       return;
     }
     if (this.lastReady !== ready) {

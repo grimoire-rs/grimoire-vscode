@@ -32,6 +32,25 @@ export interface DetailsCacheEntry {
   changelog: string | null;
 }
 
+/** What a cached snapshot lends a sidebar card: the artifact logo and the
+ *  describe-resolved latest version. Either may be null; an entry with both
+ *  null decorates nothing and is omitted. */
+export interface CachedCardMeta {
+  logoUri: string | null;
+  version: string | null;
+}
+
+/** The card slice of an entry, or null when it carries neither piece. The one
+ *  place that decides what "has something to decorate a card with" means —
+ *  {@link DetailsCache.presentCardMeta} reads it, and details.ts fires its
+ *  sidebar repost off the same predicate, so a save that lands a version
+ *  cannot go unreported. */
+export function cardMetaOf(entry: DetailsCacheEntry | null): CachedCardMeta | null {
+  const logoUri = entry?.logoUri ?? null;
+  const version = entry?.describe?.version ?? null;
+  return logoUri === null && version === null ? null : { logoUri, version };
+}
+
 /** Newest N snapshot files kept on save; older ones pruned by mtime.
  *  ponytail: fixed ceiling, not an LRU — a details cache is a nicety, not a
  *  budget to manage. Sized for the background prefetch (top-K per search over a
@@ -83,24 +102,37 @@ export class DetailsCache {
     }
   }
 
-  /** Logo data-URIs for the cached subset of `repos` (misses omitted). Reads the
-   *  directory once and loads only the hits, so cost is O(cache size), not
-   *  O(repos) — cheap to call per sidebar render at thousands-of-catalog scale. */
-  async presentLogos(repos: string[]): Promise<Map<string, string>> {
+  /** Card decorations for the cached subset of `repos` (misses omitted). Reads
+   *  the directory once and loads only the hits, so cost is O(cache size), not
+   *  O(repos) — cheap to call per sidebar render at thousands-of-catalog scale.
+   *
+   *  `version` is the describe-resolved latest tag, and it is what an
+   *  index-backed row has no other source for: an index is a phone book, so
+   *  `grim search` reports `version`/`latest_tag` as null for every repo behind
+   *  one, and only a live describe knows the tag. */
+  async presentCardMeta(repos: string[]): Promise<Map<string, CachedCardMeta>> {
     const names = new Set(await fs.readdir(this.dir).catch(() => [] as string[]));
-    const out = new Map<string, string>();
+    const out = new Map<string, CachedCardMeta>();
     await Promise.all(
       repos.map(async (repo) => {
         if (!names.has(hashName(repo))) {
           return;
         }
         const entry = await this.load(repo);
-        if (entry?.logoUri) {
-          out.set(repo, entry.logoUri);
+        const meta = cardMetaOf(entry);
+        if (meta) {
+          out.set(repo, meta);
         }
       }),
     );
     return out;
+  }
+
+  /** Drops the repo's entry, so the next read misses and re-resolves. Called
+   *  after a mutating action on that artifact: the 6h TTL is right for a
+   *  background sweep and wrong for the artifact the user just changed. */
+  async forget(repo: string): Promise<void> {
+    await fs.rm(this.fileFor(repo), { force: true }).catch(() => {});
   }
 
   /** Overwrites the repo's entry in place (latest-only, no version history),

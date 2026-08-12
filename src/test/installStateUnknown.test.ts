@@ -9,6 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { CatalogService, CatalogState } from '../catalog';
+import type { CachedCardMeta } from '../detailsCache';
 import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { ScopeService, ScopeSnapshot, Snapshot } from '../scopes';
 import { DetailsManager } from '../views/details';
@@ -180,7 +181,8 @@ function makeSidebar(
     pin: async () => {},
     pickVersion: async () => {},
     suspendWhile: (fn) => fn(),
-    cachedLogos: async () => new Map<string, string>(),
+    cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
+    forgetCached: () => {},
     prefetch: () => {},
     setUpdateCount: (count) => counts.push(count),
   };
@@ -222,7 +224,7 @@ suite('unknown install state: sidebar', () => {
     const degraded = await renderState(lastState(posted));
     assert.ok(degraded.includes('Install state is unavailable'), 'precondition: banner is up');
 
-    await provider.repostLogos();
+    await provider.repostCardMeta();
     const afterRepost = await renderState(lastState(posted));
     assert.ok(
       afterRepost.includes('Install state is unavailable'),

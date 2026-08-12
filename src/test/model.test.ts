@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import { installedScope, sidebarState } from './fixtures/vms';
 import {
+  applyCardMeta,
   addRegistryPrompt,
   artifactName,
   authenticatedHosts,
@@ -999,6 +1000,39 @@ suite('effective install (design-2b chip)', () => {
     assert.strictEqual(effectiveInstall([global, project]), project);
     assert.strictEqual(effectiveInstall([global]), global);
     assert.strictEqual(effectiveInstall([]), undefined);
+  });
+});
+
+suite('applyCardMeta (cached logo + describe version enrichment)', () => {
+  test('fills a null latestVersion from the cached describe — the index-backed case', () => {
+    // `grim search` behind an index reports no version at all, so the cached
+    // describe is the row's only source of one.
+    const cards = buildCards([searchItem({ version: null, latest_tag: null })], []);
+    applyCardMeta(
+      cards,
+      new Map([
+        [
+          'ghcr.io/grimoire-rs/skills/grim-usage',
+          { logoUri: 'data:image/png;base64,AAA', version: '1.4.2' },
+        ],
+      ]),
+    );
+    assert.strictEqual(cards[0]?.latestVersion, '1.4.2');
+    assert.strictEqual(cards[0]?.logoUri, 'data:image/png;base64,AAA');
+  });
+
+  test('a catalog version wins over the cached one, and a miss changes nothing', () => {
+    const cards = buildCards([searchItem({ version: '2.0.0' })], []);
+    applyCardMeta(
+      cards,
+      new Map([['ghcr.io/grimoire-rs/skills/grim-usage', { logoUri: null, version: '1.4.2' }]]),
+    );
+    assert.strictEqual(cards[0]?.latestVersion, '2.0.0');
+
+    const untouched = buildCards([searchItem()], []);
+    applyCardMeta(untouched, new Map());
+    assert.strictEqual(untouched[0]?.latestVersion, null);
+    assert.strictEqual(untouched[0]?.logoUri, undefined);
   });
 });
 

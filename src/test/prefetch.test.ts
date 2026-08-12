@@ -10,7 +10,7 @@ function make(overrides: Partial<PrefetchDeps> = {}): { p: Prefetcher; worked: s
       worked.push(repo);
     },
     isFresh: async () => false,
-    onLogosLanded: () => {},
+    onCardMetaLanded: () => {},
     enabled: () => true,
     ...overrides,
   });
@@ -25,6 +25,16 @@ suite('Prefetcher', () => {
     await flush();
     await flush();
     assert.deepStrictEqual(worked.slice().sort(), ['a', 'c']);
+  });
+
+  test('force re-fetches even a cache-fresh repo (explicit refresh)', async () => {
+    // The 6h TTL is right for background rounds and wrong for a user who just
+    // asked; behind an index registry that entry IS the row's version.
+    const { p, worked } = make({ isFresh: async () => true });
+    await p.enqueue(['a', 'b'], { force: true });
+    await flush();
+    await flush();
+    assert.deepStrictEqual(worked.slice().sort(), ['a', 'b']);
   });
 
   test('no-op when disabled', async () => {
@@ -110,28 +120,28 @@ suite('Prefetcher', () => {
   test('landed logos trigger a single debounced repost per burst', async () => {
     let reposts = 0;
     const { p } = make({
-      onLogosLanded: () => {
+      onCardMetaLanded: () => {
         reposts += 1;
       },
     });
     // Any cache write with a logo notifies — prefetch or a details panel open.
-    p.notifyLogo();
-    p.notifyLogo();
-    p.notifyLogo();
+    p.notifyCardMeta();
+    p.notifyCardMeta();
+    p.notifyCardMeta();
     await new Promise((r) => setTimeout(r, 700)); // past the 500ms debounce
     assert.strictEqual(reposts, 1, 'the burst coalesced to one repost');
     p.dispose();
   });
 
-  test('notifyLogo after dispose never reposts', async () => {
+  test('notifyCardMeta after dispose never reposts', async () => {
     let reposts = 0;
     const { p } = make({
-      onLogosLanded: () => {
+      onCardMetaLanded: () => {
         reposts += 1;
       },
     });
     p.dispose();
-    p.notifyLogo();
+    p.notifyCardMeta();
     await new Promise((r) => setTimeout(r, 700));
     assert.strictEqual(reposts, 0, 'a disposed prefetcher stays quiet');
   });

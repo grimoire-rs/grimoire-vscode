@@ -318,10 +318,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     focusBrowseSearch,
     vscode.Uri.joinPath(context.globalStorageUri, 'details-cache').fsPath,
     suspendWhile,
-    // Every details cache write that carries a logo — prefetch OR a panel open —
-    // pokes the (debounced) sidebar repost. `prefetcher` is declared below and
+    // Every details cache write that carries a card decoration (logo or resolved
+    // version) — prefetch OR a panel open — pokes the (debounced) sidebar repost. `prefetcher` is declared below and
     // read at call time — forward-ref safe.
-    () => prefetcher.notifyLogo(),
+    () => prefetcher.notifyCardMeta(),
   );
 
   // Background prefetch of top browse results into the details cache. onLogosLanded
@@ -329,8 +329,8 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   const prefetcher = new Prefetcher({
     work: (repo) => details.prefetchInto(repo),
     isFresh: (repo) => details.isFresh(repo),
-    onLogosLanded: () => {
-      void sidebar.repostLogos();
+    onCardMetaLanded: () => {
+      void sidebar.repostCardMeta();
     },
     enabled: () => readConfig().prefetchDetails,
   });
@@ -350,8 +350,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     suspendWhile,
     pickVersion: (repo: string) =>
       suspendWhile(() => pickVersion(repo, scopes, output, refreshAll)),
-    cachedLogos: (repos: string[]) => details.cachedLogos(repos),
-    prefetch: (repos: string[]) => void prefetcher.enqueue(repos),
+    cachedCardMeta: (repos: string[]) => details.cachedCardMeta(repos),
+    forgetCached: (repo: string) => void details.forget(repo),
+    prefetch: (repos: string[], options?: { force?: boolean }) =>
+      void prefetcher.enqueue(repos, options ?? {}),
     setUpdateCount: (count: number) => updatesView.setCount(count),
   };
 

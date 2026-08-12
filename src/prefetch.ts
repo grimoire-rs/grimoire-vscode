@@ -13,8 +13,9 @@ export interface PrefetchDeps {
   work: (repo: string) => Promise<void>;
   /** True when the repo's cached snapshot is young enough to skip it. */
   isFresh: (repo: string) => Promise<boolean>;
-  /** Called (debounced) after a burst of cache writes produced logos. */
-  onLogosLanded: () => void;
+  /** Called (debounced) after a burst of cache writes produced card
+   *  decorations (a logo, or a describe-resolved latest version). */
+  onCardMetaLanded: () => void;
   /** Prefetch is a no-op while this returns false (grimoire.prefetchDetails). */
   enabled: () => boolean;
 }
@@ -23,15 +24,22 @@ export class Prefetcher {
   private pending: string[] = [];
   private readonly inFlight = new Set<string>();
   private disposed = false;
-  private logoTimer: ReturnType<typeof setTimeout> | undefined;
+  private metaTimer: ReturnType<typeof setTimeout> | undefined;
   /** Monotonic enqueue generation — see enqueue's freshness loop. */
   private generation = 0;
 
   constructor(private readonly deps: PrefetchDeps) {}
 
   /** Enqueue the top-K uncached repos of a fresh result list. New results clear
-   *  the pending queue (in-flight items just finish); fire-and-forget. */
-  async enqueue(repos: string[]): Promise<void> {
+   *  the pending queue (in-flight items just finish); fire-and-forget.
+   *
+   *  `force` skips the freshness probe, so an explicit refresh ("Check for
+   *  updates", the refresh button) re-resolves every top-K repo instead of
+   *  trusting a cache entry that is younger than the 6h TTL. That entry is what
+   *  a browse row's version comes from behind an index registry, so without this
+   *  a newly published version stayed invisible for hours no matter how often
+   *  the user hit refresh. */
+  async enqueue(repos: string[], options: { force?: boolean } = {}): Promise<void> {
     if (this.disposed || !this.deps.enabled()) {
       return;
     }
@@ -46,7 +54,7 @@ export class Prefetcher {
       if (this.inFlight.has(repo) || uncached.includes(repo)) {
         continue;
       }
-      if (!(await this.deps.isFresh(repo))) {
+      if (options.force === true || !(await this.deps.isFresh(repo))) {
         uncached.push(repo);
       }
     }
@@ -79,19 +87,20 @@ export class Prefetcher {
     }
   }
 
-  /** A logo landed in the details cache — from ANY path, prefetch or a details
-   *  panel open (the cache reports it at its save choke point). Single trailing
+  /** A card decoration (logo or resolved version) landed in the details cache —
+   *  from ANY path, prefetch or a details panel open (the cache reports it at
+   *  its save choke point). Single trailing
    *  repost per burst: coalesce logo landings within the window. The debounce
    *  lives here because this object owns the disposable timer wired to the
    *  sidebar; the prefetch loop no longer signals it directly. */
-  notifyLogo(): void {
-    if (this.logoTimer || this.disposed) {
+  notifyCardMeta(): void {
+    if (this.metaTimer || this.disposed) {
       return;
     }
-    this.logoTimer = setTimeout(() => {
-      this.logoTimer = undefined;
+    this.metaTimer = setTimeout(() => {
+      this.metaTimer = undefined;
       if (!this.disposed) {
-        this.deps.onLogosLanded();
+        this.deps.onCardMetaLanded();
       }
     }, REPOST_DEBOUNCE_MS);
   }
@@ -101,9 +110,9 @@ export class Prefetcher {
   dispose(): void {
     this.disposed = true;
     this.pending = [];
-    if (this.logoTimer) {
-      clearTimeout(this.logoTimer);
-      this.logoTimer = undefined;
+    if (this.metaTimer) {
+      clearTimeout(this.metaTimer);
+      this.metaTimer = undefined;
     }
   }
 }

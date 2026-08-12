@@ -18,7 +18,13 @@ import {
   type FetchResult,
   type Scope,
 } from '../grim';
-import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
+import {
+  CACHE_VERSION,
+  type CachedCardMeta,
+  cardMetaOf,
+  DetailsCache,
+  type DetailsCacheEntry,
+} from '../detailsCache';
 import type { CatalogService } from '../catalog';
 import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
 import {
@@ -113,10 +119,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
      *  passthrough so the manager is usable without the wiring. */
     private readonly suspendWhile: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn(),
     /** Fired (from the single {@link saveEntry} choke point) whenever a cache
-     *  write carries a logo, so the sidebar can pop it into its cards. Every
-     *  save path counts — opening a details panel caches logos exactly like the
-     *  background prefetch does, and only the prefetch used to report them. */
-    private readonly onLogoCached: () => void = () => {},
+     *  write carries something a card renders — a logo or a resolved latest
+     *  version — so the sidebar can pop it into its cards. Every save path
+     *  counts: opening a details panel caches both exactly like the background
+     *  prefetch does, and only the prefetch used to report them. */
+    private readonly onCardMetaCached: () => void = () => {},
   ) {
     this.cache = new DetailsCache(cacheDir);
   }
@@ -868,10 +875,21 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
   }
 
-  /** Cached logo data-URIs for the given repos (misses omitted) — browse-card
-   *  enrichment. Goes through this.cache so the test seam (setCacheDir) covers it. */
-  cachedLogos(repos: string[]): Promise<Map<string, string>> {
-    return this.cache.presentLogos(repos);
+  /** Cached logo + latest-version decorations for the given repos (misses
+   *  omitted) — browse-card enrichment. Goes through this.cache so the test seam
+   *  (setCacheDir) covers it. */
+  cachedCardMeta(repos: string[]): Promise<Map<string, CachedCardMeta>> {
+    return this.cache.presentCardMeta(repos);
+  }
+
+  /** Drops a repo's cached snapshot — the post-action hook, so the refresh that
+   *  follows an install/update/version switch re-resolves that artifact instead
+   *  of repainting a cache entry up to six hours old. Failures are swallowed: a
+   *  cache that would not delete is a stale paint, not a broken action. */
+  async forget(repo: string): Promise<void> {
+    await this.cache
+      .forget(repo)
+      .catch((e) => this.output.appendLine(`details cache forget failed for ${repo}: ${String(e)}`));
   }
 
   /** The prefetch skip filter: true only for an entry younger than
@@ -900,8 +918,8 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     await this.cache
       .save(repo, entry)
       .catch((e) => this.output.appendLine(`details cache save failed for ${repo}: ${String(e)}`));
-    if (entry.logoUri !== null) {
-      this.onLogoCached();
+    if (cardMetaOf(entry)) {
+      this.onCardMetaCached();
     }
   }
 

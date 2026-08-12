@@ -269,6 +269,50 @@ export function clientDriftTooltip(
   return parts.join(' · ');
 }
 
+/** Decorations a cached details snapshot lends a card (host-side detailsCache).
+ *  Structural, so this pure module needs no import from the extension host. */
+export interface CardMeta {
+  logoUri: string | null;
+  version: string | null;
+}
+
+/** Folds cached logo/version decorations into cards, IN PLACE.
+ *
+ *  The version half is what gives index-backed rows a version at all: an index
+ *  is a phone book, so `grim search` reports null `version`/`latest_tag` for
+ *  every repo behind one and only a live `grim describe` knows the tag. A
+ *  catalog-supplied version always wins — it is this round's answer, where the
+ *  cache is a snapshot of an older one. */
+export function applyCardMeta(cards: CardVM[], meta: Map<string, CardMeta>): void {
+  for (const card of cards) {
+    const cached = meta.get(card.repo);
+    if (!cached) {
+      continue;
+    }
+    if (cached.logoUri) {
+      card.logoUri = cached.logoUri;
+    }
+    if (card.latestVersion === null && cached.version) {
+      card.latestVersion = cached.version;
+    }
+  }
+}
+
+/** The repo an installed artifact belongs to, found by its install identity —
+ *  the identity every mutating message carries (kind + name + scope), where the
+ *  cache is keyed by repo. Null when no loaded card claims it. Pure. */
+export function repoForInstall(
+  cards: CardVM[],
+  kind: string,
+  name: string,
+  scope: Scope,
+): string | null {
+  const hit = cards.find((c) =>
+    c.installs.some((i) => i.kind === kind && i.name === name && i.scope === scope),
+  );
+  return hit?.repo ?? null;
+}
+
 /** The install that applies for a card's single installed chip: a project
  *  install shadows a global one inside a workspace (design 2b). */
 export function effectiveInstall(installs: InstallVM[]): InstallVM | undefined {

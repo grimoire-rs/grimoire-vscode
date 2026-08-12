@@ -4,6 +4,30 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
+import type { DescribeResult } from '../grim';
+
+/** A describe payload carrying just the field the card enrichment reads. */
+function describedAs(version: string | null): DescribeResult {
+  return {
+    ref: 'ghcr.io/o/skills/x:latest',
+    digest: 'sha256:a',
+    kind: 'skill',
+    name: 'x',
+    title: null,
+    description: null,
+    summary: null,
+    version,
+    license: null,
+    repository: null,
+    revision: null,
+    created: null,
+    keywords: null,
+    deprecated: null,
+    replaced_by: null,
+    tags: [],
+    annotations: {},
+  };
+}
 
 function entry(repo: string, overrides: Partial<DetailsCacheEntry> = {}): DetailsCacheEntry {
   return {
@@ -102,29 +126,43 @@ suite('DetailsCache', () => {
     assert.ok(await cache.load('ghcr.io/o/skills/fresh'), 'new entry kept');
   });
 
-  test('presentLogos returns logos for cached repos only (readdir once)', async () => {
+  test('presentCardMeta returns logo + version for cached repos only (readdir once)', async () => {
     const cache = new DetailsCache(dir);
     await cache.save(
       'ghcr.io/o/skills/withlogo',
-      entry('ghcr.io/o/skills/withlogo', { logoUri: 'data:image/png;base64,AAA' }),
+      entry('ghcr.io/o/skills/withlogo', {
+        logoUri: 'data:image/png;base64,AAA',
+        describe: describedAs('1.2.3'),
+      }),
     );
     await cache.save(
       'ghcr.io/o/skills/nologo',
-      entry('ghcr.io/o/skills/nologo', { logoUri: null }),
+      entry('ghcr.io/o/skills/nologo', { logoUri: null, describe: describedAs('0.9.0') }),
     );
-    const logos = await cache.presentLogos([
+    await cache.save('ghcr.io/o/skills/bare', entry('ghcr.io/o/skills/bare', { logoUri: null }));
+    const meta = await cache.presentCardMeta([
       'ghcr.io/o/skills/withlogo',
       'ghcr.io/o/skills/nologo',
+      'ghcr.io/o/skills/bare',
       'ghcr.io/o/skills/uncached',
     ]);
-    assert.strictEqual(logos.get('ghcr.io/o/skills/withlogo'), 'data:image/png;base64,AAA');
-    assert.ok(!logos.has('ghcr.io/o/skills/nologo'), 'cached but no logo → omitted');
-    assert.ok(!logos.has('ghcr.io/o/skills/uncached'), 'uncached → omitted');
+    assert.deepStrictEqual(meta.get('ghcr.io/o/skills/withlogo'), {
+      logoUri: 'data:image/png;base64,AAA',
+      version: '1.2.3',
+    });
+    // The index-backed case: no logo, but the describe-resolved version is the
+    // browse row's only source of one.
+    assert.deepStrictEqual(meta.get('ghcr.io/o/skills/nologo'), {
+      logoUri: null,
+      version: '0.9.0',
+    });
+    assert.ok(!meta.has('ghcr.io/o/skills/bare'), 'cached but nothing to decorate → omitted');
+    assert.ok(!meta.has('ghcr.io/o/skills/uncached'), 'uncached → omitted');
   });
 
-  test('presentLogos on a missing dir is an empty map', async () => {
+  test('presentCardMeta on a missing dir is an empty map', async () => {
     const cache = new DetailsCache(path.join(dir, 'does-not-exist'));
-    assert.strictEqual((await cache.presentLogos(['a/b/c'])).size, 0);
+    assert.strictEqual((await cache.presentCardMeta(['a/b/c'])).size, 0);
   });
 
   test('a corrupt file loads as null and is deleted', async () => {

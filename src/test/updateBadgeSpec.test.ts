@@ -15,6 +15,7 @@ import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { CheckedFields, ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
 import type { HostToSidebar } from '../webview/protocol';
+import type { CachedCardMeta } from '../detailsCache';
 
 const REPO = 'ghcr.io/grimoire-rs/skills/badged';
 
@@ -146,7 +147,8 @@ function makeSidebar(options: {
     pin: async () => {},
     pickVersion: async () => {},
     suspendWhile: (fn) => fn(),
-    cachedLogos: async () => new Map<string, string>(),
+    cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
+    forgetCached: () => {},
     prefetch: () => {},
     setUpdateCount: (count) => {
       counts.push(count);
