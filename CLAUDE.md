@@ -62,5 +62,6 @@ for the swarm/finalize skills (`task verify`, `task checkpoint`, `task git:merge
   script (skipped on Windows) — see `writeStub` in `extension.test.ts`.
 - Match the design mockups (claude.ai/design "Grimoire Skill Marketplace"):
   theme tokens only (`--vscode-*`), codicons per kind (skill=sparkle, rule=law,
-  agent=hubot, mcp=plug, bundle=package), null metadata renders as
+  agent=agent, mcp=mcp, bundle=package — the mockups' hubot/plug were stand-ins
+  from before the codicon set had the real ones), null metadata renders as
   "Not provided", empty panels are omitted.

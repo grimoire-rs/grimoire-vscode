@@ -86,11 +86,14 @@ export function computeUpdateAvailable(item: {
 
 export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle'];
 
+/** Codicon per artifact kind. `agent` and `mcp` use the icons the codicon set
+ *  added for exactly those concepts; the design mockups predate them and asked
+ *  for hubot/plug as the closest stand-ins. */
 export const KIND_ICONS: Record<ArtifactKind, string> = {
   skill: 'sparkle',
   rule: 'law',
-  agent: 'hubot',
-  mcp: 'plug',
+  agent: 'agent',
+  mcp: 'mcp',
   bundle: 'package',
 };
 

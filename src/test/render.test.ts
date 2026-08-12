@@ -135,8 +135,8 @@ suite('card rendering', () => {
   test('codicon per kind', () => {
     assert.strictEqual(kindIcon('skill'), 'sparkle');
     assert.strictEqual(kindIcon('rule'), 'law');
-    assert.strictEqual(kindIcon('agent'), 'hubot');
-    assert.strictEqual(kindIcon('mcp'), 'plug');
+    assert.strictEqual(kindIcon('agent'), 'agent');
+    assert.strictEqual(kindIcon('mcp'), 'mcp');
     assert.strictEqual(kindIcon('bundle'), 'package');
     assert.strictEqual(kindIcon(null), 'question');
   });
