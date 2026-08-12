@@ -25,6 +25,7 @@ import { offerInstallRefusal, offerModifiedRefusal } from '../views/updateRefusa
 import {
   addArgs,
   installArgs,
+  initArgs,
   updateArgs,
   type ContextInfo,
   type DescribeResult,
@@ -2293,6 +2294,43 @@ suite('extension integration', () => {
       !argvLines(stub).some((l) => l.includes('--force')),
       'a security refusal must never be retried with --force',
     );
+  });
+
+  test('anchor-escape on a scope-wide call names the scope, never empty backticks or a flag', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Show Output');
+    try {
+      // `grim install` — the one builder with neither a `--` separator nor a
+      // positional. Naming it off argv used to render an empty `` pair.
+      await offerForcedRetry(
+        anchorEscapeRefusal(),
+        installArgs(),
+        'project',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+      // `grim init --registry <url>` — no separator either, but args[1] is a
+      // flag, which would otherwise be presented to the user as the artifact.
+      await offerForcedRetry(
+        anchorEscapeRefusal(),
+        initArgs({ registry: 'https://example.test/r' }),
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    const [install, init] = dialogs.errorCalls.map((c) => c.message);
+    assert.ok(install?.includes('the project scope'), `install names the scope: ${install}`);
+    assert.ok(init?.includes('the global scope'), `init names the scope: ${init}`);
+    for (const message of [install, init]) {
+      assert.ok(!message?.includes('``'), `no empty backtick pair: ${message}`);
+      assert.ok(!message?.includes('--registry'), `no flag presented as a name: ${message}`);
+    }
   });
 
   test('a plain refusal (neither forceable nor anchor-escape) falls through untouched', async function () {

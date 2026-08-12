@@ -11,6 +11,7 @@ import {
   describeArgs,
   fetchArgs,
   initArgs,
+  installArgs,
   isForceable,
   isRetryable,
   parseReport,
@@ -171,6 +172,14 @@ suite('grim arg builders', () => {
     assert.strictEqual(positionalOf(updateArgs(['demo'])), 'demo');
     // A builder with no positional to name yields nothing, not its subcommand.
     assert.strictEqual(positionalOf(updateArgs()), '');
+    // Nor a flag: the separator-less builders are the scope-wide ones, so
+    // whatever sits at args[1] there is an option, never an artifact.
+    assert.strictEqual(positionalOf(installArgs()), '');
+    assert.strictEqual(positionalOf(initArgs()), '');
+    assert.strictEqual(positionalOf(initArgs({ registry: 'https://example.test/r' })), '');
+    // Behind a separator, a leading `--` IS the positional — that is what the
+    // separator is for, and a ref shaped like a flag must survive verbatim.
+    assert.strictEqual(positionalOf(addArgs('--registry/evil')), '--registry/evil');
   });
 
   test('configListArgs plain vs --all', () => {

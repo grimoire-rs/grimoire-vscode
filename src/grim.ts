@@ -450,7 +450,14 @@ export function withFlags(args: string[], flags: string[]): string[] {
  *  used for the human-facing name in a failure dialog, never for a respawn. */
 export function positionalOf(args: string[]): string {
   const sep = args.indexOf('--');
-  return (sep === -1 ? args[1] : args[sep + 1]) ?? '';
+  if (sep !== -1) {
+    return args[sep + 1] ?? '';
+  }
+  // No separator means no positional behind one — the builders shaped that way
+  // are the scope-wide ones, and their args[1] is a flag. `grim init --registry
+  // <url>` would otherwise report `--registry` where an artifact name belongs.
+  const first = args[1] ?? '';
+  return first.startsWith('--') ? '' : first;
 }
 
 /** Runs grim with `--format json` and parses the report. Builders end with a

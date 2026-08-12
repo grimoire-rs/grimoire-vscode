@@ -10,11 +10,12 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { CatalogService, CatalogState } from '../catalog';
 import type { CachedCardMeta } from '../detailsCache';
+import { describeArgs, fetchArgs } from '../grim';
 import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { ScopeService, ScopeSnapshot, Snapshot } from '../scopes';
 import { DetailsManager } from '../views/details';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import { DEFAULT_FILTER } from '../webview/model';
+import { DEFAULT_FILTER, isValidRepo } from '../webview/model';
 import type { GrimOrigin, HostToSidebar, SidebarState } from '../webview/protocol';
 import { renderDetails, renderSidebar } from '../webview/render';
 import { litString } from './litString';
@@ -571,7 +572,23 @@ suite('viewport prefetch: the visible report', () => {
       sent.every((r) => typeof r === 'string' && r.length > 0),
       'every forwarded repo is a non-empty string',
     );
-    assert.ok(!sent.includes('--flag-shaped'), 'a flag-shaped entry never reaches argv');
+    // Rejected for having no `/`, not for its leading dashes — isValidRepo's
+    // first segment accepts `-`, so `--registry/evil` passes it. What keeps a
+    // flag-shaped repo out of argv is the `--` separator the builders emit,
+    // asserted directly below rather than implied here.
+    assert.ok(!sent.includes('--flag-shaped'), 'a bare flag is not a repo');
     assert.ok(sent.includes('ghcr.io/acme/demo'), 'valid repos still get through');
+  });
+
+  test('a flag-shaped repo that survives validation still lands behind `--` (C-030)', () => {
+    // The honest boundary: validation bounds the list and rejects nonsense, the
+    // separator is what makes an accepted-but-hostile name inert as argv.
+    const evil = '--registry/evil';
+    assert.strictEqual(isValidRepo(evil), true, 'validation alone does not stop this');
+    for (const args of [fetchArgs(evil), describeArgs(evil)]) {
+      const sep = args.indexOf('--');
+      assert.notStrictEqual(sep, -1, `builder emits a separator: ${args.join(' ')}`);
+      assert.strictEqual(args[sep + 1], evil, 'the name sits behind it, parsed as a positional');
+    }
   });
 });
