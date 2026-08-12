@@ -94,7 +94,8 @@ then the state slot.
 
 **Trailing slot** — the fixed box at the end of each compact row:
 `⬇` not installed · `⟳` update available · `⚠` local files modified or missing ·
-a dot for installed-and-clean · empty when install state is unknown.
+`ℹ` install incomplete (outputs pending) · a dot for installed-and-clean · empty
+when install state is unknown.
 
 **Persistence** — set a density/mode/grouping, expand a few nodes, then
 _Developer: Reload Window_. All of it survives. Density / list-vs-tree /
@@ -160,6 +161,12 @@ test/manual/scripts/release-update.sh
 
 # deprecated — old-reviewer ships metadata.deprecated; find it in Browse
 grim search old-reviewer
+
+# outputs pending — give autodetect a client the last install did not write for.
+# The install record still covers only .claude, so `grim status` reports the
+# cursor outputs an install WOULD write: the row keeps its dot-clean version but
+# gains the ℹ "Install incomplete" hint and a Complete Install action.
+mkdir -p test/manual/project/.cursor/rules
 ```
 
 Install state unknown (the banner, and the empty trailing slots that go with

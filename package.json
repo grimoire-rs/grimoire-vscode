@@ -316,7 +316,7 @@
         "grimoire.prefetchDetails": {
           "type": "boolean",
           "default": true,
-          "description": "Prefetch the top browse results into the details cache so opening an artifact paints instantly and card logos appear as they load."
+          "description": "Prefetch the browse rows in view into the details cache as you scroll, so opening an artifact paints instantly and card logos appear as they load."
         },
         "grimoire.checkForUpdates": {
           "type": "boolean",

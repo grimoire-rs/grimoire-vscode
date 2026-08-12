@@ -71,7 +71,7 @@ json`); grim's JSON interface is frozen/additive, so nullable fields are
   `grimoire.toml`.
 - `src/config.ts`, `src/watchers.ts`, `src/catalog.ts`, `src/prefetch.ts`,
   `src/detailsCache.ts` — configuration reading, `grimoire.toml`/`.lock` file
-  watching, catalog search, prefetching top browse results, and the on-disk
+  watching, catalog search, prefetching the browse rows in view, and the on-disk
   details cache (stale-while-revalidate).
 - `src/installer.ts` — the `grim` auto-installer: reads a GitHub release's
   `dist-manifest.json`, downloads the matching archive, verifies its sha256,

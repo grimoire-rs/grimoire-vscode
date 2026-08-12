@@ -37,8 +37,9 @@ AI artifacts your tools rely on.
   opens a reusable preview tab; double-click pins it, and links between artifacts
   navigate in place.
 - **Instant details** — reopening an artifact paints immediately from an on-disk
-  cache and refreshes in the background; top Browse results are prefetched so
-  opens feel instant and card logos appear as they load.
+  cache and refreshes in the background; the Browse rows you can see are
+  prefetched as you scroll, so opens feel instant and card logos appear as they
+  load.
 - **Install, update, and uninstall per scope** — install into your **project**
   (`grimoire.toml` in the workspace) or **globally** (`~/.grimoire`), or both at
   once — a project install shadows the global one. Artifacts pulled in by a
@@ -49,7 +50,15 @@ AI artifacts your tools rely on.
   changes, Grimoire offers an **Overwrite** confirm instead of a bare error. A
   refusal it can never safely force — a recorded path resolving outside its
   anchor root — points you at **Show Output** and the uninstall-then-reinstall
-  fix instead.
+  fix instead. A whole-scope run that stops for the same reason (**Update All**,
+  or **Complete Install**) never offers a one-click overwrite, because forcing it
+  would discard your edits to every other artifact in the scope: it names the
+  modified artifact and offers to open it, so you can decide one at a time.
+- **Finish an incomplete install** — when an artifact is installed and intact but
+  `grim` would still write something for it (a client that gained support since
+  the last install, or a recorded output deleted underneath it), the row shows an
+  **Install incomplete** hint and a **Complete Install** action that
+  re-materializes that scope's lock.
 - **Share a link** — copy a `vscode://` deep link to any artifact; opening it
   reveals that artifact's details.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to
@@ -97,7 +106,7 @@ invoked via the `vscode://` deep link.
 | `grimoire.path.executable`      | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                 |
 | `grimoire.defaultScope`         | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
 | `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
-| `grimoire.prefetchDetails`      | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
+| `grimoire.prefetchDetails`      | `true`    | Prefetch the Browse rows in view as you scroll, so details open instantly and card logos appear                                                                                       |
 | `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
 | `grimoire.checkArtifactUpdates` | `true`    | After a refresh settles, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on. Debounced, so a burst of changes costs one check. Off stops the automatic rounds only; remembered verdicts keep counting |
 | `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
