@@ -71,9 +71,12 @@ function rowTrailing(row: SettingsRowVM): TemplateResult | typeof nothing {
   return nothing;
 }
 
+/** `vscode-checkbox` in its `toggle` mode — the same element the registry form
+ *  uses for its own booleans, so every switch in this panel is one component
+ *  wearing the theme's own switch tokens (it renders the inner input with
+ *  `role="switch"`, which is what the hand-rolled pill had to declare itself). */
 function toggleControl(row: SettingsRowVM): TemplateResult {
-  const on = row.value === 'true';
-  return html`<button class="toggle${on ? ' on' : ''}" role="switch" aria-checked="${on}" data-action="toggle-bool" data-key="${row.key}"><span class="toggle-knob"></span></button>`;
+  return html`<vscode-checkbox toggle class="row-toggle" data-key="${row.key}" ?checked="${row.value === 'true'}"></vscode-checkbox>`;
 }
 
 function dropdownControl(row: SettingsRowVM): TemplateResult {
@@ -524,7 +527,7 @@ function renderAddRegistryForm(
     registryEditSupported && draft.kind === 'oci'
       ? html`
   <div class="form-field">
-    <vscode-checkbox data-field="insecure" ?checked="${draft.insecure}">${registryFieldLabel(fields, 'insecure', 'Plain-HTTP transport')}</vscode-checkbox>
+    <vscode-checkbox toggle data-field="insecure" ?checked="${draft.insecure}">${registryFieldLabel(fields, 'insecure', 'Plain-HTTP transport')}</vscode-checkbox>
     <div class="row-hint">Contacts this host over <code class="inline-code">http://</code>, exactly as written including its port. <code class="inline-code">grimoire.toml</code> is normally committed, so this downgrades transport for everyone who clones the project.</div>
   </div>`
       : nothing;
@@ -562,7 +565,7 @@ function renderAddRegistryForm(
   </label>
   ${insecureField}
   ${filterFields}
-  <vscode-checkbox data-field="default" ?checked="${draft.default}">${registryFieldLabel(fields, 'default', 'Set as default registry')}</vscode-checkbox>
+  <vscode-checkbox toggle data-field="default" ?checked="${draft.default}">${registryFieldLabel(fields, 'default', 'Set as default registry')}</vscode-checkbox>
   ${errorLine}
   <div class="form-actions">
     <button class="btn primary" data-action="submit-add-registry" ?disabled="${saving || !addRegistryDraftValid(draft)}">${saving ? html`<span class="codicon codicon-loading codicon-modifier-spin"></span>Saving…` : submitLabel}</button>

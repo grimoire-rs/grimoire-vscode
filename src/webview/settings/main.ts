@@ -512,16 +512,6 @@ root.addEventListener('click', (event) => {
       }
       break;
     }
-    case 'toggle-bool': {
-      const key = target.dataset['key'];
-      const row = key ? findRow(key) : undefined;
-      if (row) {
-        const next = row.value === 'true' ? 'false' : 'true';
-        setRowValue(row, next);
-        commitValue(row.key, next);
-      }
-      break;
-    }
     case 'toggle-chip': {
       const key = target.dataset['key'];
       const value = target.dataset['value'];
@@ -716,6 +706,20 @@ root.addEventListener('change', (event) => {
       draft: { ...addRegistry.draft, [field]: (target as HTMLInputElement).checked },
     };
     render();
+    return;
+  }
+  // Boolean rows: `vscode-checkbox[toggle]` fires a bubbling `change` from the
+  // element itself, so the row commit that used to hang off the pill button's
+  // click lives here now — one listener for every control that has a discrete
+  // committed value.
+  if (target.classList.contains('row-toggle')) {
+    const key = target.dataset['key'];
+    const row = key ? findRow(key) : undefined;
+    if (row) {
+      const next = (target as HTMLInputElement).checked ? 'true' : 'false';
+      setRowValue(row, next);
+      commitValue(row.key, next);
+    }
     return;
   }
   if (target instanceof HTMLSelectElement && target.classList.contains('settings-select')) {
