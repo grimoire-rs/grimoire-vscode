@@ -81,7 +81,7 @@
     "commands": [
       {
         "command": "grimoire.focusSearch",
-        "title": "Search Artifacts",
+        "title": "Search",
         "category": "Grimoire"
       },
       {
@@ -92,7 +92,7 @@
       },
       {
         "command": "grimoire.checkArtifactUpdates",
-        "title": "Check for Artifact Updates",
+        "title": "Check for Updates",
         "category": "Grimoire",
         "icon": "$(sync)"
       },
@@ -103,18 +103,18 @@
       },
       {
         "command": "grimoire.updateAll",
-        "title": "Update All Artifacts",
+        "title": "Update All",
         "category": "Grimoire",
         "icon": "$(cloud-download)"
       },
       {
         "command": "grimoire.initProject",
-        "title": "Initialize Project (grimoire.toml)",
+        "title": "Initialize Project",
         "category": "Grimoire"
       },
       {
         "command": "grimoire.installGrim",
-        "title": "Install grim CLI",
+        "title": "Install grim",
         "category": "Grimoire"
       },
       {
@@ -130,13 +130,13 @@
       },
       {
         "command": "grimoire.showGrimInfo",
-        "title": "Show grim Info",
+        "title": "Show Info",
         "category": "Grimoire",
         "icon": "$(info)"
       },
       {
         "command": "grimoire.openDetails",
-        "title": "Open Artifact Details",
+        "title": "Open Details",
         "category": "Grimoire"
       },
       {
@@ -177,13 +177,13 @@
       },
       {
         "command": "grimoire.groupArtifacts",
-        "title": "Group Artifacts",
+        "title": "Group",
         "category": "Grimoire",
         "icon": "$(group-by-ref-type)"
       },
       {
         "command": "grimoire.ungroupArtifacts",
-        "title": "Ungroup Artifacts",
+        "title": "Ungroup",
         "category": "Grimoire",
         "icon": "$(ungroup-by-ref-type)"
       },

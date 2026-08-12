@@ -21,7 +21,7 @@ AI artifacts your tools rely on.
   The tab lists them; an **Update All** icon appears in the sidebar's title bar
   whenever updates are pending and updates them in one click (also always
   available in the title bar's `…` menu). Check on demand with
-  **Grimoire: Check for Artifact Updates**, or turn the automatic ones off with
+  **Grimoire: Check for Updates**, or turn the automatic ones off with
   the `grimoire.checkArtifactUpdates` **setting** — the verdicts already gathered
   keep counting either way. The update check asks the registries your
   `grimoire.toml` names, so it is skipped in a **restricted** (untrusted)
@@ -73,19 +73,19 @@ require a **trusted** workspace.
 
 Run from the Command Palette (all under the **Grimoire** category).
 
-| Command                                        | Does                                                                             |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Grimoire: Search Artifacts`                   | Focus the Browse tab and jump to its search box                                  |
-| `Grimoire: Refresh Catalog`                    | Re-fetch the catalog and refresh every tab                                       |
-| `Grimoire: Check for Artifact Updates`         | Ask your registries which installed artifacts have newer versions                |
-| `Grimoire: Update All Artifacts`               | Update every artifact with a pending update (project + global)                   |
-| `Grimoire: Initialize Project (grimoire.toml)` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
-| `Grimoire: Install grim CLI`                   | Download the latest `grim` release from GitHub                                   |
-| `Grimoire: Open Settings`                      | Open the Settings editor tab (`grim config` UI)                                  |
-| `Grimoire: Show Output`                        | Open the Grimoire output channel                                                 |
-| `Grimoire: Show grim Info`                     | Which `grim` would be spawned, how it was resolved, and its version              |
-| `Grimoire: Report Bug`                         | Open a prefilled GitHub bug report                                               |
-| `Grimoire: Request Feature`                    | Open a prefilled GitHub feature request                                          |
+| Command                        | Does                                                                             |
+| ------------------------------ | -------------------------------------------------------------------------------- |
+| `Grimoire: Search`             | Focus the Browse tab and jump to its search box                                  |
+| `Grimoire: Refresh Catalog`    | Re-fetch the catalog and refresh every tab                                       |
+| `Grimoire: Check for Updates`  | Ask your registries which installed artifacts have newer versions                |
+| `Grimoire: Update All`         | Update every artifact with a pending update (project + global)                   |
+| `Grimoire: Initialize Project` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
+| `Grimoire: Install grim`       | Download the latest `grim` release from GitHub                                   |
+| `Grimoire: Open Settings`      | Open the Settings editor tab (`grim config` UI)                                  |
+| `Grimoire: Show Output`        | Open the Grimoire output channel                                                 |
+| `Grimoire: Show Info`          | Which `grim` would be spawned, how it was resolved, and its version              |
+| `Grimoire: Report Bug`         | Open a prefilled GitHub bug report                                               |
+| `Grimoire: Request Feature`    | Open a prefilled GitHub feature request                                          |
 
 `grimoire.openDetails` and `grimoire.showUpdates` are intentionally omitted from
 the palette — the first is invoked via the `vscode://` deep link, the second by
@@ -119,7 +119,7 @@ An older `grim` does not blank the view: browsing keeps working off the catalog,
 behind a banner naming the reason. What it cannot do is report install state, so
 every install and update affordance is suppressed rather than claiming "Install"
 on an artifact that may already be installed. Point `grimoire.path.executable`
-at a current build, or run **Grimoire: Show grim Info** to see which binary is
+at a current build, or run **Grimoire: Show Info** to see which binary is
 actually being spawned.
 
 Editing a registry in place needs `grim` 0.13.0 or newer — the release that
