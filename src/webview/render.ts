@@ -401,8 +401,15 @@ function registryMarks(node: {
   const lock = node.private
     ? html`<span class="codicon codicon-lock group-lock" title="Private registry"></span>`
     : nothing;
-  const badge = node.isDefaultRegistry ? html`<span class="group-default">default</span>` : nothing;
-  return lock === nothing && badge === nothing ? nothing : html`${lock}${badge}`;
+  const badge = node.isDefaultRegistry
+    ? html`<span class="codicon codicon-star-empty group-default" title="Default registry"></span>`
+    : nothing;
+  // Wrapped, and each mark boxed to the same 18px as a leaf row's .row-slot:
+  // the trailing column has to line up between a group header and the rows
+  // under it, and a mark left to find the padding edge on its own does not.
+  return lock === nothing && badge === nothing
+    ? nothing
+    : html`<span class="group-marks">${lock}${badge}</span>`;
 }
 
 function groupHeader(group: CardGroup, expanded: boolean): TemplateResult {

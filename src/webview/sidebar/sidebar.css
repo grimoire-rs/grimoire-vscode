@@ -1056,27 +1056,39 @@ vscode-progress-bar {
   font-variant-numeric: tabular-nums;
 }
 
-.group-default {
+/* The default registry marks itself with a star rather than the word
+   "default" — same information, no text competing with the registry name.
+   Outline, not filled, and the same muted ink as the lock beside it: this is a
+   label, not a call to action, and a solid yellow glyph outweighed every other
+   icon in the list. */
+/* The group header's trailing column, mirroring a leaf row's .row-trailing so
+   the two line up: same auto margin, same 6px gap, and each mark boxed to the
+   same 18px as .row-slot. */
+.group-marks {
   flex: none;
   margin-left: auto;
-  font-size: 9px;
-  font-weight: 400;
-  letter-spacing: 0.04em;
-  text-transform: none;
-  color: var(--vscode-descriptionForeground);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.group-lock {
-  flex: none;
-  margin-left: auto;
+.group-marks > .codicon {
+  width: 18px;
+}
+
+/* `.codicon` must ride the selector: codicon.css sizes glyphs through
+   `.codicon[class*='codicon-']` (specificity 0-2-0), so a bare single-class
+   rule here never wins and the glyph silently stays 16px. sidebar.css loads
+   after codicon.css, so an equal-specificity selector takes it. */
+.group-default.codicon {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
 }
 
-/* A lock and a default marker can both be present; only the first one claims
-   the auto margin, so the second must not push itself out again. */
-.group-lock + .group-default {
-  margin-left: 4px;
+/* Same `.codicon` specificity bump as .group-default — see its comment. */
+.group-lock.codicon {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
 }
 
 .twisty {
