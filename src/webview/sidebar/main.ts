@@ -8,6 +8,7 @@ import '@vscode-elements/elements/dist/vscode-progress-bar/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
 import '@vscode-elements/elements/dist/vscode-scrollable/index.js';
 import { render as litRender, type TemplateResult } from 'lit-html';
+import { isMutating } from '../actions';
 import { armBrokenImages } from '../brokenImage';
 import type {
   CardVM,
@@ -329,54 +330,125 @@ function post(message: SidebarToHost): void {
 
 // One shared observer over every row/card in the results region. rootMargin
 // reaches a screenful past the viewport in both directions so a logo is already
-// on its way by the time the row is scrolled into place.
+// on its way by the time the row is scrolled into place — which only holds once
+// the root is the element that actually clips (see upgradeObserverRoot below).
 const VISIBLE_MARGIN = '400px';
 const VISIBLE_DEBOUNCE_MS = 300;
 const visibleRepos = new Set<string>();
 let visibleTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** Trailing-edge debounce: report the viewport once scrolling SETTLES.
+ *
+ *  This used to return early while a timer was pending, which is a leading-edge
+ *  throttle wearing a debounce's name — the first callback of a burst started
+ *  the clock and no later one extended it, so a sustained scroll posted roughly
+ *  every 300ms and each post re-entered the host's enqueue with one serialized
+ *  cache read per row.
+ *
+ *  Reading `visibleRepos` inside the timer (not at schedule time) is required,
+ *  not incidental: the whole point is to act on the latest state once things
+ *  settle. Snapshotting at schedule time would reproduce the bug above. */
 function scheduleVisiblePost(): void {
-  if (visibleTimer) {
-    return;
+  if (visibleTimer !== undefined) {
+    clearTimeout(visibleTimer);
   }
   visibleTimer = setTimeout(() => {
     visibleTimer = undefined;
+    // Load-bearing, not a tidy-up: observeVisibleRows() clears the set before
+    // the observer refills it, so a timer that survives a re-arm can fire in
+    // between. Skipping the empty post makes that a no-op instead of a report
+    // that says "nothing is visible" — which the host would consume, spending
+    // the one-shot force flag an explicit refresh had just armed.
     if (visibleRepos.size > 0) {
       post({ type: 'visible', repos: [...visibleRepos] });
     }
   }, VISIBLE_DEBOUNCE_MS);
 }
 
-const visibilityObserver = new IntersectionObserver(
-  (entries) => {
-    for (const entry of entries) {
-      const repo = (entry.target as HTMLElement).dataset.repo;
-      if (repo === undefined) {
-        continue;
+function makeVisibilityObserver(root: Element): IntersectionObserver {
+  return new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const repo = (entry.target as HTMLElement).dataset.repo;
+        if (repo === undefined) {
+          continue;
+        }
+        if (entry.isIntersecting) {
+          visibleRepos.add(repo);
+        } else {
+          visibleRepos.delete(repo);
+        }
       }
-      if (entry.isIntersecting) {
-        visibleRepos.add(repo);
-      } else {
-        visibleRepos.delete(repo);
-      }
-    }
-    scheduleVisiblePost();
-  },
-  { root: scrollEl, rootMargin: VISIBLE_MARGIN },
-);
+      scheduleVisiblePost();
+    },
+    { root, rootMargin: VISIBLE_MARGIN },
+  );
+}
 
-/** Re-arms the observer after a render. Disconnect-and-reobserve, and the set
- *  is cleared with it: lit reuses and reorders row nodes, so a set carried
- *  across renders accumulates repos that are no longer rendered at all. The
- *  observer re-reports every currently-intersecting element asynchronously as
- *  soon as it observes them — well inside the debounce window — so the cleared
- *  set refills before anything is posted. */
+// Starts on the host so early renders report at all; upgraded to the shadow
+// scroller the moment it exists (upgradeObserverRoot, wired into the same
+// whenDefined chain the scroll listener uses).
+let visibilityObserver = makeVisibilityObserver(scrollEl);
+// What the current registrations were armed against. Re-arming is only skipped
+// when this is unchanged.
+let observedKey = '';
+
+/** Re-arms the observer after a render — but only when the render could have
+ *  replaced the row nodes.
+ *
+ *  The dominant render trigger is the card-meta repost (a landed logo), which
+ *  redraws the same rows perhaps 20-40 times during a cold sweep. Re-arming on
+ *  those cost an observe() per row plus a full asynchronous re-report, and every
+ *  report costs the host one cache read per row — tens of megabytes parsed on
+ *  the shared extension host to learn nothing.
+ *
+ *  The key covers every input that can swap a row's TEMPLATE, because lit tears
+ *  the old DOM down and builds new nodes when the template changes at a stable
+ *  key: density (card vs compact row), list-vs-tree, grouping, and the tab. It
+ *  keys on the whole ViewOptions object rather than naming fields, so it cannot
+ *  go stale the next time ViewOptions grows one. Unchanged key means lit's keyed
+ *  repeat() kept the very nodes we are already observing — if a list is ever
+ *  rendered UNKEYED, this assumption dies with it and the viewport stops
+ *  reporting. */
 function observeVisibleRows(): void {
+  const rows = [...resultsEl.querySelectorAll<HTMLElement>(ROW_SELECTOR)];
+  const key = `${activeTab}:${JSON.stringify(viewOptions)}:${rows.map((r) => r.dataset.repo ?? '').join('\n')}`;
+  if (key === observedKey) {
+    return;
+  }
+  observedKey = key;
   visibilityObserver.disconnect();
   visibleRepos.clear();
-  for (const el of resultsEl.querySelectorAll('[data-repo]')) {
+  // ROW_SELECTOR, not '[data-repo]': the latter also matches the install button
+  // nested inside a row (7 nodes for 4 rows in the compact golden), and a button
+  // can leave the expanded root rect while its row is still inside it — whose
+  // exit event then deletes a visible row from the report.
+  for (const el of rows) {
     visibilityObserver.observe(el);
   }
+}
+
+/** Moves the observer onto the element that actually clips.
+ *
+ *  `scrollEl` is the <vscode-scrollable> HOST, and the host does not scroll:
+ *  its shadow `.scrollable-container` is the `overflow: auto` box. Per the
+ *  IntersectionObserver algorithm the intersection rect is clipped by every
+ *  ancestor clip between target and root BEFORE the root rect is expanded by
+ *  rootMargin, and that shadow container is such an ancestor — so with the host
+ *  as root the 400px lookahead was silently worth 0px and rows reported only
+ *  once genuinely on screen. (The spec later added `scrollMargin` for exactly
+ *  this case; it needs Chromium 128, which is precisely our floor, so it has no
+ *  margin of safety and is not used.)
+ *
+ *  A root cannot be changed after construction, so this rebuilds the observer.
+ *  Keeping the host as the initial root means a component that ever renames or
+ *  drops '.scrollable-container' degrades to today's behaviour rather than to
+ *  no viewport reporting at all. */
+function upgradeObserverRoot(scroller: Element): void {
+  visibilityObserver.disconnect();
+  visibilityObserver = makeVisibilityObserver(scroller);
+  observedKey = '';
+  observeVisibleRows();
 }
 
 /** Mirrors the three booleans the title bar's `when` clauses key on, so its
@@ -441,21 +513,12 @@ function applyViewAction(action: ViewAction): void {
   render();
 }
 
-// Every action that runs a grim command. While one is in flight ANYWHERE (the
-// host's `busy` post — this view, a details panel, a command), all of them are
-// refused here, not merely dimmed by the .busy CSS: pointer-events still leaves
-// a button reachable by keyboard, and Enter would fire the same click that grim
-// can only stall on behind its lock.
-const MUTATING_ACTIONS = new Set([
-  'install',
-  'uninstall',
-  'update',
-  'switch',
-  'pin',
-  'pick-version',
-  'init-project',
-  'install-grim',
-]);
+// Which actions run a grim command now lives in webview/actions.ts, shared with
+// the details entry. While one is in flight ANYWHERE (the host's `busy` post —
+// this view, a details panel, a command), all of them are refused here, not
+// merely dimmed by the .busy CSS: pointer-events still leaves a button reachable
+// by keyboard, and Enter would fire the same click that grim can only stall on
+// behind its lock.
 let busy: string | null = null;
 
 root.addEventListener('click', (event) => {
@@ -477,7 +540,7 @@ root.addEventListener('click', (event) => {
   }
   event.stopPropagation();
   const action = target.dataset['action'];
-  if (busy !== null && MUTATING_ACTIONS.has(action ?? '')) {
+  if (busy !== null && isMutating(action)) {
     closeCardMenu();
     closeContextMenu();
     return;
@@ -713,6 +776,9 @@ customElements.whenDefined('vscode-scrollable').then(() =>
         },
         { passive: true },
       );
+      // Same element, same reason it was hunted down here: it is the one that
+      // clips, so it is also the only correct IntersectionObserver root.
+      upgradeObserverRoot(scroller);
     } else {
       scrollEl.addEventListener('vsc-scrollable-scroll', () => {
         closeContextMenu();
