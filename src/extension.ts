@@ -5,6 +5,7 @@ import {
   addArgs,
   contextArgs,
   initArgs,
+  isForceable,
   updateArgs,
   type ActionReport,
   type ContextInfo,
@@ -37,6 +38,7 @@ import { Watchers } from './watchers';
 import {
   addRegistryPrompt,
   artifactName,
+  declaredKey,
   firstUnknownScope,
   isValidRepo,
   parseAddRegistryLink,
@@ -112,6 +114,59 @@ export function mementoCheckStore(
       await memento(scope).update(CHECK_VERDICTS_KEY, record);
     },
   };
+}
+
+/** Answers a bare `grim update` that refused because an artifact is locally
+ *  modified (exit 65, forceable — grim 0.13 runs install's integrity gate on
+ *  update, where it used to overwrite silently). The refusal aborts the whole
+ *  scope's update, so the user needs a way forward.
+ *
+ *  It is deliberately NOT the Overwrite dialog: retrying this call with
+ *  `--force` would overwrite EVERY modified artifact in the scope while grim's
+ *  message names only the first one it hit. Instead, name them from the
+ *  snapshot — structural, never scraped out of grim's prose — and offer to open
+ *  one, whose own Update button confirms and forces that artifact alone.
+ *
+ *  Exported for the wiring test. */
+export async function offerUpdateRefusal(
+  scopes: ScopeService,
+  scope: Scope,
+  message: string,
+): Promise<void> {
+  const snapshot = scopes.cachedSnapshot() ?? (await scopes.snapshot());
+  const snap = snapshot[scope];
+  const modified = (snap?.status ?? []).filter((item) => item.state === 'modified');
+  const repos = new Map<string, string>();
+  for (const item of modified) {
+    const declared = snap?.declared[declaredKey(item.kind, item.name)];
+    const ref = declared ?? item.pinned;
+    if (ref) {
+      repos.set(item.name, refRepo(ref));
+    }
+  }
+  const only = repos.size === 1 ? [...repos.entries()][0] : undefined;
+  if (only) {
+    const [name, repo] = only;
+    const choice = await vscode.window.showErrorMessage(
+      `Grimoire: update stopped — ${message}`,
+      `Open ${name}`,
+      'Show Output',
+    );
+    if (choice === `Open ${name}`) {
+      await vscode.commands.executeCommand('grimoire.openDetails', repo);
+    } else if (choice === 'Show Output') {
+      await vscode.commands.executeCommand('grimoire.showOutput');
+    }
+    return;
+  }
+  const named = repos.size > 1 ? ` Locally modified: ${[...repos.keys()].join(', ')}.` : '';
+  const choice = await vscode.window.showErrorMessage(
+    `Grimoire: update (${scope}) stopped — ${message}${named}`,
+    'Show Output',
+  );
+  if (choice === 'Show Output') {
+    await vscode.commands.executeCommand('grimoire.showOutput');
+  }
 }
 
 export function activate(context: vscode.ExtensionContext): GrimoireApi {
@@ -685,11 +740,18 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
           // command so one toast covers both scopes' runs.
           const reaped: string[] = [];
           const keptModified: string[] = [];
-          const handle = (scope: Scope, result: GrimResult<ItemsEnvelope<UpdateEntry>>): void => {
+          const handle = async (
+            scope: Scope,
+            result: GrimResult<ItemsEnvelope<UpdateEntry>>,
+          ): Promise<void> => {
             if (!result.ok) {
               const message =
                 result.kind === 'not-found' ? 'grim executable not found' : result.message;
               output.appendLine(`error: grim update --${scope}: ${message}`);
+              if (result.kind === 'error' && isForceable(result)) {
+                await offerUpdateRefusal(scopes, scope, message);
+                return;
+              }
               notifyError(`Grimoire: grim update (${scope}): ${message}`);
               return;
             }
@@ -723,12 +785,15 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
             );
           };
           if (await scopes.projectConfigured()) {
-            handle(
+            await handle(
               'project',
               await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'project'),
             );
           }
-          handle('global', await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'global'));
+          await handle(
+            'global',
+            await scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'global'),
+          );
           // Reap only ever fires against an explicitly set `[options].clients`
           // (grim-side gate) — autodetect leaves both arrays empty on every
           // row, so this toast stays silent on the common path.

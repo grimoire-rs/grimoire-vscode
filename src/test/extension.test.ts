@@ -20,7 +20,7 @@ import type {
   RevalidateState,
   SidebarState,
 } from '../webview/protocol';
-import type { GrimoireApi } from '../extension';
+import { offerUpdateRefusal, type GrimoireApi } from '../extension';
 import { addArgs, updateArgs, type ContextInfo, type GrimResult, type Scope } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
@@ -1427,6 +1427,74 @@ suite('extension integration', () => {
     assert.ok(toast.includes('code-review'), `toast names the reaped artifact: ${toast}`);
     assert.ok(toast.includes('edited-rule'), `toast names the kept-modified artifact: ${toast}`);
     assert.ok(toast.includes('--force'), `toast points at the --force follow-up: ${toast}`);
+  });
+
+  test('a refused update names the modified artifact and offers to open it', async () => {
+    // grim 0.13 runs install's integrity gate on update: a locally modified
+    // artifact aborts the whole scope with exit 65 + forceable. The artifact is
+    // named from the snapshot, never scraped out of grim's message.
+    const scopes = {
+      cachedSnapshot: () => ({
+        global: {
+          status: [
+            { kind: 'skill', name: 'demo', state: 'modified', pinned: null, outputs: [] },
+            { kind: 'skill', name: 'fine', state: 'installed', pinned: null, outputs: [] },
+          ],
+          declared: { 'skill:demo': 'ghcr.io/o/skills/demo:1.0.0' },
+        },
+      }),
+    } as unknown as ScopeService;
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const calls: string[][] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      calls.push([message, ...items]);
+      return undefined; // dismissed — never executes the open command here
+    };
+    try {
+      await offerUpdateRefusal(scopes, 'global', 'demo is locally modified; rerun with --force');
+    } finally {
+      window.showErrorMessage = original;
+    }
+    const [call] = calls;
+    assert.ok(call, 'an error was surfaced');
+    assert.ok(call[0]?.includes('demo is locally modified'), `carries grim's message: ${call[0]}`);
+    assert.ok(call.includes('Open demo'), `offers to open the artifact: ${call.join(' | ')}`);
+    // Never a one-click force: that would overwrite every modified artifact in
+    // the scope while grim named only the one it stopped on.
+    assert.ok(!call.some((c) => c.toLowerCase().includes('overwrite')));
+  });
+
+  test('a refused update with several modified artifacts names them all, offers no open', async () => {
+    const scopes = {
+      cachedSnapshot: () => ({
+        project: {
+          status: [
+            { kind: 'skill', name: 'one', state: 'modified', pinned: null, outputs: [] },
+            { kind: 'rule', name: 'two', state: 'modified', pinned: null, outputs: [] },
+          ],
+          declared: {
+            'skill:one': 'ghcr.io/o/skills/one:1.0.0',
+            'rule:two': 'ghcr.io/o/rules/two:1.0.0',
+          },
+        },
+      }),
+    } as unknown as ScopeService;
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const calls: string[][] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      calls.push([message, ...items]);
+      return undefined;
+    };
+    try {
+      await offerUpdateRefusal(scopes, 'project', 'one is locally modified; rerun with --force');
+    } finally {
+      window.showErrorMessage = original;
+    }
+    const [call] = calls;
+    assert.ok(call?.[0]?.includes('one, two'), `names every modified artifact: ${call?.[0]}`);
+    assert.ok(!call?.some((c) => c.startsWith('Open ')), 'no single artifact to open');
   });
 
   test('updateAll stays silent when no row reaps or keeps-modified a client output (autodetect)', async () => {
