@@ -108,8 +108,14 @@ suite('grim live (real binary)', function () {
       result.ok ? '' : `config registry fields not ok: ${JSON.stringify(result)}`,
     );
     if (result.ok) {
+      // A SUBSET, deliberately: grim's interface is additive, and a newer grim
+      // already describes more fields here (include/exclude, the browse
+      // filters). The gate is "the subcommand exists and describes the fields
+      // the settings view edits" — an extra field is not a regression.
       const keys = result.value.items.map((f) => f.key).sort();
-      assert.deepStrictEqual(keys, ['default', 'index', 'oci']);
+      for (const key of ['default', 'index', 'oci']) {
+        assert.ok(keys.includes(key), `registry field '${key}' missing — got ${keys.join(', ')}`);
+      }
       for (const field of result.value.items) {
         assert.strictEqual(typeof field.title, 'string');
         assert.ok(field.title.length > 0);
