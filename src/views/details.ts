@@ -572,13 +572,14 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     /** Artifact name for stale-lock recovery; set only by per-name update. */
     staleLockName?: string,
   ): Promise<void> {
-    // Drop the cached snapshot BEFORE the action runs, the way the sidebar
-    // already does. Painting the merged entry is right for a background probe
-    // and wrong straight after a user action: on a version switch, a partly
-    // failed post-action probe would fold the OLD version's README and logo in
-    // under the NEW version's header — a confident lie, where the unmerged null
-    // was at least visibly empty.
-    await this.forget(repo);
+    // Deliberately does NOT forget the cached entry first. That was tried, on
+    // the theory that a post-action probe could fold an older version's content
+    // under a newer header — but the panel's repo is tagless (refRepo strips the
+    // tag), so every fetch here resolves `:latest` and no action on this path can
+    // move what the cache holds. Version switching does not even come through
+    // here; it runs pickVersion directly. Forgetting would only disable the
+    // merge, so a partly-failed post-action probe would repaint the nulls this
+    // branch exists to stop showing — on the one path the user is watching.
     await this.suspendWhile(() => this.actionInner(repo, panel, steps, scope, busy, staleLockName));
   }
 
@@ -955,8 +956,12 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  of repainting a cache entry up to six hours old. Failures are swallowed: a
    *  cache that would not delete is a stale paint, not a broken action. */
   async forget(repo: string): Promise<void> {
-    // Also clears any probe cooldown: forget runs after the user acted on this
-    // artifact, and a cooldown must never mute the refresh that follows.
+    // Also clears any probe cooldown: forget runs because the user acted on this
+    // artifact, and a cooldown must never mute the refresh that follows. Clears
+    // it as of now, not for the future — a probe already in flight here can land
+    // its failure afterwards and re-arm the cooldown, costing the sweep one
+    // retry window. Left alone deliberately: reaching it needs the registry to
+    // be failing outright, which is when a cooldown is the correct answer.
     this.failedProbes.delete(repo);
     await this.cache
       .forget(repo)
@@ -1045,8 +1050,34 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  Returns the merged entry, because the merge is also what the caller should
    *  PAINT. Writing one thing and posting another is how the vanished-logo bug
    *  survived its own fix: the cache kept the logo and the panel repainted the
-   *  null the probe had just failed to resolve. */
+   *  null the probe had just failed to resolve.
+   *
+   *  Serialized per repo, because load → merge → save is a read-modify-write
+   *  with two awaits inside it. Opening a panel while the background sweep is
+   *  probing the SAME repo is the ordinary case, not a rare one — the viewport
+   *  reports the row the user just clicked — and unserialized the later save
+   *  merges against a snapshot taken before the earlier one landed, dropping
+   *  exactly the content the merge exists to preserve. Different repos never
+   *  wait on each other. */
   private async saveEntry(repo: string, entry: DetailsCacheEntry): Promise<DetailsCacheEntry> {
+    const prior = this.saveQueue.get(repo);
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => (release = resolve));
+    this.saveQueue.set(repo, tail);
+    // A predecessor that threw must not cancel its successors — the chain is a
+    // lock, not a dependency.
+    await prior?.catch(() => {});
+    try {
+      return await this.saveEntryInner(repo, entry);
+    } finally {
+      release();
+      if (this.saveQueue.get(repo) === tail) {
+        this.saveQueue.delete(repo);
+      }
+    }
+  }
+
+  private async saveEntryInner(repo: string, entry: DetailsCacheEntry): Promise<DetailsCacheEntry> {
     const merged = mergeEntry(await this.cache.load(repo).catch(() => null), entry);
     await this.cache
       .save(repo, merged)
@@ -1131,6 +1162,10 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   /** repo → when its last probe failed outright. Drives the cooldown half of
    *  {@link isFresh}; see {@link noteProbeFailure}. */
   private readonly failedProbes = new Map<string, number>();
+
+  /** repo → the tail of its in-flight {@link saveEntry} chain. Entries are
+   *  dropped as soon as the chain drains, so this holds only active repos. */
+  private readonly saveQueue = new Map<string, Promise<void>>();
 
   /** Posts the background-revalidate status for the top-right indicator. Only
    *  used on warm reopens (a cached paint is on screen). */
