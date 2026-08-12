@@ -31,6 +31,7 @@ import {
   buildTree,
   cardMenuEntries,
   clientDriftTooltip,
+  cardVersion,
   concreteVersion,
   effectiveInstall,
   filterCards,
@@ -216,9 +217,10 @@ function clientDriftBadge(install: InstallVM | undefined): TemplateResult | type
 export function renderCard(card: CardVM, options: CardVariant = {}): TemplateResult {
   const variant = options.variant ?? 'browse';
   const deprecatedClass = card.state === 'deprecated' ? ' deprecated' : '';
-  const version = card.latestVersion
-    ? html`<span class="version mono">${card.latestVersion}</span>`
-    : nothing;
+  // The INSTALLED version when there is one (see cardVersion) — a version
+  // switch has to be visible here, not only in the details panel.
+  const shown = cardVersion(card);
+  const version = shown ? html`<span class="version mono">${shown}</span>` : nothing;
   // Deprecation on a card is styling only — struck-through, dimmed name (the
   // .card.deprecated rule). The message itself is a tooltip here and a banner
   // on the details view; a coloured warning line per card made a browse list of
@@ -334,9 +336,8 @@ export interface RowOptions {
 export function renderCompactRow(card: CardVM, options: RowOptions = {}): TemplateResult {
   const leaf = options.depth === undefined ? '' : ` tree-leaf ${depthClass(options.depth)}`;
   const deprecated = card.state === 'deprecated' ? ' deprecated' : '';
-  const version = card.latestVersion
-    ? html`<span class="row-version mono">${card.latestVersion}</span>`
-    : nothing;
+  const shown = cardVersion(card);
+  const version = shown ? html`<span class="row-version mono">${shown}</span>` : nothing;
   const title = card.deprecated ?? card.description ?? undefined;
   // In the tree the row IS a tree item; in the flat/grouped list it is just a
   // row, and claiming treeitem outside a tree would be a lie to the reader.
@@ -360,7 +361,13 @@ export function renderCompactRow(card: CardVM, options: RowOptions = {}): Templa
   const gear = options.installStateUnknown
     ? nothing
     : html`<button class="row-action row-gear" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button>`;
-  return html`<div class="compact-row${leaf}${deprecated}" data-repo="${card.repo}" role="${ifDefined(role)}" title="${ifDefined(title)}">${logo}<span class="row-name">${card.name}</span>${version}${gear}${kindTile(card.kind, 'sm')}${rowSlot(card, options.installStateUnknown === true)}</div>`;
+  // The trailing cluster is ONE box (margin-left:auto in CSS), not three loose
+  // siblings: the name shrinks to its text so the version can sit beside it like
+  // it does on a card, and a row with no version must still hold the same right
+  // edge as its neighbours — an auto margin on the version itself would collapse
+  // exactly on those rows.
+  const trailing = html`<span class="row-trailing">${gear}${kindTile(card.kind, 'sm')}${rowSlot(card, options.installStateUnknown === true)}</span>`;
+  return html`<div class="compact-row${leaf}${deprecated}" data-repo="${card.repo}" role="${ifDefined(role)}" title="${ifDefined(title)}">${logo}<span class="row-name">${card.name}</span>${version}${trailing}</div>`;
 }
 
 function twisty(expanded: boolean): TemplateResult {

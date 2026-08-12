@@ -274,11 +274,15 @@ suite('card rendering', () => {
       ),
     );
     assert.ok(html.includes('codicon-root-folder')); // project icon wins
-    assert.ok(!html.includes('1.4.2'), 'chip carries no version (user)');
     assert.ok(!html.includes('codicon-globe'), 'one chip only — the effective scope');
+    // The SCOPE chip still carries no version — it says where, not which. The
+    // version lives in the title chip, and it is the PROJECT install's (the
+    // effective one), so switching that install's version moves the number.
+    assert.ok(!html.includes('installed-chip-scope">Project</span><span class="version'));
+    assert.ok(html.includes('<span class="version mono">1.4.2</span>'));
   });
 
-  test('installed chip never renders the install version, hostile or not', async () => {
+  test('a hostile install version is escaped in the title chip', async () => {
     const html = await litHtml(
       renderCard(
         card({
@@ -298,8 +302,8 @@ suite('card rendering', () => {
         }),
       ),
     );
-    assert.ok(!html.includes('<img src=x'));
-    assert.ok(!html.includes('&lt;img src=x'), 'version is dropped entirely, not just escaped');
+    assert.ok(!html.includes('<img src=x'), 'never live markup');
+    assert.ok(html.includes('&lt;img src=x'), 'rendered as text through lit-html escaping');
   });
 
   test('kind tint classes on tile and badge', async () => {

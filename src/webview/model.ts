@@ -328,6 +328,20 @@ export function concreteVersion(...candidates: Array<string | null | undefined>)
   return present.find((c) => c !== 'latest') ?? present[0] ?? null;
 }
 
+/** The version a browse card/row shows: what IS installed here when it is
+ *  installed, else the catalog's latest. Switching an artifact to another
+ *  version is a change to the declared ref, so this is the value that has to
+ *  move when the user does that — binding the chip to `latestVersion` alone left
+ *  the row reading the same number after a downgrade or a pin.
+ *
+ *  Same expression as the details header ({@link concreteVersion} over the same
+ *  two candidates), so the row and the panel it opens cannot disagree: a
+ *  floating "latest" declaration falls through to the resolved catalog version
+ *  rather than rendering the word "latest". */
+export function cardVersion(card: Pick<CardVM, 'installs' | 'latestVersion'>): string | null {
+  return concreteVersion(effectiveInstall(card.installs)?.version, card.latestVersion);
+}
+
 export function rowState(deprecated: string | null, installs: InstallVM[]): RowState {
   if (deprecated) {
     return 'deprecated';

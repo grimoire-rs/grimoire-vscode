@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import { installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
+  cardVersion,
   addRegistryPrompt,
   artifactName,
   authenticatedHosts,
@@ -1000,6 +1001,43 @@ suite('effective install (design-2b chip)', () => {
     assert.strictEqual(effectiveInstall([global, project]), project);
     assert.strictEqual(effectiveInstall([global]), global);
     assert.strictEqual(effectiveInstall([]), undefined);
+  });
+});
+
+suite('cardVersion (the browse chip follows what is installed)', () => {
+  test('an installed concrete version wins over the catalog latest', () => {
+    const cards = buildCards(
+      [searchItem({ version: '1.5.0' })],
+      [
+        {
+          scope: 'global',
+          status: [statusItem()],
+          declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.2.0' },
+        },
+      ],
+    );
+    // Switching version rewrites the declared ref — this is the value that has
+    // to move when the user does it.
+    assert.strictEqual(cardVersion(cards[0]!), '1.2.0');
+  });
+
+  test('a floating "latest" declaration falls through to the resolved latest', () => {
+    const cards = buildCards(
+      [searchItem({ version: '1.5.0' })],
+      [
+        {
+          scope: 'global',
+          status: [statusItem()],
+          declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:latest' },
+        },
+      ],
+    );
+    assert.strictEqual(cardVersion(cards[0]!), '1.5.0');
+  });
+
+  test('not installed → the catalog latest, null when unknown', () => {
+    assert.strictEqual(cardVersion(buildCards([searchItem({ version: '1.5.0' })], [])[0]!), '1.5.0');
+    assert.strictEqual(cardVersion(buildCards([searchItem()], [])[0]!), null);
   });
 });
 

@@ -887,8 +887,10 @@ vscode-progress-bar {
   font-size: 12px;
 }
 
+/* Shrinks to its text instead of eating the row, so the version sits directly
+   beside the name the way it does on a card — not adrift at the far right. */
 .row-name {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -897,9 +899,19 @@ vscode-progress-bar {
 
 .row-version {
   flex: none;
-  font-size: 10px;
+  font-size: 9px;
   color: var(--vscode-descriptionForeground);
   font-variant-numeric: tabular-nums;
+}
+
+/* Holds the right edge for EVERY row, versioned or not — the name no longer
+   stretches, so the auto margin has to live on something always present. */
+.row-trailing {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* The trailing slot: fixed box so its CONTENT can change with state without
