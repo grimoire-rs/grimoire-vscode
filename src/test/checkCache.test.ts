@@ -96,28 +96,48 @@ suite('mergeCheckedFields', () => {
   });
 
   test('a remembered "no update" does not suppress fresh local drift', () => {
-    // The registry said "nothing newer" at some point. That answers a
-    // registry question; `stale` is a config-vs-lock question, and no remembered
-    // verdict can answer it at any age. The memory must step aside so the local
-    // proxy is what decides.
+    // The registry said "nothing newer" at some point; the lock now says the
+    // installed bits are behind it. That is a local question the memory cannot
+    // answer, so it steps aside and the proxy decides.
     const remembered = checked([statusItem({ update_available: false })]);
-    const { items } = mergeCheckedFields([statusItem({ state: 'stale' })], remembered, false);
+    const { items } = mergeCheckedFields([statusItem({ state: 'outdated' })], remembered, false);
     assert.ok(items[0]);
     assert.strictEqual(
       computeUpdateAvailable(items[0]),
       true,
-      'a stale lock still surfaces an update, remembered "false" or not',
+      'an outdated lock still surfaces an update, remembered "false" or not',
+    );
+  });
+
+  test('a stale row KEEPS its remembered verdict — the scope-wide edit case', () => {
+    // One grimoire.toml edit stales every declared row. The proxy says nothing
+    // about stale, so if the memory also stepped aside the artifact that really
+    // does have an update would go quiet along with everything else.
+    const remembered = checked([statusItem({ update_available: true })]);
+    const { items } = mergeCheckedFields([statusItem({ state: 'stale' })], remembered, false);
+    assert.ok(items[0]);
+    assert.strictEqual(computeUpdateAvailable(items[0]), true, 'the known update survives');
+
+    const quiet = mergeCheckedFields(
+      [statusItem({ state: 'stale' })],
+      checked([statusItem({ update_available: false })]),
+      false,
+    );
+    assert.ok(quiet.items[0]);
+    assert.strictEqual(
+      computeUpdateAvailable(quiet.items[0]),
+      false,
+      'while the other rows stay quiet instead of all claiming an update',
     );
   });
 
   test('a drifted row displays null but keeps the registry verdict in the record', () => {
-    // Stepping aside is a DISPLAY rule. grim derives `stale` from the scope's
-    // declaration_hash, which is scope-wide, so one grimoire.toml edit marks
-    // every row in the scope stale at once — remembering the drift-induced null
-    // would wipe the whole scope's memory until the next daily check.
+    // Stepping aside is a DISPLAY rule: the record still carries the registry's
+    // last word, so the next non-drifted round can show it again without waiting
+    // for another check.
     const remembered = checked([statusItem({ update_available: true })]);
     const { items, remember } = mergeCheckedFields(
-      [statusItem({ state: 'stale' })],
+      [statusItem({ state: 'outdated' })],
       remembered,
       false,
     );

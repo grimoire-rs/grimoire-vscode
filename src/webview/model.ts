@@ -59,16 +59,26 @@ export interface WireStatusItem {
 
 /** Whether a card/install should surface an update. grim's authoritative
  *  `--check` result wins when present: `true` → update badge/button, `false`
- *  → no update even when the local lock reads `stale` (the network check is the
- *  authority; a stale lock is still re-resolved on the Update click via the
- *  offerFullUpdate path). `null`/absent means the check did not run, so it falls
- *  back to the local-state proxy — `outdated` or `stale`. Pure; the single
- *  source shared by the sidebar model and the details host. */
+ *  → no update even when the local lock reads `outdated` (the network check is
+ *  the authority). `null`/absent means the check did not run, so it falls back
+ *  to the ONE local-state proxy that means "a newer artifact is waiting":
+ *  `outdated` — grim derives it from the lock pin vs the install-state record,
+ *  so an install really would change bits.
+ *
+ *  `stale` is NOT that. grim derives it from the live config vs the lock's
+ *  declaration hash: editing grimoire.toml (adding a registry, renaming an
+ *  alias) marks EVERY declared artifact stale at once, and counting it as an
+ *  update lit an Update button on all of them — a whole global config reading as
+ *  "12 updates available" the moment one line changed. Its remedy is `grim
+ *  lock`, not `grim update`; the Update click still recovers a stale lock
+ *  through the offerFullUpdate path when the row genuinely has an update.
+ *
+ *  Pure; the single source shared by the sidebar model and the details host. */
 export function computeUpdateAvailable(item: {
   update_available?: boolean | null;
   state: string;
 }): boolean {
-  return item.update_available ?? (item.state === 'outdated' || item.state === 'stale');
+  return item.update_available ?? item.state === 'outdated';
 }
 
 export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle'];

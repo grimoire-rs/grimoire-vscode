@@ -333,9 +333,17 @@ export function mergeCheckedFields(
     // The registry's last word on this row, fresh or remembered — what gets
     // PERSISTED, drift or no drift.
     const carried = item.update_available ?? previous?.update_available ?? null;
-    // Drift the local lock itself reports — no remembered registry verdict
-    // applies to it, so the row DISPLAYS null and the proxy answers (see above).
-    const drifted = item.state === 'outdated' || item.state === 'stale';
+    // Local drift the lock itself reports — the local proxy already answers
+    // "update available" for it, so the row DISPLAYS null and lets that proxy
+    // speak rather than a remembered "no update" from before the drift.
+    //
+    // `stale` is deliberately NOT drift here, and this is the half that makes
+    // the rule usable: it is scope-wide (one grimoire.toml edit stales every
+    // declared row at once) and computeUpdateAvailable no longer reads it, so
+    // stepping aside on stale would erase a remembered `true` from the one
+    // artifact that really does have an update — every row quiet, including the
+    // right one, until the next daily check.
+    const drifted = item.state === 'outdated';
     const fields: CheckedFields = {
       update_available: carried,
       deprecated: checked

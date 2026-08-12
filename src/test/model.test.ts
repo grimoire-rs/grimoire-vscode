@@ -142,15 +142,25 @@ suite('computeUpdateAvailable', () => {
     assert.strictEqual(computeUpdateAvailable({ update_available: false, state: 'stale' }), false);
   });
 
-  test('null/absent (unchecked) falls back to the outdated/stale proxy', () => {
+  test('a stale lock is NOT an update — editing grimoire.toml marks every row stale', () => {
+    // grim derives `stale` from config-vs-lock declaration hash, so one edit to
+    // grimoire.toml stales all 12 declared artifacts at once; counting it as an
+    // update lit an Update button on every one of them.
+    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'stale' }), false);
+    assert.strictEqual(computeUpdateAvailable({ state: 'stale' }), false);
+    // …but grim's own check still wins in both directions.
+    assert.strictEqual(computeUpdateAvailable({ update_available: true, state: 'stale' }), true);
+  });
+
+  test('null/absent (unchecked) falls back to the outdated proxy', () => {
     assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'outdated' }), true);
-    assert.strictEqual(computeUpdateAvailable({ update_available: null, state: 'stale' }), true);
+
     assert.strictEqual(
       computeUpdateAvailable({ update_available: null, state: 'installed' }),
       false,
     );
     // Field omitted entirely (a fixture / older wire item) behaves like null.
-    assert.strictEqual(computeUpdateAvailable({ state: 'stale' }), true);
+
     assert.strictEqual(computeUpdateAvailable({ state: 'installed' }), false);
   });
 
