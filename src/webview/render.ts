@@ -25,24 +25,38 @@ import type {
 } from './protocol';
 import {
   CardFilter,
+  DEFAULT_VIEW,
   KIND_ICONS,
+  avatarTint,
+  buildTree,
   cardMenuEntries,
   clientDriftTooltip,
   concreteVersion,
   effectiveInstall,
   filterCards,
+  groupCards,
+  groupKeyFor,
   hasClientDrift,
   hasUpdate,
-  installedViewCards,
+  installedCards,
+  monogram,
   normalizeKind,
-  registriesOf,
+  registryCount,
   registryLabel,
   relativeTime,
-  resolveInstalledScope,
   scopeRowMenuEntries,
   viaBundleTitle,
+  type CardGroup,
   type MenuEntry,
+  type TreeNode,
+  type ViewOptions,
 } from './model';
+
+/** Expanded group/tree node ids. Empty when the caller has none (the string
+ *  renderers and every pre-view-modes call site). */
+export type ExpandedNodes = ReadonlySet<string>;
+
+const NONE_EXPANDED: ExpandedNodes = new Set<string>();
 
 // Shared markdown-it for inline bits rendered in the templates (e.g. the header
 // description). html:false keeps raw HTML inert; renderInline emits no <p>
@@ -81,11 +95,14 @@ function kindTile(kind: string | null, extra = ''): TemplateResult {
 }
 
 /** A browse card's leading tile: the cached logo (prefetched) when present, else
- *  the kind-tinted codicon tile. lit escapes the data: URI like any binding. */
-function cardTile(card: CardVM): TemplateResult {
+ *  the kind-tinted codicon tile. lit escapes the data: URI like any binding.
+ *  `extra` adds a size modifier (the compact row and tree leaves pass 'sm');
+ *  empty — the card default — renders exactly the markup it always has. */
+function cardTile(card: CardVM, extra = ''): TemplateResult {
+  const suffix = extra ? ` ${extra}` : '';
   return card.logoUri
-    ? html`<div class="kind-tile has-logo ${kindClass(card.kind)}"><img class="card-logo" src="${card.logoUri}" alt=""/></div>`
-    : kindTile(card.kind);
+    ? html`<div class="kind-tile has-logo ${kindClass(card.kind)}${suffix}"><img class="card-logo" src="${card.logoUri}" alt=""/></div>`
+    : kindTile(card.kind, extra);
 }
 
 function kindBadge(kind: string | null): TemplateResult | typeof nothing {
@@ -258,6 +275,113 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
 </div>`;
 }
 
+// --- Compact rows, group headers, tree (the view modes) ---
+
+/** Indent class per tree level — CSP blocks inline style, so depth is a class
+ *  (see renderLoading's skeleton widths for the same constraint). Deeper than
+ *  the last class simply stops indenting rather than falling off the sidebar. */
+function depthClass(depth: number): string {
+  return `d${Math.min(depth, 5)}`;
+}
+
+/** The trailing slot on a compact row / tree leaf. One fixed-width box whose
+ *  CONTENT is decided by state — never an affordance that appears on hover, so
+ *  a row never reflows under the cursor:
+ *
+ *  | state | slot |
+ *  |---|---|
+ *  | install state unknown | empty (width reserved — we claim nothing) |
+ *  | update available | Update button |
+ *  | grim state modified/missing | warning glyph, no action (details explains) |
+ *  | installed, clean | a dot — NOT a button: there is nothing to do here |
+ *  | not installed | Install button |
+ *
+ *  The modified/missing row is the first surface in the extension to read
+ *  {@link InstallVM.state}; rowState() collapses both into 'installed'. */
+function rowSlot(card: CardVM, installStateUnknown: boolean): TemplateResult {
+  if (installStateUnknown) {
+    return html`<span class="row-slot"></span>`;
+  }
+  const target = card.installs.find((i) => i.updateAvailable);
+  if (target) {
+    const to = card.latestVersion ? ` to ${card.latestVersion}` : '';
+    return html`<span class="row-slot"><button class="row-action update" data-action="update" data-kind="${target.kind}" data-name="${target.name}" data-scope="${target.scope}" title="Update${to}"><span class="codicon codicon-sync"></span></button></span>`;
+  }
+  const drifted = card.installs.find((i) => i.state === 'modified' || i.state === 'missing');
+  if (drifted) {
+    const title =
+      drifted.state === 'modified'
+        ? 'Installed files were modified locally'
+        : 'Installed files are missing';
+    return html`<span class="row-slot"><span class="row-warn codicon codicon-warning" title="${title}"></span></span>`;
+  }
+  const install = effectiveInstall(card.installs);
+  if (install) {
+    return html`<span class="row-slot"><span class="row-dot codicon codicon-circle-filled" title="Installed (${install.scope === 'project' ? 'Project' : 'Global'})"></span></span>`;
+  }
+  return html`<span class="row-slot"><button class="row-action" data-action="install" data-repo="${card.repo}" title="Install"><span class="codicon codicon-cloud-download"></span></button></span>`;
+}
+
+export interface RowOptions {
+  installStateUnknown?: boolean;
+  /** Tree leaves indent by level; omitted in the flat/grouped list. */
+  depth?: number;
+}
+
+/** The compact (22px) row: the same CardVM the card renders, one line of it.
+ *  Carries `data-repo` like the card does, so open-details, the double-click
+ *  promote and the right-click menu all work off the shared row selector. */
+export function renderCompactRow(card: CardVM, options: RowOptions = {}): TemplateResult {
+  const leaf = options.depth === undefined ? '' : ` tree-leaf ${depthClass(options.depth)}`;
+  const deprecated = card.state === 'deprecated' ? ' deprecated' : '';
+  const version = card.latestVersion
+    ? html`<span class="row-version mono">${card.latestVersion}</span>`
+    : nothing;
+  const title = card.deprecated ?? card.description ?? undefined;
+  // In the tree the row IS a tree item; in the flat/grouped list it is just a
+  // row, and claiming treeitem outside a tree would be a lie to the reader.
+  const role = options.depth === undefined ? undefined : 'treeitem';
+  // Leading column is the LOGO — publisher identity is what the eye lands on
+  // first in a dense list — and it is a fixed box even when the artifact has
+  // none, so every name starts at the same x. The trailing cluster reads in
+  // scan order: gear, kind, state. Both glyph columns render bare; the card's
+  // tinted tile background is a card affordance, and at 16px in a 22px row it
+  // reads as a box around a smudge.
+  // No logo → a monogram chip, tinted by a stable hash of the repo. The kind
+  // glyph is NOT the fallback here the way it is on a card: it moved to the
+  // trailing cluster, so reusing it would put the same icon twice in one row.
+  const logo = card.logoUri
+    ? html`<span class="row-logo"><img src="${card.logoUri}" alt=""/></span>`
+    : html`<span class="row-logo monogram avatar-${avatarTint(card.repo)}" aria-hidden="true">${monogram(card.name)}</span>`;
+  // Same data-action the card's gear uses, so it opens the same shared menu off
+  // the row's data-repo. Dropped when install state is unknown, for the reason
+  // the card drops its whole action cluster: every entry in that menu is a
+  // claim about what is installed.
+  const gear = options.installStateUnknown
+    ? nothing
+    : html`<button class="row-action row-gear" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button>`;
+  return html`<div class="compact-row${leaf}${deprecated}" data-repo="${card.repo}" role="${ifDefined(role)}" title="${ifDefined(title)}">${logo}<span class="row-name">${card.name}</span>${version}${gear}${kindTile(card.kind, 'sm')}${rowSlot(card, options.installStateUnknown === true)}</div>`;
+}
+
+function twisty(expanded: boolean): TemplateResult {
+  return html`<span class="twisty codicon codicon-chevron-${expanded ? 'down' : 'right'}"></span>`;
+}
+
+function registryMarks(node: {
+  private?: boolean;
+  isDefaultRegistry?: boolean;
+}): TemplateResult | typeof nothing {
+  const lock = node.private
+    ? html`<span class="codicon codicon-lock group-lock" title="Private registry"></span>`
+    : nothing;
+  const badge = node.isDefaultRegistry ? html`<span class="group-default">default</span>` : nothing;
+  return lock === nothing && badge === nothing ? nothing : html`${lock}${badge}`;
+}
+
+function groupHeader(group: CardGroup, expanded: boolean): TemplateResult {
+  return html`<button class="group-header" data-action="toggle-node" data-node="${group.id}" aria-expanded="${expanded}">${twisty(expanded)}<span class="group-label">${group.label}</span><span class="group-count">${group.cards.length}</span>${registryMarks(group)}</button>`;
+}
+
 const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'skill', label: 'Skill' },
@@ -294,32 +418,8 @@ function renderFilters(filter: CardFilter): TemplateResult {
 </div>`;
 }
 
-/** Installed view: Kind chips + the SCOPE toggle (which scope's list to show).
- *  Updates gets no filters. */
-function renderInstalledFilters(state: SidebarState, filter: CardFilter): TemplateResult {
-  return html`
-<div class="filters">
-  ${kindChips(filter)}
-  ${scopeChips(state, filter)}
-</div>`;
-}
-
-/** Installed view SCOPE toggle: folder=Project / globe=Global, exactly one active
- *  (the resolved scope). Project is disabled with no workspace open; an open but
- *  unconfigured workspace keeps it enabled (the init banner covers it). */
-function scopeChips(state: SidebarState, filter: CardFilter): TemplateResult {
-  const active = resolveInstalledScope(filter.scope, state.scopes);
-  const chip = (target: Scope, label: string, icon: string, disabled: boolean): TemplateResult => {
-    const title = disabled
-      ? 'No workspace folder open — Project scope unavailable'
-      : `Show ${label}`;
-    return html`<button class="kind-chip${active === target ? ' active' : ''}" data-action="set-scope" data-scope="${target}" ?disabled="${disabled}" aria-pressed="${active === target}" title="${title}"><span class="codicon codicon-${icon}"></span>${label}</button>`;
-  };
-  return html`<div class="kind-chips scope-chips">${chipGroupLabel('SCOPE')}${chip('project', 'Project', 'root-folder', !state.scopes.projectOpen)}${chip('global', 'Global', 'globe', false)}</div>`;
-}
-
 function renderFooter(state: SidebarState): TemplateResult {
-  const registries = registriesOf(state.items).length;
+  const registries = registryCount(state);
   // The timestamp lives in its own span (.footer-ts) so a 30s aging tick in
   // sidebar/main.ts can re-render just that text node, not the whole footer.
   const synced =
@@ -345,7 +445,7 @@ function renderNoGrim(): TemplateResult {
 }
 
 function renderEmpty(state: SidebarState): TemplateResult {
-  const registries = registriesOf(state.items).length || 1;
+  const registries = registryCount(state) || 1;
   const synced =
     state.syncedAt !== null
       ? ` The catalog was last synced ${relativeTime(state.syncedAt, state.now)}.`
@@ -443,10 +543,117 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
 </div>`;
 }
 
-/** One installed view's flat card list (native-views split — the workbench owns
+/** One card, in the density and variant its tab calls for. `group` is the scope
+ *  group it is being rendered under, when scope grouping is on — that is what
+ *  decides which install the 'scope' variant reports; without it (kind/no
+ *  grouping) the effective install picks. */
+function tabRow(
+  card: CardVM,
+  state: SidebarState,
+  view: ViewOptions,
+  group?: CardGroup,
+): TemplateResult {
+  const installStateUnknown = state.installStateUnknown !== undefined;
+  if (view.density === 'compact') {
+    return renderCompactRow(card, { installStateUnknown });
+  }
+  if (state.mode === 'updates') {
+    return renderCard(card, { variant: 'updates' });
+  }
+  if (state.mode === 'installed') {
+    const scope: Scope =
+      group?.id === 'project' || group?.id === 'global'
+        ? group.id
+        : (effectiveInstall(card.installs)?.scope ?? 'project');
+    return renderCard(card, { variant: 'scope', scope });
+  }
+  return renderCard(card, { installStateUnknown });
+}
+
+/** The results body for Browse and Installed: tree, grouped list, or flat list.
+ *  Updates never gets here — it is a short single-purpose list (see below). */
+function listBody(
+  cards: CardVM[],
+  state: SidebarState,
+  view: ViewOptions,
+  expanded: ExpandedNodes,
+): TemplateResult {
+  if (view.mode === 'tree') {
+    const nodes = buildTree(cards, {
+      registries: state.registries,
+      projectName: state.scopes.projectName,
+    });
+    // Density applies to the tree too — as a scale on the whole tree, not a
+    // card/row swap: a card indented under a namespace node is not a tree, and
+    // "comfortable" here means the rows and their glyphs get bigger. One
+    // container class does it, so nothing threads through the node renderer.
+    const roomy = view.density === 'comfortable' ? ' roomy' : '';
+    return html`<div class="tree${roomy}" role="tree">${treeNodes(nodes, state, view, expanded, 0)}</div>`;
+  }
+  const key = groupKeyFor(state.mode, view);
+  if (key === 'none') {
+    return html`${repeat(
+      cards,
+      (c) => c.repo,
+      (c) => tabRow(c, state, view),
+    )}`;
+  }
+  const groups = groupCards(cards, key, {
+    registries: state.registries,
+    projectName: state.scopes.projectName,
+  });
+  return html`${repeat(
+    groups,
+    (g) => g.id,
+    (g) =>
+      html`${groupHeader(g, expanded.has(g.id))}${
+        expanded.has(g.id)
+          ? html`${repeat(
+              g.cards,
+              // Keyed per group: an artifact installed in both scopes lands in
+              // both, and lit requires the keys to be unique across the list.
+              (c) => `${g.id}:${c.repo}`,
+              (c) => tabRow(c, state, view, g),
+            )}`
+          : nothing
+      }`,
+  )}`;
+}
+
+function treeNodes(
+  nodes: TreeNode[],
+  state: SidebarState,
+  view: ViewOptions,
+  expanded: ExpandedNodes,
+  depth: number,
+): TemplateResult {
+  return html`${repeat(
+    nodes,
+    (n) => n.id,
+    (n) => {
+      if (n.card) {
+        return renderCompactRow(n.card, {
+          depth,
+          installStateUnknown: state.installStateUnknown !== undefined,
+        });
+      }
+      const open = expanded.has(n.id);
+      return html`<button class="tree-node ${depthClass(depth)}" data-action="toggle-node" data-node="${n.id}" role="treeitem" aria-expanded="${open}">${twisty(open)}<span class="tree-label mono">${n.label}</span><span class="group-count">${n.count}</span>${registryMarks(n)}</button>${
+        open ? treeNodes(n.children, state, view, expanded, depth + 1) : nothing
+      }`;
+    },
+  )}`;
+}
+
+/** One installed view's card list (native-views split — the workbench owns
  *  the section chrome now). Host posts only this view's cards; here we apply the
  *  Kind filter and a client-side name filter for the search box. */
-function renderInstalledResults(state: SidebarState, filter: CardFilter): TemplateResult {
+function renderInstalledResults(
+  state: SidebarState,
+  filter: CardFilter,
+  view: ViewOptions,
+  expanded: ExpandedNodes,
+): TemplateResult {
   if (state.mode === 'updates') {
     // The WHOLE hasUpdate slice, deliberately unfiltered: this tab renders no
     // kind chips and no search box, while the count beside its label (and the
@@ -461,28 +668,19 @@ function renderInstalledResults(state: SidebarState, filter: CardFilter): Templa
       ? html`${repeat(
           state.items,
           (c) => c.repo,
-          (c) => renderCard(c, { variant: 'updates' }),
+          (c) => tabRow(c, state, view),
         )}`
       : installedEmpty('Everything is up to date.');
   }
-  // Installed view: the SCOPE toggle picks which scope's list shows (the host
-  // posts both scopes' installs; we slice here) — installedViewCards runs the
-  // kind + name + scope pipeline, the SAME array the sidebar badge count reads.
-  const scope = resolveInstalledScope(filter.scope, state.scopes);
-  const cards = installedViewCards(state, filter);
-  const emptyText =
-    scope === 'project' ? 'Nothing installed in this project.' : 'Nothing installed globally.';
-  // Keyed by repo + scope: the same artifact installed in both scopes must key
-  // distinctly if the two ever land in one list (spec sidebar-card key rule).
+  // Installed view: BOTH scopes (the host posts both). Scope grouping replaced
+  // the old Project/Global toggle, so nothing is sliced away here — an artifact
+  // installed in both scopes appears under both headers, keyed per group.
   // The initialize-project notice lives in the top #sb-notice slot (above the
   // tabs, all modes) — no inline copy here.
+  const cards = installedCards(state, filter);
   return cards.length
-    ? html`${repeat(
-        cards,
-        (c) => `${scope}:${c.repo}`,
-        (c) => renderCard(c, { variant: 'scope', scope }),
-      )}`
-    : installedEmpty(emptyText);
+    ? listBody(cards, state, view, expanded)
+    : installedEmpty('Nothing installed.');
 }
 
 function installedEmpty(text: string): TemplateResult {
@@ -496,7 +694,13 @@ function installedEmpty(text: string): TemplateResult {
  *  them separately; this composed form stays for the render tests and any
  *  full-render fallback. */
 export function renderSidebarSearch(state: SidebarState): TemplateResult | typeof nothing {
-  // The Updates view has no search box (short, single-purpose list).
+  // The Updates view has no search box (short, single-purpose list). The view
+  // controls are not in the webview at all: density, tree, grouping and
+  // expand/collapse-all are the VIEW's chrome, so they live in its title bar
+  // (package.json `view/title`), where the workbench already puts Explorer's
+  // collapse-all and Search's view-mode toggle. That costs no row inside a
+  // 300px sidebar, overflows into the `…` menu on its own, and makes every
+  // control keyboard- and palette-reachable for free.
   if (state.phase === 'no-grim' || state.mode === 'updates') {
     return nothing;
   }
@@ -516,14 +720,19 @@ export function renderSidebarFilters(
   if (state.phase !== 'ready') {
     return nothing;
   }
-  // Updates: no filters. Project/Global: Kind chips. Browse: full filter row.
-  if (state.mode === 'updates') {
-    return nothing;
-  }
-  return state.mode === 'browse' ? renderFilters(filter) : renderInstalledFilters(state, filter);
+  // Updates: no chips (short, single-purpose list). Browse and Installed: the
+  // Kind chips. Installed's SCOPE toggle is gone — scope grouping replaced it.
+  // The view controls are NOT here: they belong immediately above the list they
+  // reshape, so they render inside the results region (renderSidebarResults).
+  return state.mode === 'updates' ? nothing : renderFilters(filter);
 }
 
-export function renderSidebarResults(state: SidebarState, filter: CardFilter): TemplateResult {
+export function renderSidebarResults(
+  state: SidebarState,
+  filter: CardFilter,
+  view: ViewOptions = DEFAULT_VIEW,
+  expanded: ExpandedNodes = NONE_EXPANDED,
+): TemplateResult {
   if (state.phase === 'no-grim') {
     return renderNoGrim();
   }
@@ -540,22 +749,15 @@ export function renderSidebarResults(state: SidebarState, filter: CardFilter): T
     if (state.installStateUnknown !== undefined) {
       return installedEmpty('Install state is unavailable.');
     }
-    return renderInstalledResults(state, filter);
+    return renderInstalledResults(state, filter, view, expanded);
   }
   const filtered = filterCards(state.items, filter);
-  const registries = registriesOf(state.items).length;
+  const registries = registryCount(state);
   const summary =
     filtered.length > 0
       ? html`<div class="result-summary">${filtered.length} result${filtered.length === 1 ? '' : 's'} in ${registries} ${registries === 1 ? 'registry' : 'registries'}</div>`
       : nothing;
-  const body =
-    filtered.length === 0
-      ? renderEmpty(state)
-      : html`${repeat(
-          filtered,
-          (c) => c.repo,
-          (c) => renderCard(c, { installStateUnknown: state.installStateUnknown !== undefined }),
-        )}`;
+  const body = filtered.length === 0 ? renderEmpty(state) : listBody(filtered, state, view, expanded);
   return html`${summary}<div class="cards">${body}</div>`;
 }
 
@@ -608,12 +810,20 @@ export function renderSidebarFooter(state: SidebarState): TemplateResult | typeo
   return nothing;
 }
 
-export function renderSidebar(state: SidebarState, filter: CardFilter): TemplateResult {
+export function renderSidebar(
+  state: SidebarState,
+  filter: CardFilter,
+  view: ViewOptions = DEFAULT_VIEW,
+  expanded: ExpandedNodes = NONE_EXPANDED,
+): TemplateResult {
   return html`${renderSidebarNotice(state)}${renderSidebarTabs(state)}${renderSidebarSearch(
     state,
-  )}${renderSidebarFilters(state, filter)}${renderSidebarResults(state, filter)}${renderSidebarFooter(
+  )}${renderSidebarFilters(state, filter)}${renderSidebarResults(
     state,
-  )}`;
+    filter,
+    view,
+    expanded,
+  )}${renderSidebarFooter(state)}`;
 }
 
 // --- Details page ---

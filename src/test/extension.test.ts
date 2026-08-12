@@ -4124,6 +4124,7 @@ suite('view/title toolbar contributions (package.json)', () => {
     command?: string;
     submenu?: string;
     group?: string;
+    when?: string;
   }
   interface PackageJson {
     activationEvents: string[];
@@ -4140,14 +4141,79 @@ suite('view/title toolbar contributions (package.json)', () => {
     fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'),
   ) as PackageJson;
 
-  test('only the feedback submenu + conditional Update All stay in navigation; feedback submenu lists both commands', () => {
+  test('navigation holds the feedback submenu, Update All, and the view toggles; feedback submenu lists both commands', () => {
     const navEntries = pkg.contributes.menus['view/title'].filter((entry) =>
       (entry.group ?? '').startsWith('navigation'),
     );
     assert.deepStrictEqual(
       navEntries.map((entry) => entry.submenu ?? entry.command),
-      ['grimoire.feedback', 'grimoire.updateAll'],
+      [
+        'grimoire.feedback',
+        'grimoire.updateAll',
+        // Each toggle is a PAIR of commands under opposite `when` clauses — the
+        // workbench has no toggled state for a title-bar action, so the icon and
+        // title name the state the click switches TO. Exactly one of each pair
+        // is ever visible.
+        'grimoire.showCompactRows',
+        'grimoire.showComfortableCards',
+        'grimoire.showTreeView',
+        'grimoire.showFlatList',
+        'grimoire.groupArtifacts',
+        'grimoire.ungroupArtifacts',
+        'grimoire.expandAll',
+        'grimoire.collapseAll',
+      ],
     );
+    // The pairs must be mutually exclusive, or both icons show at once.
+    const when = (command: string): string =>
+      navEntries.find((entry) => entry.command === command)?.when ?? '';
+    for (const [a, b, key] of [
+      ['grimoire.showCompactRows', 'grimoire.showComfortableCards', 'grimoire.view.compact'],
+      ['grimoire.showTreeView', 'grimoire.showFlatList', 'grimoire.view.tree'],
+      ['grimoire.groupArtifacts', 'grimoire.ungroupArtifacts', 'grimoire.view.grouped'],
+    ] as const) {
+      assert.ok(when(a).includes(`!${key}`), `${a} shows only while !${key}`);
+      assert.ok(when(b).includes(key) && !when(b).includes(`!${key}`), `${b} is its complement`);
+    }
+    // Expand/collapse-all are tree-only and are themselves a complementary
+    // pair on grimoire.view.expanded, so the tree shows exactly ONE icon in
+    // that slot — the same count the list shows for grouping. A slot whose
+    // occupancy changed with the mode shifted every icon beside it.
+    const treeOnly = ['grimoire.expandAll', 'grimoire.collapseAll'];
+    const listOnly = ['grimoire.groupArtifacts', 'grimoire.ungroupArtifacts'];
+    for (const command of treeOnly) {
+      assert.ok(when(command).includes('&& grimoire.view.tree'), `${command} is tree-only`);
+    }
+    for (const command of listOnly) {
+      assert.ok(when(command).includes('!grimoire.view.tree'), `${command} is list-only`);
+    }
+    assert.ok(when('grimoire.expandAll').includes('!grimoire.view.expanded'));
+    assert.ok(
+      when('grimoire.collapseAll').includes('&& grimoire.view.expanded'),
+      'collapse-all is the complement, not a second always-on button',
+    );
+    // All four share ONE slot, so the icon count never changes with the mode.
+    const slots = new Set(
+      [...treeOnly, ...listOnly].map(
+        (command) => navEntries.find((entry) => entry.command === command)?.group,
+      ),
+    );
+    assert.deepStrictEqual([...slots], ['navigation@5'], 'one shared slot');
+    // Updates neither trees nor groups, so every control that shapes structure
+    // is gated on the active tab having one. Density is NOT — Updates honours
+    // it, and a toggle that works everywhere should not blink out on one tab.
+    for (const command of [...treeOnly, ...listOnly, 'grimoire.showTreeView', 'grimoire.showFlatList']) {
+      assert.ok(
+        when(command).includes('grimoire.view.structured'),
+        `${command} only shows on a tab that has a structure`,
+      );
+    }
+    for (const command of ['grimoire.showCompactRows', 'grimoire.showComfortableCards']) {
+      assert.ok(
+        !when(command).includes('grimoire.view.structured'),
+        `${command} applies on every tab`,
+      );
+    }
     assert.deepStrictEqual(
       pkg.contributes.menus['grimoire.feedback'].map((entry) => entry.command),
       ['grimoire.reportBug', 'grimoire.requestFeature'],

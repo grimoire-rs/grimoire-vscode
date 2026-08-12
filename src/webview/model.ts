@@ -4,13 +4,17 @@
 import type {
   ArtifactKind,
   BundleMemberVM,
+  CardSource,
   CardVM,
   DetailsVM,
   InstallVM,
+  GroupKey,
+  RegistryVM,
   RowState,
   Scope,
   ScopesVM,
   SidebarState,
+  ViewOptions,
 } from './protocol';
 
 // Wire shapes (duplicated minimally to keep this module dependency-free of
@@ -18,6 +22,9 @@ import type {
 export interface WireSearchItem {
   kind: string | null;
   repo: string;
+  /** grim's per-row registry attribution. Optional here for the same reason it
+   *  is optional in grim.ts: a grim without it simply omits the key. */
+  source?: { alias: string | null; locator: string } | null;
   summary: string | null;
   description: string | null;
   version: string | null;
@@ -333,6 +340,7 @@ export function buildCards(
     seen.add(item.repo);
     const installs = indexes.flatMap((index) => index.get(item.repo) ?? []);
     const deprecated = item.deprecated ?? null;
+    const source = readSource(item.source);
     cards.push({
       repo: item.repo,
       name: artifactName(item.repo),
@@ -344,10 +352,21 @@ export function buildCards(
       deprecated,
       replacedBy: item.replaced_by ?? null,
       installs,
+      ...(source ? { source } : {}),
       privateRegistry: isPrivateRegistry(registryHost(item.repo), authed, defaultRegistryHost),
     });
   }
   return cards;
+}
+
+/** grim's per-row attribution, read defensively: the key is absent on an older
+ *  grim, and a malformed one is worth nothing — an unattributed card falls back
+ *  to longest-configured-prefix, which is grim's own rule for the same case. */
+function readSource(raw: WireSearchItem['source']): CardSource | undefined {
+  if (!raw || typeof raw.locator !== 'string' || raw.locator === '') {
+    return undefined;
+  }
+  return { alias: typeof raw.alias === 'string' && raw.alias !== '' ? raw.alias : null, locator: raw.locator };
 }
 
 /** Cards for installed artifacts only (Installed view) — includes artifacts not in the catalog. */
@@ -374,6 +393,14 @@ export function buildInstalledCards(
         continue;
       }
       const item = catalog.get(repo);
+      // `grim status` carries no registry attribution (its own `source` field
+      // means direct-vs-via-bundle), so an installed row would fall back to
+      // longest-configured-prefix — which reaches NO alias when the configured
+      // entries are indexes, and the Installed tree then roots on the bare host
+      // while Browse roots on the alias. The browse catalog holds grim's own
+      // attribution for the very same repo; borrow it. An artifact absent from
+      // the catalog keeps the fallback, as it must.
+      const source = readSource(item?.source);
       byRepo.set(repo, {
         repo,
         name: install.name,
@@ -388,6 +415,7 @@ export function buildInstalledCards(
         deprecated: item?.deprecated ?? install.deprecated ?? null,
         replacedBy: item?.replaced_by ?? install.replacedBy ?? null,
         installs: [...installs],
+        ...(source ? { source } : {}),
         privateRegistry: isPrivateRegistry(registryHost(repo), authed, defaultRegistryHost),
       });
     }
@@ -424,9 +452,6 @@ export function firstUnknownScope(scopes: ScopeStatus[]): ScopeStatus | undefine
 export interface CardFilter {
   /** Selected kinds; EMPTY MEANS ALL (the "All" chip). */
   kinds: string[];
-  /** Installed view only: which scope's list to show. undefined = the heuristic
-   *  default (see {@link resolveInstalledScope}); set by the SCOPE toggle. */
-  scope?: Scope;
 }
 
 export const DEFAULT_FILTER: CardFilter = {
@@ -437,22 +462,6 @@ export const DEFAULT_FILTER: CardFilter = {
  *  there need a grimoire.toml), else global. Pure. */
 export function defaultScope(scopes: { projectOpen: boolean; projectConfigured: boolean }): Scope {
   return scopes.projectOpen && scopes.projectConfigured ? 'project' : 'global';
-}
-
-/** Which scope the Installed view shows: the toggle choice, but Project needs a
- *  workspace open (unconfigured is fine — the init banner covers it), so it falls
- *  back to Global with none. Unset → the install heuristic. Pure. */
-export function resolveInstalledScope(
-  selected: Scope | undefined,
-  scopes: { projectOpen: boolean; projectConfigured: boolean },
-): Scope {
-  if (selected === 'project') {
-    return scopes.projectOpen ? 'project' : 'global';
-  }
-  if (selected === 'global') {
-    return 'global';
-  }
-  return defaultScope(scopes);
 }
 
 /** Kind multi-select reducer: empty array means All. Clicking 'all' clears the
@@ -509,18 +518,399 @@ export function viewForTab(
   };
 }
 
-/** The Installed view's shown cards: kind filter + name query + scope slice.
- *  Single source both the results template (render.ts) and the sidebar badge
- *  count (sidebar/main.ts) read, so the count can never drift from the list. */
-export function installedViewCards(state: SidebarState, filter: CardFilter): CardVM[] {
-  const scope = resolveInstalledScope(filter.scope, state.scopes);
-  return searchCards(filterCards(state.items, filter), state.query).filter((c) =>
-    c.installs.some((i) => i.scope === scope),
-  );
+/** The Installed view's shown cards: kind filter + name query, both scopes.
+ *  No scope slice — the SCOPE toggle it used to serve was replaced by scope
+ *  GROUPING (see {@link groupCards}), which shows both at once instead of
+ *  hiding one behind a toggle. */
+export function installedCards(state: SidebarState, filter: CardFilter): CardVM[] {
+  return searchCards(filterCards(state.items, filter), state.query);
 }
 
 export function registriesOf(cards: CardVM[]): string[] {
   return [...new Set(cards.map((c) => c.registryHost))].sort();
+}
+
+/** How many registries a result set spans, for the footer and the empty state:
+ *  the CONFIGURED registries of the searched scope when the host reported them
+ *  (two aliases can share one host, which counting hosts undercounts), else the
+ *  distinct hosts the cards themselves name. */
+export function registryCount(state: Pick<SidebarState, 'registries' | 'items'>): number {
+  return state.registries.length > 0 ? state.registries.length : registriesOf(state.items).length;
+}
+
+// --- Logo placeholder ---
+
+/** How many avatar tints the stylesheet defines (.avatar-0 … .avatar-5). */
+export const AVATAR_TINTS = 6;
+
+/** The tint an artifact's monogram gets when it has no logo: a stable hash of
+ *  its repo, so the same artifact keeps the same colour across refreshes and
+ *  two artifacts side by side rarely collide. Deliberately a CLASS index and
+ *  not a colour — the webview CSP blocks inline style=, so a computed hue
+ *  cannot be applied per element. */
+export function avatarTint(repo: string): number {
+  // FNV-1a, 32-bit. Cheap, well-spread, and stable across runs (unlike any
+  // hash that folds in object identity or iteration order).
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < repo.length; i++) {
+    hash ^= repo.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % AVATAR_TINTS;
+}
+
+/** The letters that stand in for a missing logo: the initials of the name's
+ *  `-`/`_`/`.`-separated words, two at most ("grim-usage" → "GU"), falling back
+ *  to the first character alone. Empty for an empty name — the caller renders an
+ *  empty box rather than a lie. */
+export function monogram(name: string): string {
+  const initials = name
+    .split(/[-_.\s]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => word[0] ?? '')
+    .join('');
+  return initials.slice(0, 2).toUpperCase();
+}
+
+// --- View options: row density, flat-vs-tree, and the list's grouping key ---
+
+// The shapes themselves live in protocol.ts — they ride the wire now that the
+// host persists them as a preference — and are re-exported here so every
+// existing `from './model'` import keeps working.
+export type { Density, GroupKey, ViewMode, ViewOptions } from './protocol';
+
+export const DEFAULT_VIEW: ViewOptions = {
+  density: 'comfortable',
+  mode: 'list',
+  browseGroup: 'none',
+  installedGroup: 'scope',
+};
+
+/** Each tab's group toggle: two states, so it flips rather than cycles. Updates
+ *  is a short single-purpose list and never groups. */
+export const GROUP_CYCLE: Record<SidebarTab, GroupKey[]> = {
+  browse: ['none', 'registry'],
+  installed: ['scope', 'none'],
+  updates: ['none'],
+};
+
+/** The grouping key in force for a tab. */
+export function groupKeyFor(tab: SidebarTab, view: ViewOptions): GroupKey {
+  if (tab === 'browse') {
+    return view.browseGroup;
+  }
+  return tab === 'installed' ? view.installedGroup : 'none';
+}
+
+/** Next key in the tab's cycle (wraps). An unknown current key restarts it. */
+export function cycleGroup(tab: SidebarTab, current: GroupKey): GroupKey {
+  const cycle = GROUP_CYCLE[tab];
+  const next = cycle[(cycle.indexOf(current) + 1) % cycle.length];
+  return next ?? 'none';
+}
+
+export interface CardGroup {
+  /** Stable id — the repeat() key and the expanded-set key. */
+  id: string;
+  label: string;
+  cards: CardVM[];
+  /** Registry groups: a stored credential for this registry (renders the lock). */
+  private?: boolean;
+  /** Registry groups: this is the configured default registry. */
+  isDefaultRegistry?: boolean;
+}
+
+export interface GroupContext {
+  /** The configured registries of the scope that was searched. Grouping and the
+   *  tree key on these; an empty list falls back to the repo's bare host. */
+  registries?: RegistryVM[];
+  projectName?: string | null;
+}
+
+/**
+ * The configured registry a repo came from: the LONGEST matching `oci` prefix,
+ * so "localhost:5050/grimoire" wins over a bare "localhost:5050" entry when
+ * both are configured. This is the same fallback grim's own TUI applies to a
+ * row it cannot attribute ("re-attributes by longest configured prefix",
+ * RowSource::Unattributed).
+ *
+ * INDEX entries are skipped: an index serves rows from arbitrary hosts, so its
+ * locator ("https://index.grimoire.rs") prefixes nothing. grim's TUI roots
+ * those rows on their source because the catalog service hands it a per-row
+ * RowSource — attribution that `grim search --format json` does NOT carry (no
+ * source/alias field on a search item, plain or JSON). Until it does, a row
+ * served by an index groups under its bare host, and inventing an alias for it
+ * would be a guess presented as fact.
+ *
+ * Undefined when nothing claims the repo — including a card that outlived the
+ * registry it was found through.
+ */
+export function registryFor(repo: string, registries: RegistryVM[]): RegistryVM | undefined {
+  let best: RegistryVM | undefined;
+  for (const registry of registries) {
+    if (
+      registry.kind === 'registry' &&
+      (repo === registry.oci || repo.startsWith(`${registry.oci}/`)) &&
+      (best === undefined || registry.oci.length > best.oci.length)
+    ) {
+      best = registry;
+    }
+  }
+  return best;
+}
+
+/** How a card is filed under registry grouping. grim's search JSON attributes
+ *  every row to the configured entry it was browsed from, and that attribution
+ *  wins: it is the only thing that can root an INDEX-served row under the alias
+ *  the user gave the index, since the index's locator prefixes no repo. Without
+ *  it (installed-only cards, an older grim) we fall back to the longest
+ *  configured prefix, then to the bare host — grim's own `RowSource`
+ *  attribution order.
+ *
+ *  The id is the ALIAS when there is one: two entries can share a locator (one
+ *  index browsed twice under different browse filters is exactly that), and
+ *  keying on the locator merged them into one group. An entry with NO alias is
+ *  labelled by its locator — never "default", which already means the default
+ *  registry. */
+function registryBucket(
+  card: Pick<CardVM, 'repo' | 'source'>,
+  registries: RegistryVM[],
+): { id: string; label: string; isDefault: boolean; private: boolean } {
+  const source = card.source;
+  if (source) {
+    // Match the entry back for its flags. Alias first — an alias is unique
+    // within a scope, while the same locator may be declared by two entries.
+    const entry =
+      registries.find((r) => r.alias !== null && r.alias === source.alias) ??
+      registries.find((r) => r.oci === source.locator);
+    return {
+      id: source.alias ?? source.locator,
+      label: source.alias ?? source.locator,
+      isDefault: entry?.isDefault === true,
+      private: entry?.authenticated === true,
+    };
+  }
+  const registry = registryFor(card.repo, registries);
+  if (!registry) {
+    const host = registryHost(card.repo);
+    return { id: host, label: host, isDefault: false, private: false };
+  }
+  return {
+    id: registry.alias ?? registry.oci,
+    label: registry.alias ?? registry.oci,
+    isDefault: registry.isDefault,
+    private: registry.authenticated === true,
+  };
+}
+
+/** The path a card occupies UNDER its registry root, as grim's TUI splits it:
+ *  strip the longest configured locator that prefixes the reference at a `/`
+ *  boundary; failing that, an attributed row keeps its FULL reference (an index
+ *  root legitimately holds rows from several hosts, so the host is information
+ *  there) and an unattributed one drops its bare host (the host IS its root). */
+function relativePath(card: Pick<CardVM, 'repo' | 'source'>, registries: RegistryVM[]): string {
+  const registry = registryFor(card.repo, registries);
+  if (registry) {
+    return card.repo.slice(registry.oci.length + 1);
+  }
+  return card.source ? card.repo : card.repo.split('/').slice(1).join('/');
+}
+
+/** Splits cards into ordered groups for the list's group headers. 'none' is
+ *  handled by the caller (it renders flat), so it is not a key here.
+ *
+ *  Registry: one group per configured registry, named by its alias, default
+ *  first. Scope: Project then Global, each holding the cards with an install in
+ *  it — so an artifact installed in both appears twice, once per group. Pure. */
+export function groupCards(
+  cards: CardVM[],
+  key: Exclude<GroupKey, 'none'>,
+  context: GroupContext = {},
+): CardGroup[] {
+  if (key === 'scope') {
+    const scopes: Scope[] = ['project', 'global'];
+    return scopes
+      .map((scope) => ({
+        id: scope,
+        label:
+          scope === 'project'
+            ? `Project${context.projectName ? ` — ${context.projectName}` : ''}`
+            : 'Global',
+        cards: cards.filter((c) => c.installs.some((i) => i.scope === scope)),
+      }))
+      .filter((g) => g.cards.length > 0);
+  }
+  // Registry: one group per CONFIGURED registry that claims a card, default
+  // first, then by label. Cards no configured registry claims fall back to
+  // their bare host, and those buckets sort last.
+  const registries = context.registries ?? [];
+  const buckets = new Map<string, CardGroup>();
+  for (const card of cards) {
+    const bucket = registryBucket(card, registries);
+    const existing = buckets.get(bucket.id);
+    if (existing) {
+      existing.cards.push(card);
+      continue;
+    }
+    buckets.set(bucket.id, {
+      id: bucket.id,
+      label: bucket.label,
+      cards: [card],
+      private: bucket.private,
+      isDefaultRegistry: bucket.isDefault,
+    });
+  }
+  return [...buckets.values()].sort(byDefaultRegistryFirst);
+}
+
+/** The default registry leads; the rest go alphabetically by the label the user
+ *  actually sees (the alias). */
+function byDefaultRegistryFirst(a: CardGroup, b: CardGroup): number {
+  if (a.isDefaultRegistry !== b.isDefaultRegistry) {
+    return a.isDefaultRegistry === true ? -1 : 1;
+  }
+  return a.label.localeCompare(b.label);
+}
+
+// --- Tree ---
+
+export interface TreeNode {
+  /** Stable id — the repeat() key AND the expanded-set key. The full path from
+   *  the tree root down to this node, so a refreshed catalog keeps the tree
+   *  open exactly where the user left it. */
+  id: string;
+  label: string;
+  /** Group nodes only; a leaf has none. */
+  children: TreeNode[];
+  /** Leaf payload. Its presence is what makes a node a leaf. */
+  card?: CardVM;
+  /** Leaves in this subtree (1 for a leaf). */
+  count: number;
+  /** Registry-root nodes: a stored credential for this host. */
+  private?: boolean;
+  /** Registry-root nodes: the configured default registry. */
+  isDefaultRegistry?: boolean;
+}
+
+/** Builds the registry → namespace → artifact tree, matching grim's own TUI
+ *  tree so the two views never disagree about shape (see
+ *  ../grimoire/test/manual/README.md scenario 1c):
+ *
+ *  - **Roots are the configured registries**, named by their alias. The
+ *    registry's own `oci` prefix (host + namespace) is stripped from the paths
+ *    below it — it is the root, so repeating it in every child is noise.
+ *  - **Longest-empty-prefix fold**: a chain of single-child GROUP nodes joins
+ *    into one row ("playbooks/ci/release"). The namespace directly above a
+ *    package is kept — a group whose only child is a leaf never absorbs it.
+ *  - **Root elision**: with exactly one registry in the result set, the root
+ *    row carries no information, so its children become the roots.
+ *
+ *  Groups sort before leaves, each alphabetically. Pure. */
+export function buildTree(cards: CardVM[], context: GroupContext = {}): TreeNode[] {
+  const registries = context.registries ?? [];
+  const roots = groupCards(cards, 'registry', context).map((group) => {
+    // The path under a root is per CARD, not per root: an index root
+    // legitimately holds rows from several hosts, so there is no one prefix to
+    // strip for the whole group.
+    const placed = group.cards.map((card) => ({
+      card,
+      segments: relativePath(card, registries).split('/'),
+    }));
+    const node: TreeNode = {
+      id: group.id,
+      label: group.label,
+      children: foldChains(namespaceChildren(group.id, placed, 0)),
+      count: group.cards.length,
+    };
+    if (group.private === true) {
+      node.private = true;
+    }
+    if (group.isDefaultRegistry === true) {
+      node.isDefaultRegistry = true;
+    }
+    return node;
+  });
+  return roots.length === 1 && roots[0] ? roots[0].children : roots;
+}
+
+/** A card together with its `/`-split path under its registry root. */
+interface PlacedCard {
+  card: CardVM;
+  segments: string[];
+}
+
+/** One level of a registry's subtree. `depth` counts the path segments already
+ *  consumed by ancestor levels, so each level splits only what is left. A card
+ *  with one segment remaining is the artifact itself: a leaf. */
+function namespaceChildren(parentId: string, placed: PlacedCard[], depth: number): TreeNode[] {
+  const groups = new Map<string, PlacedCard[]>();
+  const leaves: TreeNode[] = [];
+  for (const entry of placed) {
+    const segments = entry.segments.slice(depth);
+    const head = segments.length > 1 ? segments[0] : undefined;
+    if (head === undefined) {
+      // Keyed by repo, not by path: unique, and stable across a refresh even if
+      // the artifact's display name changes.
+      leaves.push({
+        id: entry.card.repo,
+        label: entry.card.name,
+        children: [],
+        count: 1,
+        card: entry.card,
+      });
+      continue;
+    }
+    const bucket = groups.get(head);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      groups.set(head, [entry]);
+    }
+  }
+  const groupNodes = [...groups.entries()].map(([segment, inSegment]) => {
+    const id = `${parentId}/${segment}`;
+    return {
+      id,
+      label: segment,
+      children: namespaceChildren(id, inSegment, depth + 1),
+      count: inSegment.length,
+    };
+  });
+  return [...sortByLabel(groupNodes), ...sortByLabel(leaves)];
+}
+
+function sortByLabel(nodes: TreeNode[]): TreeNode[] {
+  return [...nodes].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Joins single-child group chains into one node, depth-first. A group whose
+ *  only child is a LEAF is left alone — the namespace directly above a package
+ *  carries information the fold would destroy. */
+function foldChains(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((node) => {
+    if (node.card) {
+      return node;
+    }
+    const children = foldChains(node.children);
+    const only = children.length === 1 ? children[0] : undefined;
+    // The child is already maximally folded (depth-first), so one join is all
+    // it takes — a chain of any length collapses from the bottom up. Its id
+    // (the deepest path) becomes the folded row's id.
+    return only && !only.card
+      ? { ...only, label: `${node.label}/${only.label}` }
+      : { ...node, children };
+  });
+}
+
+/** Every group node's id, for expand-all. */
+export function collectNodeIds(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((n) => (n.card ? [] : [n.id, ...collectNodeIds(n.children)]));
+}
+
+/** The ids expanded on a first visit: the top level only, so the tree opens
+ *  showing its shape rather than every artifact at once. */
+export function topLevelIds(nodes: TreeNode[]): string[] {
+  return nodes.filter((n) => !n.card).map((n) => n.id);
 }
 
 // --- Card menus (gear + right-click context menu share one builder) ---

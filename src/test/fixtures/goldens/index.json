@@ -22,7 +22,6 @@
   "search-row-no-grim-empty",
   "filters-browse",
   "filters-installed",
-  "filters-installed-scope-disabled",
   "filters-updates-empty",
   "filters-loading-empty",
   "filters-error-empty",
@@ -35,8 +34,6 @@
   "results-browse-ready-with-cards",
   "notice-init-project",
   "notice-hidden-configured",
-  "results-installed-empty-project",
-  "results-installed-empty-global",
   "results-updates-empty",
   "tabs-browse-active",
   "tabs-updates-active-with-count",
@@ -64,5 +61,15 @@
   "revalidate-failed",
   "revalidate-null",
   "card-menu-deprecated-switch",
-  "details-deprecated-installed-switch"
+  "details-deprecated-installed-switch",
+  "results-installed-empty",
+  "results-browse-compact",
+  "results-browse-grouped-collapsed",
+  "results-browse-grouped-expanded",
+  "results-browse-tree-collapsed",
+  "results-browse-tree-expanded",
+  "results-browse-tree-comfortable",
+  "results-installed-grouped-by-scope",
+  "row-compact-logo",
+  "row-compact-modified"
 ]

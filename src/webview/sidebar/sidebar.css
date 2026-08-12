@@ -792,3 +792,311 @@ vscode-progress-bar {
 .footer-right {
   margin-left: auto;
 }
+
+/* --- View modes: compact rows, group headers, tree ---------------------- */
+
+/* One artifact per 22px row: logo, name, version, then kind / gear / state.
+   Same data-repo contract as .card — hover and click behave identically. */
+.compact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.compact-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.compact-row.deprecated .row-name {
+  text-decoration: line-through;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Tile at row scale: the kind glyph alone, trailing. The card's tinted square
+   is a card affordance — at 16px in a 22px row it reads as a box around a
+   smudge, so the background drops and only the tinted glyph remains. */
+.kind-tile.sm {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* Leading column: the artifact logo. A fixed box even with no logo to put in
+   it, so every name in the list starts at the same x. */
+.row-logo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.row-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+/* No logo published: a monogram chip in one of six tints, picked by a stable
+   hash of the repo (model.avatarTint). Same geometry as the logo it stands in
+   for, so a mixed list keeps one column. */
+.monogram {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--avatar-tint) 22%, transparent);
+  color: var(--avatar-tint);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.avatar-0 {
+  --avatar-tint: var(--vscode-charts-blue, #3794ff);
+}
+.avatar-1 {
+  --avatar-tint: var(--vscode-charts-purple, #c586c0);
+}
+.avatar-2 {
+  --avatar-tint: var(--vscode-charts-green, #89d185);
+}
+.avatar-3 {
+  --avatar-tint: var(--vscode-charts-yellow, #cca700);
+}
+.avatar-4 {
+  --avatar-tint: var(--vscode-charts-red, #f14c4c);
+}
+/* charts-orange reads too dark as a tint on dark themes — the same 50% pull
+   toward the theme foreground the bundle kind tint uses. */
+.avatar-5 {
+  --avatar-tint: color-mix(
+    in srgb,
+    var(--vscode-charts-orange, #ce9178) 50%,
+    var(--vscode-foreground) 50%
+  );
+}
+
+.kind-tile.sm .codicon {
+  font-size: 12px;
+}
+
+.row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-version {
+  flex: none;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The trailing slot: fixed box so its CONTENT can change with state without
+   the row reflowing. Empty when install state is unknown — width still held. */
+.row-slot {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-icon-foreground);
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.compact-row:hover .row-action {
+  opacity: 1;
+}
+
+/* The row gear opens the same shared menu the card's gear does. Quieter than
+   the other two glyph columns at rest — it is on every row regardless of state,
+   and at full strength a long list reads as a column of gears. */
+.row-gear {
+  opacity: 0.45;
+}
+
+.row-action:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+/* The one row state that should pull the eye keeps full strength at rest. */
+.row-action.update,
+.row-warn {
+  color: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground));
+  opacity: 1;
+}
+
+.row-action .codicon,
+.row-warn,
+.row-dot {
+  font-size: 12px;
+}
+
+/* Installed and clean: a dot, not a button — there is nothing to click. */
+.row-dot {
+  color: var(--vscode-charts-green, var(--vscode-testing-iconPassed));
+  font-size: 8px;
+  cursor: default;
+}
+
+/* Group headers (registry / kind / scope) and tree group nodes share the row
+   metrics; only their label typography differs — a tree node names a PATH. */
+.group-header,
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 22px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
+  cursor: pointer;
+  text-align: left;
+}
+
+.group-header:hover,
+.tree-node:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.group-header {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+}
+
+.group-label,
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-label {
+  font-size: 12px;
+}
+
+.group-count {
+  flex: none;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+
+.group-default {
+  flex: none;
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.group-lock {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* A lock and a default marker can both be present; only the first one claims
+   the auto margin, so the second must not push itself out again. */
+.group-lock + .group-default {
+  margin-left: 4px;
+}
+
+.twisty {
+  flex: none;
+  font-size: 14px;
+  color: var(--vscode-icon-foreground);
+}
+
+/* Comfortable density in the tree: the same rows and nodes, scaled up. Set on
+   the .tree container so one class covers leaves and group nodes alike. */
+.tree.roomy .compact-row,
+.tree.roomy .tree-node {
+  height: 30px;
+}
+
+.tree.roomy .row-name,
+.tree.roomy .tree-label {
+  font-size: 13px;
+}
+
+.tree.roomy .row-logo,
+.tree.roomy .kind-tile.sm {
+  width: 20px;
+  height: 20px;
+}
+
+.tree.roomy .kind-tile.sm .codicon {
+  font-size: 15px;
+}
+
+.tree.roomy .monogram {
+  font-size: 10px;
+}
+
+.tree.roomy .row-action .codicon,
+.tree.roomy .row-warn {
+  font-size: 14px;
+}
+
+.tree.roomy .row-slot,
+.tree.roomy .row-action {
+  width: 20px;
+  height: 20px;
+}
+
+/* Tree indentation. Inline style= is blocked by the webview CSP, so depth is a
+   class; past d5 the tree stops indenting rather than walking off a 300px
+   sidebar (deep paths fold into one node anyway — see buildTree). */
+.d0 {
+  padding-left: 12px;
+}
+.d1 {
+  padding-left: 24px;
+}
+.d2 {
+  padding-left: 36px;
+}
+.d3 {
+  padding-left: 48px;
+}
+.d4 {
+  padding-left: 60px;
+}
+.d5 {
+  padding-left: 72px;
+}

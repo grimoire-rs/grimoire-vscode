@@ -355,7 +355,14 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     setUpdateCount: (count: number) => updatesView.setCount(count),
   };
 
-  const sidebar = new SidebarProvider(context.extensionUri, scopes, catalog, delegate, output);
+  const sidebar = new SidebarProvider(
+    context.extensionUri,
+    scopes,
+    catalog,
+    delegate,
+    output,
+    context.globalState,
+  );
 
   // One grim run at a time is all grim's lock allows, so while any mutating
   // action is in flight every view's action controls go inert — otherwise a
@@ -671,6 +678,28 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
       await vscode.commands.executeCommand('grimoire.marketplace.focus');
       sidebar.focusSearch();
     }),
+    // The view controls, in the view's title bar. Each toggle is TWO commands
+    // with opposite `when` clauses (package.json) so the icon and title can
+    // name the state it switches TO — the workbench has no toggled state for a
+    // title-bar action. All five route to the webview, which owns the state.
+    vscode.commands.registerCommand('grimoire.showCompactRows', () =>
+      sidebar.viewAction('toggle-density'),
+    ),
+    vscode.commands.registerCommand('grimoire.showComfortableCards', () =>
+      sidebar.viewAction('toggle-density'),
+    ),
+    vscode.commands.registerCommand('grimoire.showTreeView', () => sidebar.viewAction('toggle-mode')),
+    vscode.commands.registerCommand('grimoire.showFlatList', () => sidebar.viewAction('toggle-mode')),
+    vscode.commands.registerCommand('grimoire.groupArtifacts', () =>
+      sidebar.viewAction('toggle-grouping'),
+    ),
+    vscode.commands.registerCommand('grimoire.ungroupArtifacts', () =>
+      sidebar.viewAction('toggle-grouping'),
+    ),
+    vscode.commands.registerCommand('grimoire.expandAll', () => sidebar.viewAction('expand-all')),
+    vscode.commands.registerCommand('grimoire.collapseAll', () =>
+      sidebar.viewAction('collapse-all'),
+    ),
     // The explicit user refresh is the one path that busts grim's on-disk
     // catalog cache; watcher/config/post-action refreshes stay cheap.
     vscode.commands.registerCommand('grimoire.refresh', () => refreshAll({ refresh: true })),

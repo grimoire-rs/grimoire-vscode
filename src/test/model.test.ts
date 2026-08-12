@@ -1,22 +1,32 @@
 import * as assert from 'assert';
-import { sidebarState } from './fixtures/vms';
+import { installedScope, sidebarState } from './fixtures/vms';
 import {
   addRegistryPrompt,
   artifactName,
   authenticatedHosts,
   buildCards,
+  buildTree,
   buildDetailsVM,
+  AVATAR_TINTS,
+  avatarTint,
   buildInstalledCards,
   buildShareLink,
   buildSkeletonVM,
   cardMenuEntries,
   clientDriftTooltip,
+  collectNodeIds,
   computeUpdateAvailable,
   concreteVersion,
+  cycleGroup,
   DEFAULT_FILTER,
+  DEFAULT_VIEW,
   effectiveInstall,
   filterCards,
   findAssetPath,
+  groupCards,
+  groupKeyFor,
+  installedCards,
+  monogram,
   hasClientDrift,
   hasUpdate,
   INTERACTIVE_SELECTOR,
@@ -32,15 +42,17 @@ import {
   refRepo,
   refTag,
   resolveCompanionAssets,
-  resolveInstalledScope,
   resolveMemberRepo,
   registriesOf,
+  registryFor,
   registryHost,
   registryLabel,
   registryUrlHost,
   relativeTime,
   rowState,
   scopeRowMenuEntries,
+  topLevelIds,
+  type TreeNode,
   footerTickRenders,
   keepPaintedOnLoading,
   shouldResetUi,
@@ -53,7 +65,7 @@ import {
   type WireSearchItem,
   type WireStatusItem,
 } from '../webview/model';
-import type { CardVM, InstallVM, RowState, ScopesVM } from '../webview/protocol';
+import type { CardVM, InstallVM, RegistryVM, RowState, ScopesVM } from '../webview/protocol';
 
 function searchItem(overrides: Partial<WireSearchItem> = {}): WireSearchItem {
   return {
@@ -1597,23 +1609,8 @@ suite('defaultScope', () => {
   });
 });
 
-suite('resolveInstalledScope', () => {
-  const scopes = (projectOpen: boolean, projectConfigured: boolean) => ({
-    projectOpen,
-    projectConfigured,
-  });
-  test('unset → heuristic default (project when configured, else global)', () => {
-    assert.strictEqual(resolveInstalledScope(undefined, scopes(true, true)), 'project');
-    assert.strictEqual(resolveInstalledScope(undefined, scopes(true, false)), 'global');
-  });
-  test('explicit project needs only a workspace open (unconfigured is fine)', () => {
-    assert.strictEqual(resolveInstalledScope('project', scopes(true, false)), 'project');
-    assert.strictEqual(resolveInstalledScope('project', scopes(false, false)), 'global');
-  });
-  test('explicit global always global', () => {
-    assert.strictEqual(resolveInstalledScope('global', scopes(true, true)), 'global');
-  });
-});
+// resolveInstalledScope is gone: the Installed view groups by scope now (both
+// scopes at once) instead of toggling between them — see the groupCards suite.
 
 suite('isInteractiveTarget', () => {
   const fake = (matches: boolean) => ({
@@ -1681,5 +1678,388 @@ suite('resolveCompanionAssets', () => {
     ]);
     assert.match(out, /^!\[e\]\(data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+\)$/);
     assert.ok(!out.includes('<img'), 'raw markup does not survive into the ref');
+  });
+});
+
+// --- View modes: grouping and the tree ------------------------------------
+
+const treeCards = (): CardVM[] =>
+  buildCards(
+    [
+      searchItem(), // ghcr.io/grimoire-rs/skills/grim-usage
+      searchItem({ repo: 'ghcr.io/grimoire-rs/skills/ai-config', kind: 'skill' }),
+      searchItem({ repo: 'ghcr.io/grimoire-rs/rules/quality-core', kind: 'rule' }),
+      // The deep single-child chain: playbooks -> ci -> release -> cut-release.
+      searchItem({ repo: 'ghcr.io/grimoire-rs/playbooks/ci/release/cut-release' }),
+      searchItem({ repo: 'registry.acme.dev/acme/mcp/postgres-mcp', kind: 'mcp' }),
+    ],
+    [],
+  );
+
+const RIG: RegistryVM[] = [
+  { alias: 'primary', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: true },
+  {
+    alias: 'acme',
+    oci: 'registry.acme.dev/acme',
+    kind: 'registry',
+    isDefault: false,
+    authenticated: true,
+  },
+];
+
+suite('registryFor', () => {
+  test('the longest matching oci prefix wins', () => {
+    const registries: RegistryVM[] = [
+      { alias: 'host', oci: 'ghcr.io', kind: 'registry', isDefault: false },
+      { alias: 'ours', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: true },
+    ];
+    assert.strictEqual(registryFor('ghcr.io/grimoire-rs/skills/x', registries)?.alias, 'ours');
+    assert.strictEqual(registryFor('ghcr.io/someone-else/x', registries)?.alias, 'host');
+  });
+
+  test('a repo no configured registry claims matches nothing', () => {
+    assert.strictEqual(registryFor('quay.io/foo/bar', RIG), undefined);
+  });
+
+  test('an index entry never claims a repo — its locator prefixes nothing', () => {
+    // registryFor is prefix matching alone; an index-served row is tied back to
+    // its alias by grim's per-row `source`, not by this (see the source suite).
+    const registries: RegistryVM[] = [
+      { alias: 'mine', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: true },
+      { alias: 'theirs', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: false },
+    ];
+    assert.strictEqual(registryFor('ghcr.io/michael-herwig/arcana/hex', registries), undefined);
+  });
+
+  test('two entries sharing one locator stay distinct groups (keyed by alias)', () => {
+    const registries: RegistryVM[] = [
+      { alias: 'ours', oci: 'localhost:5050', kind: 'registry', isDefault: true },
+      { alias: 'mirror', oci: 'localhost:5050', kind: 'registry', isDefault: false },
+    ];
+    const cards = buildCards([searchItem({ repo: 'localhost:5050/team/skills/x' })], []);
+    const groups = groupCards(cards, 'registry', { registries });
+    assert.deepStrictEqual(
+      groups.map((g) => g.id),
+      ['ours'],
+      'first configured match wins, and the id is its alias — not the shared locator',
+    );
+  });
+
+  test('a prefix only matches on a segment boundary', () => {
+    const registries: RegistryVM[] = [
+      { alias: 'a', oci: 'ghcr.io/grim', kind: 'registry', isDefault: false },
+    ];
+    assert.strictEqual(registryFor('ghcr.io/grimoire-rs/skills/x', registries), undefined);
+  });
+});
+
+suite('groupCards', () => {
+  test('registry: groups are the CONFIGURED registries, named by alias', () => {
+    const groups = groupCards(treeCards(), 'registry', { registries: RIG });
+    assert.deepStrictEqual(
+      groups.map((g) => g.label),
+      ['primary', 'acme'],
+      'default registry first, then by label',
+    );
+    assert.deepStrictEqual(
+      groups.map((g) => g.id),
+      ['primary', 'acme'],
+      'the id is the alias — unique even when two entries share a locator',
+    );
+    assert.strictEqual(groups[1]?.private, true, 'authenticated registry renders the lock');
+  });
+
+  test('registry: two aliases on ONE host stay two groups', () => {
+    const registries: RegistryVM[] = [
+      { alias: 'ours', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: true },
+      { alias: 'theirs', oci: 'ghcr.io/other-org', kind: 'registry', isDefault: false },
+    ];
+    const cards = buildCards(
+      [searchItem(), searchItem({ repo: 'ghcr.io/other-org/skills/x' })],
+      [],
+    );
+    assert.deepStrictEqual(
+      groupCards(cards, 'registry', { registries }).map((g) => g.label),
+      ['ours', 'theirs'],
+    );
+  });
+
+  test('registry: an unclaimed repo falls back to its bare host', () => {
+    const cards = buildCards([searchItem({ repo: 'quay.io/foo/bar' })], []);
+    const groups = groupCards(cards, 'registry', { registries: RIG });
+    assert.deepStrictEqual(
+      groups.map((g) => g.label),
+      ['quay.io'],
+    );
+  });
+
+  test('registry: grim’s per-row source roots an INDEX row under its alias', () => {
+    // The whole point of the field: the index's locator prefixes no repo, so
+    // prefix matching alone can only reach the bare host (see registryFor).
+    const registries: RegistryVM[] = [
+      { alias: 'michael-herwig', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: true },
+    ];
+    const cards = buildCards(
+      [
+        searchItem({
+          repo: 'ghcr.io/michael-herwig/arcana/hex',
+          source: { alias: 'michael-herwig', locator: 'https://index.grimoire.rs' },
+        }),
+      ],
+      [],
+    );
+    const groups = groupCards(cards, 'registry', { registries });
+    assert.deepStrictEqual(
+      groups.map((g) => g.id),
+      ['michael-herwig'],
+    );
+    assert.strictEqual(groups[0]?.isDefaultRegistry, true, 'flags come off the matched entry');
+  });
+
+  test('registry: an UNALIASED source is labelled by its locator, never "default"', () => {
+    const cards = buildCards(
+      [
+        searchItem({
+          repo: 'ghcr.io/someone/skills/x',
+          source: { alias: null, locator: 'ghcr.io/someone' },
+        }),
+      ],
+      [],
+    );
+    const groups = groupCards(cards, 'registry', { registries: [] });
+    assert.deepStrictEqual(
+      groups.map((g) => g.label),
+      ['ghcr.io/someone'],
+      '"default" is taken — it means the default registry',
+    );
+  });
+
+  test('registry: source WINS over prefix attribution when the two disagree', () => {
+    // A row browsed through the index but whose host also matches a configured
+    // oci entry files under the source that actually served it.
+    const registries: RegistryVM[] = [
+      { alias: 'direct', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: false },
+      { alias: 'hub', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: false },
+    ];
+    const cards = buildCards(
+      [searchItem({ source: { alias: 'hub', locator: 'https://index.grimoire.rs' } })],
+      [],
+    );
+    assert.deepStrictEqual(
+      groupCards(cards, 'registry', { registries }).map((g) => g.id),
+      ['hub'],
+    );
+  });
+
+  test('registry: an INSTALLED card inherits the catalog row’s attribution', () => {
+    // grim status carries none, so without this an installed row would fall
+    // back to its bare host while the same artifact roots on its alias under
+    // Browse — the two tabs disagreeing about the same registry.
+    const registries: RegistryVM[] = [
+      { alias: 'hub', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: true },
+    ];
+    const cards = buildInstalledCards(
+      [searchItem({ source: { alias: 'hub', locator: 'https://index.grimoire.rs' } })],
+      [installedScope('project')],
+    );
+    assert.deepStrictEqual(
+      groupCards(cards, 'registry', { registries }).map((g) => g.id),
+      ['hub'],
+    );
+  });
+
+  test('registry: an installed card absent from the catalog keeps the fallback', () => {
+    const cards = buildInstalledCards([], [installedScope('project')]);
+    assert.strictEqual(cards[0]?.source, undefined);
+    assert.deepStrictEqual(
+      groupCards(cards, 'registry', { registries: RIG }).map((g) => g.id),
+      ['primary'],
+    );
+  });
+
+  test('registry: a card with no source still attributes by longest prefix', () => {
+    // Installed-only cards and any pre-attribution grim land here — grim's own
+    // RowSource::Unattributed rule, unchanged.
+    const cards = buildCards([searchItem()], []);
+    assert.strictEqual(cards[0]?.source, undefined);
+    assert.deepStrictEqual(
+      groupCards(cards, 'registry', { registries: RIG }).map((g) => g.id),
+      ['primary'],
+    );
+  });
+
+  test('scope: a card installed in both scopes appears under both headers', () => {
+    const cards = buildCards([searchItem()], [installedScope('project'), installedScope('global')]);
+    const groups = groupCards(cards, 'scope', { projectName: 'demo' });
+    assert.deepStrictEqual(
+      groups.map((g) => g.label),
+      ['Project — demo', 'Global'],
+    );
+    assert.strictEqual(groups[0]?.cards[0], groups[1]?.cards[0], 'the same card, twice');
+  });
+
+  test('scope: a scope with no installs contributes no header', () => {
+    const cards = buildCards([searchItem()], [installedScope('project')]);
+    assert.deepStrictEqual(
+      groupCards(cards, 'scope', {}).map((g) => g.id),
+      ['project'],
+    );
+  });
+});
+
+suite('logo placeholder', () => {
+  test('monogram takes up to two initials, uppercased', () => {
+    assert.strictEqual(monogram('grim-usage'), 'GU');
+    assert.strictEqual(monogram('hello_world.thing'), 'HW', 'two at most');
+    assert.strictEqual(monogram('hex'), 'H');
+    assert.strictEqual(monogram(''), '', 'nothing to stand in for');
+  });
+
+  test('avatarTint is stable per repo and inside the class range', () => {
+    const repo = 'ghcr.io/grimoire-rs/skills/grim-usage';
+    assert.strictEqual(avatarTint(repo), avatarTint(repo), 'same repo, same colour');
+    const tints = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const tint = avatarTint(`ghcr.io/org/skills/artifact-${i}`);
+      assert.ok(tint >= 0 && tint < AVATAR_TINTS, `${tint} is a defined class`);
+      tints.add(tint);
+    }
+    assert.strictEqual(tints.size, AVATAR_TINTS, 'every tint is reachable');
+  });
+});
+
+suite('buildTree', () => {
+  const labels = (nodes: TreeNode[], depth = 0): string[] =>
+    nodes.flatMap((n) => [`${'  '.repeat(depth)}${n.label}`, ...labels(n.children, depth + 1)]);
+
+  test('roots are the configured registries; their oci prefix is stripped below', () => {
+    const nodes = buildTree(treeCards(), { registries: RIG });
+    assert.deepStrictEqual(labels(nodes), [
+      'primary',
+      '  playbooks/ci/release',
+      '    cut-release',
+      '  rules',
+      '    quality-core',
+      '  skills',
+      '    ai-config',
+      '    grim-usage',
+      'acme',
+      '  mcp',
+      '    postgres-mcp',
+    ]);
+  });
+
+  test('the namespace directly above a package is never absorbed', () => {
+    const folded = buildTree(treeCards(), { registries: RIG })[0]?.children[0];
+    assert.strictEqual(folded?.label, 'playbooks/ci/release');
+    assert.strictEqual(folded.children[0]?.label, 'cut-release', 'the leaf keeps its own row');
+    assert.strictEqual(folded.children[0]?.card?.repo.endsWith('cut-release'), true);
+  });
+
+  test('a single registry elides its root row', () => {
+    const single = treeCards().filter((c) => c.registryHost === 'ghcr.io');
+    assert.deepStrictEqual(
+      buildTree(single, { registries: RIG }).map((n) => n.label),
+      ['playbooks/ci/release', 'rules', 'skills'],
+    );
+  });
+
+  test('without configured registries the bare host is the root', () => {
+    assert.deepStrictEqual(
+      buildTree(treeCards(), {}).map((n) => n.label),
+      ['ghcr.io', 'registry.acme.dev'],
+    );
+  });
+
+  test('group ids are alias-rooted paths; a leaf keys on its repo', () => {
+    const root = buildTree(treeCards(), { registries: RIG })[0];
+    assert.strictEqual(root?.id, 'primary', 'the alias is the root id');
+    const folded = root?.children[0];
+    assert.strictEqual(folded?.id, 'primary/playbooks/ci/release');
+    assert.strictEqual(
+      folded?.children[0]?.id,
+      'ghcr.io/grimoire-rs/playbooks/ci/release/cut-release',
+      'the leaf id is the repo itself',
+    );
+  });
+
+  test('an index root keeps each row’s FULL reference as its path', () => {
+    // grim's own split: strip the longest configured locator that prefixes the
+    // reference, and when none does, an ATTRIBUTED row keeps the whole thing —
+    // one index serves several hosts, so the host is information under it.
+    const registries: RegistryVM[] = [
+      { alias: 'hub', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: true },
+    ];
+    const source = { alias: 'hub', locator: 'https://index.grimoire.rs' };
+    const cards = buildCards(
+      [
+        searchItem({ repo: 'ghcr.io/michael-herwig/arcana/hex', source }),
+        searchItem({ repo: 'quay.io/other/skills/tidy', source }),
+      ],
+      [],
+    );
+    // Single root, so it elides — its children are what render.
+    assert.deepStrictEqual(labels(buildTree(cards, { registries })), [
+      'ghcr.io/michael-herwig/arcana',
+      '  hex',
+      'quay.io/other/skills',
+      '  tidy',
+    ]);
+  });
+
+  test('a configured oci prefix is still stripped under a source-rooted node', () => {
+    // Attribution names the ROOT; the path below it is the prefix-stripped
+    // remainder whenever some configured entry does prefix the reference.
+    const registries: RegistryVM[] = [
+      { alias: 'primary', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: true },
+      { alias: 'hub', oci: 'https://index.grimoire.rs', kind: 'index', isDefault: false },
+    ];
+    const cards = buildCards(
+      [
+        searchItem({ source: { alias: 'hub', locator: 'https://index.grimoire.rs' } }),
+        searchItem({
+          repo: 'ghcr.io/grimoire-rs/rules/quality-core',
+          kind: 'rule',
+          source: { alias: 'hub', locator: 'https://index.grimoire.rs' },
+        }),
+      ],
+      [],
+    );
+    const nodes = buildTree(cards, { registries });
+    assert.deepStrictEqual(labels(nodes), ['rules', '  quality-core', 'skills', '  grim-usage']);
+  });
+
+  test('counts are leaf counts, and every group id is collectable', () => {
+    const nodes = buildTree(treeCards(), { registries: RIG });
+    assert.strictEqual(nodes[0]?.count, 4, 'four artifacts under the primary registry');
+    assert.deepStrictEqual(topLevelIds(nodes), ['primary', 'acme']);
+    assert.strictEqual(
+      collectNodeIds(nodes).length,
+      6,
+      'two registry roots + three namespaces under primary + one under acme',
+    );
+  });
+});
+
+suite('view options', () => {
+  test('the group toggle cycles per tab and wraps', () => {
+    assert.strictEqual(cycleGroup('browse', 'none'), 'registry');
+    assert.strictEqual(cycleGroup('browse', 'registry'), 'none');
+    assert.strictEqual(cycleGroup('installed', 'scope'), 'none');
+    assert.strictEqual(cycleGroup('installed', 'none'), 'scope');
+    assert.strictEqual(cycleGroup('updates', 'none'), 'none', 'Updates never groups');
+  });
+
+  test('each tab reads its own key; Updates always reads none', () => {
+    const view = { ...DEFAULT_VIEW, browseGroup: 'registry' as const };
+    assert.strictEqual(groupKeyFor('browse', view), 'registry');
+    assert.strictEqual(groupKeyFor('installed', view), 'scope');
+    assert.strictEqual(groupKeyFor('updates', view), 'none');
+  });
+
+  test('installedCards keeps both scopes — no slice behind a toggle', () => {
+    const items = buildCards([searchItem()], [installedScope('global')]);
+    const state = sidebarState({ mode: 'installed', items });
+    assert.strictEqual(installedCards(state, DEFAULT_FILTER).length, 1);
   });
 });

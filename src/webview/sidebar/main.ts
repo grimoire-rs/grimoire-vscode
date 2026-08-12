@@ -7,17 +7,33 @@ import '@vscode-elements/elements/dist/vscode-progress-bar/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
 import '@vscode-elements/elements/dist/vscode-scrollable/index.js';
 import { render as litRender, type TemplateResult } from 'lit-html';
-import type { CardVM, HostToSidebar, SidebarState, SidebarToHost } from '../protocol';
+import type {
+  CardVM,
+  HostToSidebar,
+  SidebarState,
+  SidebarToHost,
+  ViewAction,
+} from '../protocol';
 import {
   CardFilter,
   DEFAULT_FILTER,
+  DEFAULT_VIEW,
+  buildTree,
+  collectNodeIds,
+  cycleGroup,
   defaultScope,
   filterCards,
   footerTickRenders,
+  groupCards,
+  groupKeyFor,
+  installedCards,
   keepPaintedOnLoading,
   toggleKinds,
+  topLevelIds,
   viewForTab,
+  type GroupContext,
   type SidebarTab,
+  type ViewOptions,
 } from '../model';
 import {
   renderCard,
@@ -40,6 +56,12 @@ interface PersistedState {
   installedFilter?: CardFilter;
   installedQuery?: string;
   query?: string;
+  /** Row density, flat-vs-tree and the grouping keys. Absent on a first run and
+   *  on any state written before view modes existed — DEFAULT_VIEW fills in. */
+  view?: ViewOptions;
+  /** Expanded group-header / tree-node ids (a Set at runtime; an array here
+   *  because setState round-trips through structured JSON). */
+  expanded?: string[];
 }
 
 declare function acquireVsCodeApi(): {
@@ -94,6 +116,14 @@ const filters: { browse: CardFilter; installed: CardFilter } = {
   installed: { ...DEFAULT_FILTER, ...(saved?.installedFilter ?? {}) },
 };
 let installedQuery = saved?.installedQuery ?? '';
+// View modes are per-webview UI state, persisted the same way the tab and the
+// kind chips already are — not a setting: nobody edits this in settings.json,
+// and it is per view, not per machine.
+const viewOptions: ViewOptions = { ...DEFAULT_VIEW, ...(saved?.view ?? {}) };
+const expanded = new Set<string>(saved?.expanded ?? []);
+// Whether the first state post has already had its chance to open the top
+// level (see the `state` handler). Once per webview, not once per refresh.
+let seeded = false;
 let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 // A reload over painted content doesn't show "Refreshing…" immediately — only
 // once it's taken more than a second (a quick refresh would otherwise flicker
@@ -107,6 +137,11 @@ let refreshInFlight = false;
 // focusing it was a silent no-op that flipped the tab and did nothing else.
 // Honoured at the end of the next render().
 let focusPending = false;
+// Every clickable artifact row, whichever density/mode rendered it. Card and
+// compact row both carry `data-repo`, so open-details, the double-click promote
+// and the right-click menu work off one selector instead of three copies of
+// '.card' that only the comfortable list would have matched.
+const ROW_SELECTOR = '.card, .compact-row';
 // Gear/right-click menus are appended onto root, fixed-positioned — never
 // inside the card: the results live in vscode-scrollable's viewport, which
 // clips any absolutely-positioned child at the widget border. The anchor is
@@ -145,7 +180,60 @@ function persist(): void {
     installedFilter: filters.installed,
     installedQuery,
     query: state?.query ?? '',
+    view: viewOptions,
+    expanded: [...expanded],
   });
+}
+
+/** The cards the active tab is currently showing — the same derivation
+ *  render.ts runs, so the node ids computed off it are the ones on screen. */
+function visibleCards(): CardVM[] {
+  if (!state) {
+    return [];
+  }
+  const tabView = viewForTab(state, activeTab, installedQuery);
+  return activeTab === 'installed'
+    ? installedCards(tabView, activeFilter())
+    : filterCards(tabView.items, activeFilter());
+}
+
+/** Group-header / tree-node ids currently in play, outermost first. */
+function currentNodeIds(): string[] {
+  if (!state || activeTab === 'updates') {
+    return [];
+  }
+  const context: GroupContext = {
+    registries: state.registries,
+    projectName: state.scopes.projectName,
+  };
+  if (viewOptions.mode === 'tree') {
+    return collectNodeIds(buildTree(visibleCards(), context));
+  }
+  const key = groupKeyFor(activeTab, viewOptions);
+  return key === 'none' ? [] : groupCards(visibleCards(), key, context).map((g) => g.id);
+}
+
+/** Opens the top level when a newly-entered tree/grouping has nothing expanded
+ *  yet — an all-collapsed first paint reads as an empty view. A set the user
+ *  has already touched here is left alone. */
+function seedExpanded(): void {
+  if (!state || activeTab === 'updates') {
+    return;
+  }
+  const context: GroupContext = {
+    registries: state.registries,
+    projectName: state.scopes.projectName,
+  };
+  const top =
+    viewOptions.mode === 'tree'
+      ? topLevelIds(buildTree(visibleCards(), context))
+      : currentNodeIds().slice(0, 1);
+  if (top.some((id) => expanded.has(id))) {
+    return;
+  }
+  for (const id of top) {
+    expanded.add(id);
+  }
 }
 
 /** The active tab's filter. Updates has no filter UI, so it falls through to
@@ -198,7 +286,7 @@ function render(): void {
   litRender(renderSidebarTabs(view), tabsEl);
   syncSearchValue(view);
   litRender(renderSidebarFilters(view, activeFilter()), filtersEl);
-  litRender(renderSidebarResults(view, activeFilter()), resultsEl);
+  litRender(renderSidebarResults(view, activeFilter(), viewOptions, expanded), resultsEl);
   litRender(renderSidebarFooter(view), footerEl);
   if (focusPending) {
     focusPending = false;
@@ -231,6 +319,68 @@ function post(message: SidebarToHost): void {
   vscode.postMessage(message);
 }
 
+/** Mirrors the three booleans the title bar's `when` clauses key on, so its
+ *  toggles can swap icons. Sent on every view-state change, from a title-bar
+ *  action or a twisty click alike. */
+function postViewFlags(): void {
+  post({
+    type: 'viewFlags',
+    flags: {
+      compact: viewOptions.density === 'compact',
+      tree: viewOptions.mode === 'tree',
+      grouped: groupKeyFor(activeTab, viewOptions) !== 'none',
+      anyExpanded: currentNodeIds().some((id) => expanded.has(id)),
+      structured: activeTab !== 'updates',
+    },
+  });
+}
+
+/** The view controls, fired from the view's TITLE BAR (or the command palette).
+ *  State stays here rather than host-side: grouping flips a different key per
+ *  tab, and the active tab is webview state. */
+function applyViewAction(action: ViewAction): void {
+  switch (action) {
+    case 'toggle-density':
+      viewOptions.density = viewOptions.density === 'compact' ? 'comfortable' : 'compact';
+      break;
+    case 'toggle-mode':
+      viewOptions.mode = viewOptions.mode === 'tree' ? 'list' : 'tree';
+      if (viewOptions.mode === 'tree') {
+        seedExpanded();
+      }
+      break;
+    case 'toggle-grouping': {
+      const next = cycleGroup(activeTab, groupKeyFor(activeTab, viewOptions));
+      if (activeTab === 'installed') {
+        viewOptions.installedGroup = next;
+      } else {
+        viewOptions.browseGroup = next;
+      }
+      if (next !== 'none') {
+        seedExpanded();
+      }
+      break;
+    }
+    case 'expand-all':
+      for (const id of currentNodeIds()) {
+        expanded.add(id);
+      }
+      break;
+    case 'collapse-all':
+      for (const id of currentNodeIds()) {
+        expanded.delete(id);
+      }
+      break;
+  }
+  persist();
+  // The one place the stored PREFERENCE is written: a title-bar action is the
+  // user actively switching. Twisty clicks and tab switches also call
+  // postViewFlags/persist, and deliberately do not get here.
+  post({ type: 'viewPrefs', view: { ...viewOptions } });
+  postViewFlags();
+  render();
+}
+
 // Every action that runs a grim command. While one is in flight ANYWHERE (the
 // host's `busy` post — this view, a details panel, a command), all of them are
 // refused here, not merely dimmed by the .busy CSS: pointer-events still leaves
@@ -250,7 +400,7 @@ let busy: string | null = null;
 
 root.addEventListener('click', (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
-  const card = (event.target as HTMLElement).closest<HTMLElement>('.card');
+  const card = (event.target as HTMLElement).closest<HTMLElement>(ROW_SELECTOR);
   if (!target) {
     const repo = card?.dataset['repo'];
     const menuWasOpen = cardMenuEl !== null || contextMenuEl !== null;
@@ -375,6 +525,21 @@ root.addEventListener('click', (event) => {
     case 'show-grim-info':
       post({ type: 'showGrimInfo' });
       break;
+    case 'toggle-node': {
+      // A twisty on a group header or tree node. The only view control still in
+      // the webview — it belongs to the row, not to the view.
+      const node = target.dataset['node'] ?? '';
+      if (expanded.has(node)) {
+        expanded.delete(node);
+      } else {
+        expanded.add(node);
+      }
+      persist();
+      // The expand/collapse-all button flips with the first and last open node.
+      postViewFlags();
+      render();
+      break;
+    }
     case 'toggle-kind': {
       const current = activeFilter();
       setActiveFilter({
@@ -385,18 +550,18 @@ root.addEventListener('click', (event) => {
       render();
       break;
     }
-    case 'set-scope':
-      // Installed tab scope toggle — client-side, persisted like the kind filter.
-      filters.installed = {
-        ...filters.installed,
-        scope: target.dataset['scope'] as 'project' | 'global',
-      };
-      persist();
-      render();
-      break;
     case 'set-tab':
       activeTab = (target.dataset['tab'] as SidebarTab | undefined) ?? 'browse';
+      // Each tab has its own grouping key and its own node ids, so a tab that
+      // arrives grouped/treed needs its top level opened the same way a fresh
+      // toggle does.
+      if (viewOptions.mode === 'tree' || groupKeyFor(activeTab, viewOptions) !== 'none') {
+        seedExpanded();
+      }
       persist();
+      // Each tab has its own grouping key, so the title bar's Group/Ungroup
+      // icon can flip on a tab switch alone.
+      postViewFlags();
       render();
       break;
   }
@@ -407,7 +572,7 @@ root.addEventListener('click', (event) => {
 // Double-click promotes the preview panel to a permanent tab (VS Code idiom).
 root.addEventListener('dblclick', (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
-  const repo = (event.target as HTMLElement).closest<HTMLElement>('.card')?.dataset['repo'];
+  const repo = (event.target as HTMLElement).closest<HTMLElement>(ROW_SELECTOR)?.dataset['repo'];
   if (target || !repo) {
     return;
   }
@@ -416,7 +581,7 @@ root.addEventListener('dblclick', (event) => {
 
 // Right-click opens the shared card menu at the cursor.
 root.addEventListener('contextmenu', (event) => {
-  const cardEl = (event.target as HTMLElement).closest<HTMLElement>('.card');
+  const cardEl = (event.target as HTMLElement).closest<HTMLElement>(ROW_SELECTOR);
   const repo = cardEl?.dataset['repo'];
   if (!repo || !state) {
     return;
@@ -440,6 +605,16 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') {
     return;
   }
+  closeContextMenu();
+  closeCardMenu();
+});
+
+// A click anywhere OUTSIDE this webview — an editor tab, another view, the
+// workbench chrome — never reaches the click handler above (it lands in a
+// different frame entirely), so an open menu would keep floating over a view
+// that no longer has focus. The frame's own blur is the only signal we get for
+// it, and it is exactly the moment a native menu would dismiss.
+window.addEventListener('blur', () => {
   closeContextMenu();
   closeCardMenu();
 });
@@ -493,7 +668,7 @@ root.addEventListener('input', (event) => {
     if (state) {
       const view = viewForTab(state, activeTab, installedQuery);
       syncSearchValue(view);
-      litRender(renderSidebarResults(view, activeFilter()), resultsEl);
+      litRender(renderSidebarResults(view, activeFilter(), viewOptions, expanded), resultsEl);
     }
     return;
   }
@@ -529,6 +704,16 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
     clearTimeout(loadingFooterTimeout);
     refreshInFlight = false;
     state = message.state;
+    // seedExpanded needs cards, and there are none until the first state lands
+    // — so a tree or grouping restored from the stored preference (or from a
+    // persisted state whose expanded set was empty) gets its top level opened
+    // HERE. Once per webview: re-seeding on every refresh would reopen a top
+    // level the user deliberately collapsed.
+    if (!seeded) {
+      seeded = true;
+      seedExpanded();
+      postViewFlags();
+    }
     render();
   } else if (message.type === 'busy') {
     // Class only — no render(): the lock is CSS plus the click guard above, and
@@ -557,8 +742,19 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
     if (activeTab !== message.tab) {
       activeTab = message.tab;
       persist();
+      postViewFlags();
       render();
     }
+  } else if (message.type === 'viewAction') {
+    applyViewAction(message.action);
+  } else if (message.type === 'viewPrefs') {
+    // The host's stored preference, replayed at boot. It wins over whatever
+    // this webview's own setState held: setState is per workspace and per view,
+    // while this is the choice the user last made anywhere.
+    Object.assign(viewOptions, message.view);
+    persist();
+    postViewFlags();
+    render();
   }
 });
 
@@ -579,3 +775,6 @@ setInterval(() => {
 export { filterCards, renderCard };
 
 post({ type: 'ready' });
+// The title bar's toggles need their icons right from the first paint — the
+// restored view state is ours, so the host learns it here.
+postViewFlags();

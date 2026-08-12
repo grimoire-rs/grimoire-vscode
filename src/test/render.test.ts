@@ -1,5 +1,13 @@
 import * as assert from 'assert';
-import { buildCards, DEFAULT_FILTER, viewForTab, type ScopeStatus } from '../webview/model';
+import {
+  buildCards,
+  buildTree,
+  collectNodeIds,
+  DEFAULT_FILTER,
+  DEFAULT_VIEW,
+  viewForTab,
+  type ScopeStatus,
+} from '../webview/model';
 import { createMarkdown } from '../webview/markdown';
 import {
   esc,
@@ -62,6 +70,25 @@ suite('escaping', () => {
   test('hostile repo stays inert in attributes', async () => {
     const html = await litHtml(renderCard(card({ repo: '"><script>x</script>' })));
     assert.ok(!html.includes('"><script>'));
+  });
+
+  test('compact rows and tree nodes escape a hostile repo path', async () => {
+    // Namespace rows print segments of the repo, which is registry-sourced —
+    // the one place the tree renders text the card never did.
+    const repo = 'ghcr.io/"><img src=x onerror=alert(1)>/skills/<script>alert(1)</script>';
+    const items = buildCards([searchItem({ repo })], []);
+    const state = sidebarState({ items });
+    const compact = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, { ...DEFAULT_VIEW, density: 'compact' }),
+    );
+    assert.ok(!compact.includes('<script>alert(1)'), 'no live script in a compact row');
+    assert.ok(!compact.includes('<img src=x'), 'no live img in the row attributes');
+    const treeView = { ...DEFAULT_VIEW, density: 'compact' as const, mode: 'tree' as const };
+    const expanded = new Set(collectNodeIds(buildTree(items, {})));
+    const tree = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, treeView, expanded));
+    assert.ok(!tree.includes('<script>alert(1)'), 'no live script in a tree node label');
+    assert.ok(!tree.includes('<img src=x'), 'no live img in a tree node');
+    assert.ok(tree.includes('&lt;script&gt;'), 'it is there, escaped');
   });
 
   test('a hostile registry-sourced deprecation message stays escaped in the card name tooltip', async () => {
@@ -751,10 +778,7 @@ suite('sidebar rendering', () => {
     const browseResults = await litHtml(renderSidebarResults(unconfigured, DEFAULT_FILTER));
     assert.ok(!browseResults.includes('init-'));
     const installedResults = await litHtml(
-      renderSidebarResults(
-        { ...unconfigured, mode: 'installed' },
-        { ...DEFAULT_FILTER, scope: 'project' },
-      ),
+      renderSidebarResults({ ...unconfigured, mode: 'installed' }, DEFAULT_FILTER),
     );
     assert.ok(!installedResults.includes('init-'));
     // Configured workspace → the notice slot is empty.
@@ -896,7 +920,11 @@ suite('sidebar rendering', () => {
         renderSidebarFilters(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER),
       ),
       '',
-      'Updates has no filters',
+      'Updates has no kind chips',
+    );
+    assert.ok(
+      !html.includes('data-action="set-density"'),
+      'the view controls are title-bar actions now, not webview chrome',
     );
   });
 
@@ -914,78 +942,62 @@ suite('sidebar rendering', () => {
     );
   });
 
-  test('installed view: scope cards + Kind chips + SCOPE toggle, no sections (item 8)', async () => {
+  test('installed view: scope groups + Kind chips, no sections (item 8)', async () => {
     const items = buildCards([searchItem()], [installedScope('project')]);
-    // Default (configured project) resolves to the project scope.
     const html = await litHtml(
-      renderSidebar(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER),
+      renderSidebar(
+        sidebarState({ mode: 'installed', items }),
+        DEFAULT_FILTER,
+        DEFAULT_VIEW,
+        new Set(['project']),
+      ),
     );
     assert.ok(html.includes('data-action="menu"'), 'scope-variant card (manage gear)');
     assert.ok(!html.includes('section-header') && !html.includes('data-section-id'), 'no sections');
     assert.ok(html.includes('<span class="chip-group-label">KIND</span>'));
-    assert.ok(html.includes('<span class="chip-group-label">SCOPE</span>'), 'SCOPE toggle present');
-    assert.ok(html.includes('data-action="set-scope" data-scope="project"'));
-    assert.ok(html.includes('data-action="set-scope" data-scope="global"'));
+    assert.ok(html.includes('data-node="project"'), 'a Project group header');
+    assert.ok(!html.includes('set-scope'), 'the SCOPE toggle it replaced is gone');
     assert.ok(html.includes('Search installed…'), 'installed view keeps a search box');
   });
 
-  test('installed SCOPE toggle: default active + Project disabled without a workspace (item 8)', async () => {
-    const configured = await litHtml(
+  test('installed view: no SCOPE toggle — the filter row is the Kind chips alone', async () => {
+    const filters = await litHtml(
       renderSidebarFilters(sidebarState({ mode: 'installed' }), DEFAULT_FILTER),
     );
-    assert.ok(
-      configured.includes('class="kind-chip active" data-action="set-scope" data-scope="project"'),
-      'configured project → Project active by default',
-    );
-    const noProject = await litHtml(
-      renderSidebarFilters(
-        sidebarState({
-          mode: 'installed',
-          scopes: { projectOpen: false, projectConfigured: false, projectName: null },
-        }),
-        DEFAULT_FILTER,
-      ),
-    );
-    assert.ok(
-      noProject.includes('data-scope="project" disabled'),
-      'Project disabled, no workspace',
-    );
-    assert.ok(
-      noProject.includes('class="kind-chip active" data-action="set-scope" data-scope="global"'),
-      'Global forced active',
-    );
+    assert.ok(!filters.includes('set-scope'), 'the scope toggle is gone (scope grouping replaced it)');
+    assert.ok(filters.includes('data-action="toggle-kind"'), 'Kind chips stay');
   });
 
-  test('installed view shows only the selected scope’s installs (item 8)', async () => {
+  test('installed view groups by scope and shows both scopes at once', async () => {
     const items = buildCards([searchItem()], [installedScope('project')]); // project install only
-    const proj = await litHtml(
+    const collapsed = await litHtml(
       renderSidebarResults(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER),
     );
-    assert.ok(proj.includes('data-action="menu"'), 'project install shows under Project');
-    const glob = await litHtml(
-      renderSidebarResults(sidebarState({ mode: 'installed', items }), {
-        ...DEFAULT_FILTER,
-        scope: 'global',
-      }),
-    );
     assert.ok(
-      glob.includes('Nothing installed globally.'),
-      'project-only install hidden under Global',
+      collapsed.includes('data-action="toggle-node" data-node="project"'),
+      'a Project group header, not a toggle',
+    );
+    assert.ok(!collapsed.includes('data-action="menu"'), 'collapsed group renders no rows');
+    const expanded = await litHtml(
+      renderSidebarResults(
+        sidebarState({ mode: 'installed', items }),
+        DEFAULT_FILTER,
+        DEFAULT_VIEW,
+        new Set(['project']),
+      ),
+    );
+    assert.ok(expanded.includes('data-action="menu"'), 'expanded group renders its cards');
+    assert.ok(
+      !expanded.includes('data-node="global"'),
+      'an empty scope contributes no header at all',
     );
   });
 
-  test('empty installed view: scope-appropriate message; Updates its own (item 8)', async () => {
-    const proj = await litHtml(
+  test('empty installed view says nothing is installed; Updates its own (item 8)', async () => {
+    const none = await litHtml(
       renderSidebarResults(sidebarState({ mode: 'installed', items: [] }), DEFAULT_FILTER),
     );
-    assert.ok(proj.includes('Nothing installed in this project.'));
-    const glob = await litHtml(
-      renderSidebarResults(sidebarState({ mode: 'installed', items: [] }), {
-        ...DEFAULT_FILTER,
-        scope: 'global',
-      }),
-    );
-    assert.ok(glob.includes('Nothing installed globally.'));
+    assert.ok(none.includes('Nothing installed.'));
     const upd = await litHtml(
       renderSidebarResults(sidebarState({ mode: 'updates', items: [] }), DEFAULT_FILTER),
     );
@@ -1030,7 +1042,7 @@ suite('sidebar split rendering (item 3)', () => {
     assert.strictEqual(
       await litString(renderSidebarSearch(sidebarState({ mode: 'updates' }))),
       '',
-      'Updates has no search',
+      'Updates has no search row',
     );
   });
 

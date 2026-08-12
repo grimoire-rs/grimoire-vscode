@@ -15,9 +15,23 @@ export type Scope = 'project' | 'global';
 // --- Wire types (nullable fields are honest: the default index returns null
 // --- for most metadata; OCI-backed registries fill more in).
 
+/** Which configured registry entry a `grim search` row was browsed from. Both
+ *  halves are needed: `repo` names the ARTIFACT's host, while a locator is a
+ *  host plus an optional namespace (an `oci` entry) or an index URL (an `index`
+ *  entry) — and one index serves rows from many hosts, so the repo alone cannot
+ *  attribute the row. `alias` is null when the entry declared none.
+ *
+ *  Additive: absent on a grim that predates it, which is a read-site guard, not
+ *  a version gate (see .claude/rules/grim-compat-markers.md). */
+export interface SearchSource {
+  alias: string | null;
+  locator: string;
+}
+
 export interface SearchItem {
   kind: string | null;
   repo: string;
+  source?: SearchSource | null;
   summary: string | null;
   description: string | null;
   version: string | null;

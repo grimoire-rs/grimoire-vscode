@@ -28,7 +28,12 @@ import {
   type Scope,
 } from '../grim';
 import type { CatalogService } from '../catalog';
-import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
+import {
+  projectSearchable,
+  searchScopeFor,
+  type ScopeService,
+  type Snapshot,
+} from '../scopes';
 import {
   artifactName,
   authenticatedHosts,
@@ -44,14 +49,20 @@ import type {
   CardVM,
   GrimOrigin,
   HostToSidebar,
+  RegistryVM,
   SidebarState,
   SidebarToHost,
+  ViewAction,
+  ViewOptions,
 } from '../webview/protocol';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
 import { offerForcedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
+
+/** globalState key for the view preference (density / list-vs-tree / grouping). */
+const VIEW_PREFS_KEY = 'grimoire.sidebar.view';
 
 export interface SidebarDelegate {
   openDetails(repo: string, mode: 'preview' | 'permanent'): void;
@@ -105,6 +116,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // Last-known default registry host, carried into the loading footer
   // ("Refreshing from <host>…") which is posted before the snapshot lands.
   private lastDefaultRegistry: string | undefined;
+  /** Registries of the scope the last search used — see the searchContext
+   *  derivation in doRefresh. Rides every post so the webview's grouping and
+   *  tree can name them by their configured alias. */
+  private lastRegistries: RegistryVM[] = [];
   // Last ready result, kept so a prefetch-driven logo repost can re-render without
   // the loading flash (and without a fresh grim round-trip).
   private lastReady:
@@ -158,6 +173,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private readonly catalog: CatalogService,
     private readonly delegate: SidebarDelegate,
     private readonly output: vscode.OutputChannel,
+    /** Where the view preference lives. globalState, not workspaceState: how a
+     *  list is drawn is a habit, not a property of one project. */
+    private readonly memento: vscode.Memento,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -198,6 +216,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.post({ type: 'setTab', tab });
   }
 
+  /** A view control fired from the title bar (or the command palette). The
+   *  webview owns the state — see the `viewAction` message. */
+  viewAction(action: ViewAction): void {
+    this.post({ type: 'viewAction', action });
+  }
+
   /** Seeds the search box (deep-link handler) so the query + results show. */
   async seedSearch(query: string): Promise<void> {
     this.query = query;
@@ -220,6 +244,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // below posts through post(), which would otherwise put every message
         // straight back in the map and deliver nothing at all.
         this.ready = true;
+        // The stored preference first, before any results land: the webview's
+        // own setState is workspace-scoped and dies with the view, so this is
+        // what carries density/tree/grouping across a restart. Nothing stored
+        // (first ever run) leaves the webview on its own defaults.
+        const storedView = this.memento.get<ViewOptions>(VIEW_PREFS_KEY);
+        if (storedView) {
+          this.post({ type: 'viewPrefs', view: storedView });
+        }
         // Drain before the refresh — these are the posts that raced the boot.
         const pending = [...this.pendingPosts.values()];
         this.pendingPosts.clear();
@@ -300,6 +332,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'installGrim':
         await this.delegate.installGrim();
+        return;
+      case 'viewFlags':
+        // Mirror the webview's view state into context keys so the title bar's
+        // toggles can pick their icon (`when: grimoire.view.compact`, …). The
+        // state itself stays webview-side; these are a rendering input only.
+        await vscode.commands.executeCommand(
+          'setContext',
+          'grimoire.view.compact',
+          message.flags.compact,
+        );
+        await vscode.commands.executeCommand(
+          'setContext',
+          'grimoire.view.tree',
+          message.flags.tree,
+        );
+        await vscode.commands.executeCommand(
+          'setContext',
+          'grimoire.view.grouped',
+          message.flags.grouped,
+        );
+        await vscode.commands.executeCommand(
+          'setContext',
+          'grimoire.view.expanded',
+          message.flags.anyExpanded,
+        );
+        // Updates neither trees nor groups, so its title bar drops both
+        // controls rather than showing toggles whose effect never appears.
+        await vscode.commands.executeCommand(
+          'setContext',
+          'grimoire.view.structured',
+          message.flags.structured,
+        );
+        return;
+      case 'viewPrefs':
+        // Deliberate switches only (see the message doc) — a twisty click or a
+        // tab change never gets here, so the stored preference is exactly what
+        // the user last chose.
+        await this.memento.update(VIEW_PREFS_KEY, message.view);
         return;
       case 'showGrimInfo':
         // Opens the grim-info modal (registered in extension.ts). Executed as a
@@ -446,9 +516,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
-    const defaultRegistry = snap.global?.context.default_registry;
+    // Read the registry set off the scope the search ACTUALLY used, not global:
+    // a project with its own `[[registries]]` browses those, and reporting
+    // global's set made the view name registries it never read (and miss the
+    // ones it did). Falls back to global when project scope has no context —
+    // the same fallback searchScopeFor itself makes.
+    const searchScope = searchScopeFor(snap.projectFolder, projectSearchable(snap));
+    const searchContext =
+      (searchScope === 'project' ? snap.project?.context : undefined) ?? snap.global?.context;
+    const defaultRegistry = searchContext?.default_registry;
     this.lastDefaultRegistry = defaultRegistry ? registryUrlHost(defaultRegistry) : undefined;
-    const authed = authenticatedHosts(snap.global?.context.registries ?? []);
+    this.lastRegistries = (searchContext?.registries ?? []).map((r) => ({
+      alias: r.alias,
+      oci: r.url,
+      // grim's kind vocabulary is open; anything that is not the index kind is
+      // treated as a plain registry, which is the prefix-matchable case.
+      kind: r.kind === 'index' ? ('index' as const) : ('registry' as const),
+      isDefault: r.default,
+      ...(r.authenticated === true ? { authenticated: true } : {}),
+    }));
+    const authed = authenticatedHosts(searchContext?.registries ?? []);
     // Default registry host, so a stored credential for it (many users are
     // docker-logged-in to ghcr.io, the default) doesn't lock-mark every card.
     const defaultRegistryHost = this.lastDefaultRegistry ?? null;
@@ -606,7 +693,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         projectConfigured: snap ? projectSearchable(snap) : false,
         projectName,
       },
-      registries: snap?.global?.context.registries.map((r) => r.url) ?? [],
+      registries: this.lastRegistries,
       defaultRegistry: this.lastDefaultRegistry ?? null,
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),

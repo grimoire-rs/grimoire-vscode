@@ -186,12 +186,22 @@ function makeSidebar(
   };
   const posted: HostToSidebar[] = [];
   const output = vscode.window.createOutputChannel('grimoire-test');
+  // A throwaway globalState: the provider stores the view preference there.
+  const store = new Map<string, unknown>();
+  const memento = {
+    keys: () => [...store.keys()],
+    get: (key: string, fallback?: unknown) => store.get(key) ?? fallback,
+    update: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+  } as unknown as vscode.Memento;
   const provider = new SidebarProvider(
     vscode.Uri.file(os.tmpdir()),
     scopes,
     catalog,
     delegate,
     output,
+    memento,
   );
   const view = fakeView(posted);
   provider.resolveWebviewView(view);

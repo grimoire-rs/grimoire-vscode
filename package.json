@@ -150,6 +150,54 @@
         "title": "Request Feature",
         "category": "Grimoire",
         "icon": "$(feedback)"
+      },
+      {
+        "command": "grimoire.showCompactRows",
+        "title": "Compact Rows",
+        "category": "Grimoire",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "grimoire.showComfortableCards",
+        "title": "Comfortable Cards",
+        "category": "Grimoire",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "grimoire.showTreeView",
+        "title": "Tree View",
+        "category": "Grimoire",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "grimoire.showFlatList",
+        "title": "Flat List",
+        "category": "Grimoire",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "grimoire.groupArtifacts",
+        "title": "Group Artifacts",
+        "category": "Grimoire",
+        "icon": "$(group-by-ref-type)"
+      },
+      {
+        "command": "grimoire.ungroupArtifacts",
+        "title": "Ungroup Artifacts",
+        "category": "Grimoire",
+        "icon": "$(ungroup-by-ref-type)"
+      },
+      {
+        "command": "grimoire.expandAll",
+        "title": "Expand All",
+        "category": "Grimoire",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "grimoire.collapseAll",
+        "title": "Collapse All",
+        "category": "Grimoire",
+        "icon": "$(collapse-all)"
       }
     ],
     "submenus": [
@@ -195,6 +243,46 @@
           "command": "grimoire.showGrimInfo",
           "when": "view == grimoire.marketplace",
           "group": "9_settings@2"
+        },
+        {
+          "command": "grimoire.showCompactRows",
+          "when": "view == grimoire.marketplace && !grimoire.view.compact",
+          "group": "navigation@3"
+        },
+        {
+          "command": "grimoire.showComfortableCards",
+          "when": "view == grimoire.marketplace && grimoire.view.compact",
+          "group": "navigation@3"
+        },
+        {
+          "command": "grimoire.showTreeView",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && !grimoire.view.tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "grimoire.showFlatList",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && grimoire.view.tree",
+          "group": "navigation@4"
+        },
+        {
+          "command": "grimoire.groupArtifacts",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && !grimoire.view.tree && !grimoire.view.grouped",
+          "group": "navigation@5"
+        },
+        {
+          "command": "grimoire.ungroupArtifacts",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && !grimoire.view.tree && grimoire.view.grouped",
+          "group": "navigation@5"
+        },
+        {
+          "command": "grimoire.expandAll",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && grimoire.view.tree && !grimoire.view.expanded",
+          "group": "navigation@5"
+        },
+        {
+          "command": "grimoire.collapseAll",
+          "when": "view == grimoire.marketplace && grimoire.view.structured && grimoire.view.tree && grimoire.view.expanded",
+          "group": "navigation@5"
         }
       ],
       "grimoire.feedback": [

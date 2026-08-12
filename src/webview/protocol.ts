@@ -52,6 +52,15 @@ export interface InstallVM {
   replacedBy?: string | null;
 }
 
+/** A card's registry attribution — the `{alias, locator}` grim's search JSON
+ *  carries per row. The locator is the configured entry's own value, which for
+ *  an index is a URL no repo starts with; that is exactly why the alias cannot
+ *  be re-derived from the repo. */
+export interface CardSource {
+  alias: string | null;
+  locator: string;
+}
+
 export interface CardVM {
   repo: string;
   name: string;
@@ -64,12 +73,40 @@ export interface CardVM {
   deprecated: string | null;
   replacedBy: string | null;
   installs: InstallVM[];
+  /** The configured registry entry this row was browsed from, as grim's search
+   *  JSON attributes it. Absent on installed-only cards (grim `status` carries
+   *  no registry attribution — its own `source` field means "direct" vs "via
+   *  bundle") and on a grim that predates the field; both fall back to
+   *  longest-configured-prefix attribution, which is grim's own rule for a row
+   *  it cannot attribute. */
+  source?: CardSource;
   /** True when the card's registry host is one the user is authenticated to
    *  (a private registry) — renders a lock glyph. Absent/false = public. */
   privateRegistry?: boolean;
   /** data: URI of the artifact logo when the details cache has one (prefetched
    *  or previously opened); shown in place of the codicon tile. */
   logoUri?: string | null;
+}
+
+/** One configured registry, as the scope Browse actually searched reports it
+ *  (grim `context.registries[]`). The catalog groups and the tree key on these,
+ *  NOT on the repo's host: two registries can share a host and differ only by
+ *  namespace, and the name the user gave a registry in grimoire.toml is the
+ *  name they expect to see. */
+export interface RegistryVM {
+  /** Configured alias; null when the entry has none (grim allows that). */
+  alias: string | null;
+  /** grim's `url`: for a `registry` entry the host + namespace prefix a repo
+   *  starts with ("localhost:5050/grimoire"); for an `index` entry the index's
+   *  own URL ("https://index.grimoire.rs"), which no repo starts with. */
+  oci: string;
+  /** grim's `kind`. Only a `registry` entry can claim a repo by prefix — an
+   *  index serves rows from arbitrary hosts, and `grim search` does not say
+   *  which source served which row (see registryFor). */
+  kind: 'registry' | 'index';
+  isDefault: boolean;
+  /** A stored credential exists for this registry (grim `authenticated`). */
+  authenticated?: boolean;
 }
 
 export interface ScopesVM {
@@ -97,7 +134,11 @@ export interface SidebarState {
    *  tab switches never need a host round-trip. */
   installedItems: CardVM[];
   scopes: ScopesVM;
-  registries: string[];
+  /** The registries the browse search actually resolved — from the SEARCHED
+   *  scope's context (project when it is configured, else global), not global
+   *  alone: a project declaring its own `[[registries]]` browses those, and
+   *  reporting global's set made the view describe registries it never read. */
+  registries: RegistryVM[];
   /** Host of the default registry, shown in the loading footer. Null when
    *  unknown (first load, before any snapshot). */
   defaultRegistry?: string | null;
@@ -133,6 +174,15 @@ export type SidebarToHost =
   | { type: 'install'; ref: string; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
   | { type: 'update'; kind: string; name: string; scope: Scope }
+  /** The view state changed (a title-bar action, or a click inside the view) —
+   *  the host mirrors it into context keys so the title bar can swap each
+   *  toggle's icon. State itself stays in the webview. */
+  | { type: 'viewFlags'; flags: ViewFlags }
+  /** The user actively switched a view control. Sent ONLY from a title-bar
+   *  action — never from a twisty click, a tab switch or a boot — so the stored
+   *  preference records deliberate choices and nothing else. The host writes it
+   *  to globalState; see {@link ViewOptions}. */
+  | { type: 'viewPrefs'; view: ViewOptions }
   /** One card-menu "Switch to <replacedBy>" entry: install the deprecated
    *  artifact's named successor in `scope`, then uninstall the old one. Per
    *  scope (each installed row has its own entry). */
@@ -161,7 +211,66 @@ export type HostToSidebar =
   | { type: 'focusSearch' }
   /** Switches the internal tab bar from the host — the Updates row in the
    *  activity-bar tree view clicks through to the Updates tab. */
-  | { type: 'setTab'; tab: SidebarState['mode'] };
+  | { type: 'setTab'; tab: SidebarState['mode'] }
+  /** A view control fired from the view's TITLE BAR (or the command palette).
+   *  The host is a dumb router here: view state stays webview-side, where the
+   *  active tab lives — grouping flips a different key per tab, and the host
+   *  does not know which tab is showing. */
+  | { type: 'viewAction'; action: ViewAction }
+  /** The stored view preference, replayed into a freshly-booted webview. The
+   *  webview's own setState is workspace-scoped and dies with the view, so this
+   *  is what makes density/tree/grouping survive reopening VS Code — and
+   *  survive it in a different window. Absent when nothing was ever stored. */
+  | { type: 'viewPrefs'; view: ViewOptions };
+
+/** The title-bar view controls, named after what they do. */
+export type ViewAction =
+  | 'toggle-density'
+  | 'toggle-mode'
+  | 'toggle-grouping'
+  | 'expand-all'
+  | 'collapse-all';
+
+export type Density = 'comfortable' | 'compact';
+export type ViewMode = 'list' | 'tree';
+/** Grouping key for the flat list — one axis per tab, so the control is a
+ *  two-state toggle like the others. There is deliberately no group-by-kind:
+ *  the Kind chips already slice by kind, and a second control for the same
+ *  dimension is one control too many. 'scope' is Installed-only: it replaced
+ *  that view's Project/Global toggle, and a card installed in both scopes lands
+ *  in BOTH groups (which is the point — one list, both scopes). */
+export type GroupKey = 'none' | 'registry' | 'scope';
+
+/** The view preference: how the list is drawn, independent of what is in it.
+ *  On the wire because the HOST persists it (globalState) — the webview's own
+ *  setState is workspace-scoped and per-view, so it cannot carry a preference
+ *  from one window to the next. */
+export interface ViewOptions {
+  density: Density;
+  mode: ViewMode;
+  /** Browse's grouping key ('scope' is not offered there — browse cards are
+   *  catalog rows, most of which are installed nowhere). */
+  browseGroup: GroupKey;
+  /** Installed's grouping key. */
+  installedGroup: GroupKey;
+}
+
+/** What the title bar needs to pick each toggle's icon: the webview owns the
+ *  state, so it reports the booleans the `when` clauses key on. */
+export interface ViewFlags {
+  compact: boolean;
+  tree: boolean;
+  grouped: boolean;
+  /** Whether the ACTIVE tab has a structure to shape at all. Updates is a short
+   *  single-purpose list that never trees or groups, so its title bar drops
+   *  those controls rather than offering toggles that visibly do nothing. */
+  structured: boolean;
+  /** Any group/tree node currently open. Drives the ONE expand/collapse-all
+   *  button: with something open it offers Collapse All, otherwise Expand All —
+   *  so the tree keeps the same number of title-bar icons as the list and
+   *  nothing shifts when the mode flips. */
+  anyExpanded: boolean;
+}
 
 export interface BundleMemberVM {
   kind: string;

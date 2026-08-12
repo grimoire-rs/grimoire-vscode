@@ -6,11 +6,20 @@
 // source of truth for "what to render" instead of drifting.
 import {
   buildCards,
+  buildTree,
+  collectNodeIds,
   DEFAULT_FILTER,
+  DEFAULT_VIEW,
   type ScopeStatus,
   type WireSearchItem,
 } from '../../webview/model';
-import type { CardVM, DetailsVM, InstallVM, SidebarState } from '../../webview/protocol';
+import type {
+  CardVM,
+  DetailsVM,
+  InstallVM,
+  RegistryVM,
+  SidebarState,
+} from '../../webview/protocol';
 
 export function searchItem(overrides: Partial<WireSearchItem> = {}): WireSearchItem {
   return {
@@ -316,16 +325,6 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     r.renderSidebarFilters(sidebarState({ mode: 'installed' }), DEFAULT_FILTER),
   );
   add(
-    'filters-installed-scope-disabled',
-    r.renderSidebarFilters(
-      sidebarState({
-        mode: 'installed',
-        scopes: { projectOpen: false, projectConfigured: false, projectName: null },
-      }),
-      DEFAULT_FILTER,
-    ),
-  );
-  add(
     'filters-updates-empty',
     r.renderSidebarFilters(sidebarState({ mode: 'updates' }), DEFAULT_FILTER),
   );
@@ -384,15 +383,8 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   );
   add('notice-hidden-configured', r.renderSidebarNotice(sidebarState()));
   add(
-    'results-installed-empty-project',
+    'results-installed-empty',
     r.renderSidebarResults(sidebarState({ mode: 'installed', items: [] }), DEFAULT_FILTER),
-  );
-  add(
-    'results-installed-empty-global',
-    r.renderSidebarResults(sidebarState({ mode: 'installed', items: [] }), {
-      ...DEFAULT_FILTER,
-      scope: 'global',
-    }),
   );
   add(
     'results-updates-empty',
@@ -426,6 +418,96 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   add(
     'sidebar-composed-browse',
     r.renderSidebar(sidebarState({ items: buildCards([searchItem()], []) }), DEFAULT_FILTER),
+  );
+
+  // --- view modes: compact density, grouping, tree, the toolbar ---
+  // Two registries, three namespaces, and a deep single-child chain — the fold
+  // and root-elision cases in one fixture.
+  const viewCards = buildCards(
+    [
+      searchItem(),
+      searchItem({
+        repo: 'ghcr.io/grimoire-rs/rules/quality-core',
+        kind: 'rule',
+        version: '2.0.0',
+      }),
+      searchItem({
+        repo: 'ghcr.io/grimoire-rs/playbooks/ci/release/cut-release',
+        version: '1.0.0',
+      }),
+      searchItem({
+        repo: 'registry.acme.dev/acme/mcp/postgres-mcp',
+        kind: 'mcp',
+        version: '1.1.0',
+      }),
+    ],
+    [installedScope('project'), outdatedScope('global')],
+  );
+  const viewRegistries: RegistryVM[] = [
+    { alias: 'grimoire', oci: 'ghcr.io/grimoire-rs', kind: 'registry', isDefault: true },
+    {
+      alias: 'acme',
+      oci: 'registry.acme.dev/acme',
+      kind: 'registry',
+      isDefault: false,
+      authenticated: true,
+    },
+  ];
+  const viewState = sidebarState({
+    items: viewCards,
+    defaultRegistry: 'ghcr.io',
+    registries: viewRegistries,
+  });
+  const compactView = { ...DEFAULT_VIEW, density: 'compact' as const };
+  const groupedView = { ...compactView, browseGroup: 'registry' as const };
+  const treeView = { ...compactView, mode: 'tree' as const };
+  const treeIds = new Set(collectNodeIds(buildTree(viewCards, { registries: viewRegistries })));
+  add('results-browse-compact', r.renderSidebarResults(viewState, DEFAULT_FILTER, compactView));
+  add(
+    'results-browse-grouped-collapsed',
+    r.renderSidebarResults(viewState, DEFAULT_FILTER, groupedView),
+  );
+  add(
+    'results-browse-grouped-expanded',
+    r.renderSidebarResults(viewState, DEFAULT_FILTER, groupedView, new Set(['grimoire'])),
+  );
+  add('results-browse-tree-collapsed', r.renderSidebarResults(viewState, DEFAULT_FILTER, treeView));
+  add(
+    'results-browse-tree-expanded',
+    r.renderSidebarResults(viewState, DEFAULT_FILTER, treeView, treeIds),
+  );
+  // Density reaches the tree as a scale on the container (.tree.roomy), not a
+  // card/row swap — this is the comfortable half of that pair.
+  add(
+    'results-browse-tree-comfortable',
+    r.renderSidebarResults(
+      viewState,
+      DEFAULT_FILTER,
+      { ...DEFAULT_VIEW, mode: 'tree' as const },
+      treeIds,
+    ),
+  );
+  add(
+    'results-installed-grouped-by-scope',
+    r.renderSidebarResults(
+      { ...viewState, mode: 'installed', installedItems: viewCards, items: viewCards },
+      DEFAULT_FILTER,
+      compactView,
+      new Set(['project', 'global']),
+    ),
+  );
+  // The compact row's icon columns: logo leading, then gear / kind / state.
+  add('row-compact-logo', r.renderCompactRow(card({ logoUri: 'data:image/png;base64,AAAA' })));
+  // The trailing slot's warning state — grim reports the install as modified,
+  // which rowState() collapses to 'installed' but the slot reads directly.
+  add(
+    'row-compact-modified',
+    r.renderCompactRow(
+      card({
+        state: 'installed',
+        installs: [{ ...projectInstall, state: 'modified' }],
+      }),
+    ),
   );
 
   // --- details: full skill, mcp, bundle, deprecated, both-scopes, busy/error,
