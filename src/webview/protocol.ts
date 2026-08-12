@@ -188,6 +188,12 @@ export type SidebarToHost =
    *  scope (each installed row has its own entry). */
   | { type: 'switch'; oldKind: string; oldName: string; replacedBy: string; scope: Scope }
   | { type: 'pin'; ref: string }
+  /** The repos whose rows are on screen right now (plus a margin), debounced,
+   *  re-sent after every render and while scrolling. Drives the details
+   *  prefetch: the sweep follows the viewport instead of a fixed top-K, so
+   *  scrolling into row 200 fills its logo the same as row 1. Advisory only —
+   *  the host filters by cache freshness and the queue is idempotent. */
+  | { type: 'visible'; repos: string[] }
   | { type: 'pickVersion'; repo: string }
   | { type: 'openDetails'; repo: string; mode: 'preview' | 'permanent' }
   | { type: 'copyRepoPath'; repo: string }

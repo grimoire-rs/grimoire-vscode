@@ -288,6 +288,7 @@ function render(): void {
   litRender(renderSidebarFilters(view, activeFilter()), filtersEl);
   litRender(renderSidebarResults(view, activeFilter(), viewOptions, expanded), resultsEl);
   litRender(renderSidebarFooter(view), footerEl);
+  observeVisibleRows();
   if (focusPending) {
     focusPending = false;
     (document.getElementById('search') as HTMLInputElement | null)?.focus();
@@ -317,6 +318,60 @@ function syncSearchValue(view: SidebarState | null = null): void {
 
 function post(message: SidebarToHost): void {
   vscode.postMessage(message);
+}
+
+// --- Viewport reporting (drives the host's details prefetch) ---
+
+// One shared observer over every row/card in the results region. rootMargin
+// reaches a screenful past the viewport in both directions so a logo is already
+// on its way by the time the row is scrolled into place.
+const VISIBLE_MARGIN = '400px';
+const VISIBLE_DEBOUNCE_MS = 300;
+const visibleRepos = new Set<string>();
+let visibleTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleVisiblePost(): void {
+  if (visibleTimer) {
+    return;
+  }
+  visibleTimer = setTimeout(() => {
+    visibleTimer = undefined;
+    if (visibleRepos.size > 0) {
+      post({ type: 'visible', repos: [...visibleRepos] });
+    }
+  }, VISIBLE_DEBOUNCE_MS);
+}
+
+const visibilityObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      const repo = (entry.target as HTMLElement).dataset.repo;
+      if (repo === undefined) {
+        continue;
+      }
+      if (entry.isIntersecting) {
+        visibleRepos.add(repo);
+      } else {
+        visibleRepos.delete(repo);
+      }
+    }
+    scheduleVisiblePost();
+  },
+  { root: scrollEl, rootMargin: VISIBLE_MARGIN },
+);
+
+/** Re-arms the observer after a render. Disconnect-and-reobserve, and the set
+ *  is cleared with it: lit reuses and reorders row nodes, so a set carried
+ *  across renders accumulates repos that are no longer rendered at all. The
+ *  observer re-reports every currently-intersecting element asynchronously as
+ *  soon as it observes them — well inside the debounce window — so the cleared
+ *  set refills before anything is posted. */
+function observeVisibleRows(): void {
+  visibilityObserver.disconnect();
+  visibleRepos.clear();
+  for (const el of resultsEl.querySelectorAll('[data-repo]')) {
+    visibilityObserver.observe(el);
+  }
 }
 
 /** Mirrors the three booleans the title bar's `when` clauses key on, so its

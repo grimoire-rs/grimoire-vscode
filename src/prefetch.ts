@@ -2,10 +2,10 @@
 // opening an artifact paints instantly and card logos pop in as they land.
 // Pure scheduling (no vscode/DOM): work + freshness + repost are injected.
 
-// ponytail: tuning constants — bounded fan-out and capped parallel grim spawns
-// keep this cheap at thousands-of-skills scale. Raise if telemetry says so.
-const TOP_K = 24;
-const CONCURRENCY = 6;
+// ponytail: capped parallel grim spawns keep this cheap at thousands-of-skills
+// scale. The FAN-OUT is not bounded here any more — the caller passes the rows
+// that are actually on screen, so the ceiling is the viewport, not a constant.
+const CONCURRENCY = 10;
 const REPOST_DEBOUNCE_MS = 500;
 
 export interface PrefetchDeps {
@@ -30,15 +30,16 @@ export class Prefetcher {
 
   constructor(private readonly deps: PrefetchDeps) {}
 
-  /** Enqueue the top-K uncached repos of a fresh result list. New results clear
-   *  the pending queue (in-flight items just finish); fire-and-forget.
+  /** Enqueue the stale repos of a list — normally the rows currently on screen,
+   *  reported by the webview as the user scrolls. A new list clears the pending
+   *  queue (in-flight items just finish); fire-and-forget.
    *
    *  `force` skips the freshness probe, so an explicit refresh ("Check for
-   *  updates", the refresh button) re-resolves every top-K repo instead of
-   *  trusting a cache entry that is younger than the 6h TTL. That entry is what
-   *  a browse row's version comes from behind an index registry, so without this
-   *  a newly published version stayed invisible for hours no matter how often
-   *  the user hit refresh. */
+   *  updates", the refresh button) re-resolves every repo instead of trusting a
+   *  cache entry that is still inside its TTL. That entry is what a browse row's
+   *  version comes from behind an index registry, so without this a newly
+   *  published version stayed invisible for hours no matter how often the user
+   *  hit refresh. */
   async enqueue(repos: string[], options: { force?: boolean } = {}): Promise<void> {
     if (this.disposed || !this.deps.enabled()) {
       return;
@@ -50,7 +51,7 @@ export class Prefetcher {
     // result list on top, so the prefetch chased results that were already gone.
     const generation = ++this.generation;
     const uncached: string[] = [];
-    for (const repo of repos.slice(0, TOP_K)) {
+    for (const repo of repos) {
       if (this.inFlight.has(repo) || uncached.includes(repo)) {
         continue;
       }

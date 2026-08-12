@@ -44,7 +44,7 @@ suite('Prefetcher', () => {
     assert.deepStrictEqual(worked, []);
   });
 
-  test('respects the concurrency cap (never more than 6 in flight)', async () => {
+  test('respects the concurrency cap (never more than 10 in flight)', async () => {
     let inFlight = 0;
     let max = 0;
     const release: Array<() => void> = [];
@@ -61,14 +61,15 @@ suite('Prefetcher', () => {
           worked.push(repo);
         }),
     });
-    await p.enqueue(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
-    assert.strictEqual(max, 6, 'exactly the cap started');
+    const repos = Array.from({ length: 14 }, (_, i) => `r${i + 1}`);
+    await p.enqueue(repos);
+    assert.strictEqual(max, 10, 'exactly the cap started');
     while (release.length > 0) {
       release.shift()?.();
       await flush();
     }
-    assert.strictEqual(max, 6, 'never exceeded the cap while draining');
-    assert.strictEqual(worked.length, 10, 'all ran once the in-flight drained');
+    assert.strictEqual(max, 10, 'never exceeded the cap while draining');
+    assert.strictEqual(worked.length, 14, 'all ran once the in-flight drained');
   });
 
   test('new results clear the pending queue; in-flight finish', async () => {
@@ -80,16 +81,17 @@ suite('Prefetcher', () => {
           gate.push(resolve);
         }),
     });
-    await p.enqueue(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']); // 6 start, a7/a8 pending
-    assert.strictEqual(worked.length, 6);
-    await p.enqueue(['b1', 'b2']); // replaces the pending a7/a8
+    // 10 start, a11/a12 stay pending
+    await p.enqueue(Array.from({ length: 12 }, (_, i) => `a${i + 1}`));
+    assert.strictEqual(worked.length, 10);
+    await p.enqueue(['b1', 'b2']); // replaces the pending a11/a12
     while (gate.length > 0) {
       gate.shift()?.();
       await flush();
     }
     await flush();
     assert.ok(worked.includes('b1') && worked.includes('b2'), 'new results ran');
-    assert.ok(!worked.includes('a7') && !worked.includes('a8'), 'stale pending was cleared');
+    assert.ok(!worked.includes('a11') && !worked.includes('a12'), 'stale pending was cleared');
   });
 
   test('a slow enqueue never installs its queue over a newer one', async () => {
@@ -155,12 +157,13 @@ suite('Prefetcher', () => {
           gate.push(resolve);
         }),
     });
-    await p.enqueue(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']); // 6 in flight, 2 pending
+    // 10 in flight, 2 pending
+    await p.enqueue(Array.from({ length: 12 }, (_, i) => `a${i + 1}`));
     p.dispose();
     while (gate.length > 0) {
       gate.shift()?.();
       await flush();
     }
-    assert.strictEqual(worked.length, 6, 'pending was dropped on dispose');
+    assert.strictEqual(worked.length, 10, 'pending was dropped on dispose');
   });
 });

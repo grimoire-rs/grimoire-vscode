@@ -62,6 +62,11 @@ import { switchToReplacement } from './switchReplacement';
 /** globalState key for the view preference (density / list-vs-tree / grouping). */
 const VIEW_PREFS_KEY = 'grimoire.sidebar.view';
 
+/** Rows seeded into the prefetch the moment results land, before the webview
+ *  reports its viewport. Roughly a tall window of compact rows — the real work
+ *  list is the `visible` report, which supersedes this within a frame or two. */
+const SEED_SWEEP = 24;
+
 export interface SidebarDelegate {
   openDetails(repo: string, mode: 'preview' | 'permanent'): void;
   installGrim(): Promise<void>;
@@ -143,6 +148,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     | undefined;
   // In-flight refresh count; repostCardMeta stays quiet while > 0.
   private refreshing = 0;
+  /** Set when the results just posted came from an explicit refresh/check, so
+   *  the viewport report that follows re-resolves instead of trusting the cache.
+   *  One-shot: scrolling afterwards is not a refresh. */
+  private forcePrefetch = false;
   // A logo repost that arrived mid-refresh, replayed once the refresh drains.
   // Without it the signal is LOST: the debounce upstream has already fired, and
   // the refresh's own enrichCards may have run before the logo was cached — so
@@ -319,6 +328,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       case 'pin':
         await this.delegate.pin(message.ref);
+        return;
+      case 'visible':
+        // The rows on screen ARE the prefetch work list. The force flag belongs
+        // to the results round that produced this render, not to the scroll —
+        // consumed once, so a later scroll re-probes only what is stale.
+        this.delegate.prefetch(message.repos, { force: this.consumeForcePrefetch() });
         return;
       case 'pickVersion':
         this.delegate.forgetCached(message.repo);
@@ -621,15 +636,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: catalogState.syncedAt,
       snapshot: snap,
     });
-    // Browse results drive the prefetch (top-K handled by the prefetcher).
+    // The webview reports which rows are actually on screen and that drives the
+    // sweep from here on ('visible' above). Seeding the first screenful anyway
+    // costs one superseded queue — the generation guard drops it as soon as the
+    // real viewport lands — and keeps logos filling if a webview never reports.
     // Skip on error results.
     if (catalogError === undefined) {
       // An explicit refresh/check re-resolves the cached describes too: they are
       // where an index-backed row's version comes from, and a TTL-fresh entry
       // would otherwise outlive several deliberate refreshes.
-      this.delegate.prefetch(cards.map((c) => c.repo), {
-        force: options.refresh === true || options.check === true,
-      });
+      this.forcePrefetch = options.refresh === true || options.check === true;
+      this.delegate.prefetch(
+        cards.slice(0, SEED_SWEEP).map((c) => c.repo),
+        { force: this.forcePrefetch },
+      );
     }
   }
 
@@ -690,6 +710,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  ponytail: rides the existing prefetch, so it reaches its top-K and honors
    *  grimoire.prefetchDetails. Rows past that ceiling stay blank — give them a
    *  describe-only sweep if the catalogs get big enough to notice. */
+  private consumeForcePrefetch(): boolean {
+    const force = this.forcePrefetch;
+    this.forcePrefetch = false;
+    return force;
+  }
+
   private async enrichCards(cards: CardVM[]): Promise<void> {
     if (cards.length === 0) {
       return;
