@@ -105,6 +105,14 @@ export function offerInstallRefusal(
     return false;
   }
   output.appendLine(`error: grim install --${scope}: ${result.message}`);
-  void offerModifiedRefusal(scopes, scope, 'install', result.message);
+  // Caught, not bare `void`: nothing awaits this any more, and it outlives the
+  // action. The user can click `Open <name>` minutes later — after a reload, by
+  // which point executeCommand rejects with "command not found" — and the
+  // snapshot fallback inside can reject too. An unhandled rejection in the
+  // extension host would leave nothing in the channel this dialog's own
+  // "Show Output" button points at.
+  void offerModifiedRefusal(scopes, scope, 'install', result.message).catch((e) =>
+    output.appendLine(`install refusal notice failed: ${String(e)}`),
+  );
   return true;
 }
