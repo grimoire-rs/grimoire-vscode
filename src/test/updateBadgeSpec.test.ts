@@ -91,6 +91,7 @@ function fakeView(posted: HostToSidebar[]): vscode.WebviewView {
     show: () => {},
     onDidDispose: noopEvent,
     onDidChangeVisibility: noopEvent,
+    badge: undefined as vscode.ViewBadge | undefined,
     webview: {
       options: {},
       html: '',
@@ -110,8 +111,9 @@ interface SidebarHarness {
   provider: SidebarProvider;
   /** Every message that reached the webview, in order. */
   posted: HostToSidebar[];
-  /** Every count the provider published, in order. */
-  counts: number[];
+  /** The WebviewView the provider was resolved with, if any — where the badge
+   *  ends up. */
+  view: vscode.WebviewView | undefined;
 }
 
 /** A SidebarProvider over doubles. `resolve` false leaves the WebviewView
@@ -139,7 +141,6 @@ function makeSidebar(options: {
       return lastCatalog;
     },
   } as unknown as CatalogService;
-  const counts: number[] = [];
   const delegate: SidebarDelegate = {
     openDetails: () => {},
     installGrim: async () => {},
@@ -150,9 +151,6 @@ function makeSidebar(options: {
     cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
     forgetCached: () => {},
     prefetch: () => {},
-    setUpdateCount: (count) => {
-      counts.push(count);
-    },
   };
   const posted: HostToSidebar[] = [];
   const output = vscode.window.createOutputChannel('grimoire-update-badge-spec');
@@ -173,10 +171,12 @@ function makeSidebar(options: {
     output,
     memento,
   );
+  let view: vscode.WebviewView | undefined;
   if (options.resolve !== false) {
-    provider.resolveWebviewView(fakeView(posted));
+    view = fakeView(posted);
+    provider.resolveWebviewView(view);
   }
-  return { provider, posted, counts };
+  return { provider, posted, view };
 }
 
 async function activateExtension(): Promise<GrimoireApi> {
@@ -189,16 +189,28 @@ async function activateExtension(): Promise<GrimoireApi> {
 
 suite('update count without a resolved webview view (cluster B)', () => {
   test('a refresh publishes the count even though no webview view was ever resolved', async () => {
-    // The whole point of moving the badge off the WebviewView: VS Code resolves
-    // that object only when the view first becomes visible, so a window where
-    // Grimoire was never opened had no count at all. Nothing is resolved here.
-    const { provider, counts } = makeSidebar({ snapshots: [outdatedSnapshot()], resolve: false });
+    // VS Code resolves the WebviewView only when the view first becomes
+    // visible, so there is no badge object to hang a count on in a window where
+    // Grimoire was never opened. The count is still computed and held.
+    const { provider } = makeSidebar({ snapshots: [outdatedSnapshot()], resolve: false });
     await provider.refresh();
-    assert.deepStrictEqual(
-      counts,
-      [1],
+    assert.strictEqual(
+      provider.updateCount(),
+      1,
       'the count is computed from the snapshot alone — a resolved view is not a precondition',
     );
+  });
+
+  test('a count published before the view resolved lands on the badge at resolve time', async () => {
+    // Otherwise opening Grimoire shows no number until the next refresh
+    // recomputes one — the count is known, the object to show it on was not.
+    const { provider } = makeSidebar({ snapshots: [outdatedSnapshot()], resolve: false });
+    await provider.refresh();
+    const posted: HostToSidebar[] = [];
+    const view = fakeView(posted);
+    provider.resolveWebviewView(view);
+    assert.strictEqual(view.badge?.value, 1);
+    assert.strictEqual(view.badge?.tooltip, '1 update available', 'singular at one');
   });
 
   test('the count the extension itself computes reaches the activity-bar badge', async function () {
@@ -208,9 +220,9 @@ suite('update count without a resolved webview view (cluster B)', () => {
     // faked underneath. Wiring the harness straight to setCount would prove that
     // setCount works and nothing at all about whether anything calls it.
     const api = await activateExtension();
-    const updates = api.providers.updates;
-    updates.setCount(0);
-    assert.strictEqual(updates.badge(), undefined, 'precondition: nothing on the icon');
+    const sidebar = api.providers.sidebar;
+    sidebar.setUpdateCount(0);
+    assert.strictEqual(sidebar.updateCount(), 0, 'precondition: nothing on the icon');
     const originalRun = api.scopes.run;
     try {
       api.scopes.run = (async <T>(args: string[]): Promise<GrimResult<T>> => {
@@ -229,13 +241,13 @@ suite('update count without a resolved webview view (cluster B)', () => {
       }) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
       assert.strictEqual(
-        updates.badge()?.value,
+        sidebar.updateCount(),
         1,
-        'the count the sidebar computed reached the activity bar through the real delegate',
+        'the count the sidebar computed reached the activity bar through the real wiring',
       );
     } finally {
       api.scopes.run = originalRun;
-      updates.setCount(0);
+      sidebar.setUpdateCount(0);
     }
   });
 
@@ -243,7 +255,7 @@ suite('update count without a resolved webview view (cluster B)', () => {
     // Two ways to discover grim is gone: the snapshot's own probe, and the
     // catalog search that runs after it. Only the first was covered — the
     // second left the number standing over an Updates tab rendering "no grim".
-    const { provider, counts } = makeSidebar({
+    const { provider } = makeSidebar({
       snapshots: [outdatedSnapshot(), outdatedSnapshot()],
       catalogStates: [
         { items: [searchItem()], syncedAt: 0 },
@@ -251,9 +263,13 @@ suite('update count without a resolved webview view (cluster B)', () => {
       ],
     });
     await provider.refresh();
-    assert.deepStrictEqual(counts, [1], 'precondition: a count is up');
+    assert.strictEqual(provider.updateCount(), 1, 'precondition: a count is up');
     await provider.refresh();
-    assert.deepStrictEqual(counts, [1, 0], 'the catalog-side no-grim clears it, same as the probe');
+    assert.strictEqual(
+      provider.updateCount(),
+      0,
+      'the catalog-side no-grim clears it, same as the probe',
+    );
   });
 });
 
@@ -343,42 +359,17 @@ suite('posts that race the webview boot (cluster D)', () => {
   });
 });
 
-suite('the activity-bar row and its badge (cluster F)', () => {
-  test('two identical counts fire one tree-data event', async function () {
-    this.timeout(15000);
-    // Every refresh publishes a count and most publish the same one; a watcher
-    // storm must not cost a tree rebuild per event.
-    const updates = (await activateExtension()).providers.updates;
-    updates.setCount(0);
-    let events = 0;
-    const subscription = updates.onDidChangeTreeData(() => {
-      events++;
-    });
-    try {
-      updates.setCount(7);
-      updates.setCount(7);
-      assert.strictEqual(events, 1, 'the second identical count is a no-op');
-    } finally {
-      subscription.dispose();
-      updates.setCount(0);
-    }
-  });
-
-  test('the badge tooltip matches the row wording, singular included', async function () {
-    this.timeout(15000);
-    // The badge and the row it belongs to are the same claim; "1 available"
-    // next to "1 update available" reads as two different numbers' units.
-    const updates = (await activateExtension()).providers.updates;
-    try {
-      updates.setCount(1);
-      assert.strictEqual(updates.badge()?.tooltip, '1 update available');
-      assert.strictEqual(updates.badge()?.tooltip, updates.getTreeItem().label);
-      updates.setCount(3);
-      assert.strictEqual(updates.badge()?.tooltip, '3 updates available');
-      assert.strictEqual(updates.badge()?.tooltip, updates.getTreeItem().label);
-    } finally {
-      updates.setCount(0);
-    }
+suite('the activity-bar badge (cluster F)', () => {
+  test('the badge carries the count and its wording, and clears at zero', () => {
+    const { provider, view } = makeSidebar({ snapshots: [outdatedSnapshot()] });
+    assert.ok(view);
+    provider.setUpdateCount(1);
+    assert.strictEqual(view.badge?.value, 1);
+    assert.strictEqual(view.badge?.tooltip, '1 update available', 'singular at one');
+    provider.setUpdateCount(3);
+    assert.strictEqual(view.badge?.tooltip, '3 updates available');
+    provider.setUpdateCount(0);
+    assert.strictEqual(view.badge, undefined, 'no updates, no number on the icon');
   });
 });
 

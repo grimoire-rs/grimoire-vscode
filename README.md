@@ -16,9 +16,9 @@ AI artifacts your tools rely on.
   registry at once. Filter by kind with the chip row (Skill / Rule / Agent /
   MCP / Bundle).
 - **Stay current** — once a day Grimoire asks your registries which installed
-  artifacts have newer versions and carries the count on the activity-bar icon,
-  on the **Updates** tab, and on an **Updates** row that appears in the sidebar.
-  The tab lists them; an **Update All** icon appears in the sidebar's title bar
+  artifacts have newer versions and carries the count on the activity-bar icon
+  and on the **Updates** tab. The tab lists them; an **Update All** icon appears
+  in the sidebar's title bar
   whenever updates are pending and updates them in one click (also always
   available in the title bar's `…` menu). Check on demand with
   **Grimoire: Check for Updates**, or turn the automatic ones off with
@@ -87,10 +87,8 @@ Run from the Command Palette (all under the **Grimoire** category).
 | `Grimoire: Report Bug`         | Open a prefilled GitHub bug report                                               |
 | `Grimoire: Request Feature`    | Open a prefilled GitHub feature request                                          |
 
-`grimoire.openDetails` and `grimoire.showUpdates` are intentionally omitted from
-the palette — the first is invoked via the `vscode://` deep link, the second by
-the **Updates** row that appears in the Grimoire sidebar when updates are
-available.
+`grimoire.openDetails` is intentionally omitted from the palette — it is
+invoked via the `vscode://` deep link.
 
 ## Settings
 

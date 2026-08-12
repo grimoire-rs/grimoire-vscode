@@ -4,18 +4,12 @@
 // (snapshot + catalog cache) — and posts them together; the webview slices per
 // tab.
 //
-// Merging them into one view was originally also what kept the container a
-// SINGLE-view container, where VS Code folds the view header into the container
-// header — title icons permanently visible, nothing to collapse. That no longer
-// holds unconditionally: `grimoire.updates` (views/updatesView.ts) is a second
-// native view in the same container, because only a TreeView can carry the
-// activity-bar count in a window where this webview is never resolved. Its
-// `when` clause keeps it out of the container until updates are actually
-// pending, so the folded single-view header is still the normal state; the price
-// is that while a count is up the container shows two rows and this view's
-// header separates back out. `visibility: collapsed` on the other one only sets
-// its INITIAL state — VS Code persists a user's expand, so it is a default, not
-// a guarantee of one header row. A count in every window is worth that.
+// Merging them into one view is also what keeps the container a SINGLE-view
+// container, where VS Code folds the view header into the container header —
+// title icons permanently visible, nothing to collapse. A second native view in
+// the container (there used to be one, carrying the update badge) splits that
+// header back out, so the badge lives on this view instead: it costs a count
+// that only appears once the view has been resolved, and buys one header row.
 import * as vscode from 'vscode';
 import {
   addArgs,
@@ -87,9 +81,6 @@ export interface SidebarDelegate {
    *  `force` bypasses the cache TTL — an explicit refresh re-resolves versions
    *  rather than repainting yesterday's answer. */
   prefetch(repos: string[], options?: { force?: boolean }): void;
-  /** Publishes the outdated count to whatever owns the activity-bar badge (see
-   *  views/updatesView.ts for why that is not this webview). */
-  setUpdateCount(count: number): void;
 }
 
 /** The SINGLE producer of render-facing scope status — every "install state
@@ -122,6 +113,8 @@ export function scopeStatuses(snapshot: Snapshot): ScopeStatus[] {
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
+  /** Last published update count — see setUpdateCount. */
+  private badgeCount = 0;
   private query = '';
   // Last-known default registry host, carried into the loading footer
   // ("Refreshing from <host>…") which is posted before the snapshot lands.
@@ -190,6 +183,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
+    // Whatever count is already known: this may be the first resolve in the
+    // window, and the badge object did not exist when it was published.
+    this.applyBadge();
     // A fresh webview process, which has not said `ready` yet. Re-resolution is
     // routine, not a one-off: without retainContextWhenHidden VS Code disposes a
     // hidden view and resolves a new one when it comes back, so leaving the flag
@@ -504,7 +500,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // Cleared, not frozen: unlike an unknown install state, "there is no grim"
       // is a definite answer, and a leftover count would keep pointing at an
       // Updates tab that now renders the no-grim state.
-      this.setBadge(0);
+      this.setUpdateCount(0);
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
@@ -538,7 +534,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     if (catalogState.grimMissing) {
       this.lastUnknown = undefined;
-      this.setBadge(0); // same definite answer as the snapshot's own no-grim above
+      this.setUpdateCount(0); // same definite answer as the snapshot's own no-grim above
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
     }
@@ -604,7 +600,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // publishes from (see webview/model.ts updateCount). The two used to be
       // separate expressions that agreed only because catalog items happen not
       // to touch any field hasUpdate reads.
-      this.setBadge(updateCount(scopeStatus));
+      this.setUpdateCount(updateCount(scopeStatus));
     }
     // A catalog failure is the one that still has nothing to show: its cards
     // come from a possibly-empty result set, so it keeps the error phase.
@@ -637,18 +633,49 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** The outdated count that rolls up into the activity-bar icon's number,
-   *  which must mean "updates available", not "artifacts installed". Cleared at
-   *  zero.
+  /** The single write point for the outdated count that rolls up into the
+   *  activity-bar icon's number — which must mean "updates available", not
+   *  "artifacts installed". Cleared at zero. Also the only writer of
+   *  `grimoire.updatesAvailable`, the key gating the conditional Update All
+   *  toolbar icon, so badge and icon cannot disagree.
    *
-   *  Handed to the delegate rather than set on `this.view`: a WebviewView's
-   *  badge only exists once VS Code resolves the view, which it defers until
-   *  the view first becomes visible, so this count was invisible in any window
-   *  where Grimoire was never opened. UpdatesView owns it now (and the
-   *  `grimoire.updatesAvailable` context key with it). Still the single choke
-   *  point on this side — every count the sidebar computes goes through here. */
-  private setBadge(count: number): void {
-    this.delegate.setUpdateCount(count);
+   *  The count is held here and re-applied from resolveWebviewView, because a
+   *  WebviewView's badge only exists once VS Code resolves the view (deferred
+   *  until it first becomes visible): in a window where Grimoire was never
+   *  opened there is no badge to show a count on, and opening it later must not
+   *  wait for the next refresh to get one. */
+  setUpdateCount(count: number): void {
+    if (count === this.badgeCount) {
+      // Every refresh publishes a count, and most refreshes publish the same
+      // one — a watcher storm would otherwise fire a context-key command per
+      // event for no visible change.
+      return;
+    }
+    this.badgeCount = count;
+    void vscode.commands.executeCommand('setContext', 'grimoire.updatesAvailable', count > 0);
+    this.applyBadge();
+  }
+
+  /** Test seam: the count currently published (0 = no badge). */
+  updateCount(): number {
+    return this.badgeCount;
+  }
+
+  private applyBadge(): void {
+    if (!this.view) {
+      return;
+    }
+    // One wording for the count, shared with the Updates tab's own heading —
+    // "1 available" hanging over "1 update available" reads as two counts in
+    // two different units.
+    this.view.badge =
+      this.badgeCount > 0
+        ? {
+            value: this.badgeCount,
+            tooltip:
+              this.badgeCount === 1 ? '1 update available' : `${this.badgeCount} updates available`,
+          }
+        : undefined;
   }
 
   /** Sets card.logoUri and — for a card the catalog gave no version — its

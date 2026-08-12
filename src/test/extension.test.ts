@@ -752,10 +752,10 @@ suite('extension integration', () => {
     canned(stub, 'context', contextDoc({ config_exists: true }));
     canned(stub, 'status', { items: [statusDoc({ state: 'outdated' })] });
     try {
-      api.providers.updates.setCount(0);
+      api.providers.sidebar.setUpdateCount(0);
       fs.rmSync(stub.argvLog, { force: true });
       await api.publishUpdateCount();
-      assert.strictEqual(api.providers.updates.badge()?.value, 1, 'the count reaches the badge');
+      assert.strictEqual(api.providers.sidebar.updateCount(), 1, 'the count reaches the badge');
       assert.deepStrictEqual(
         argvLines(stub).filter((l) => l.startsWith('search')),
         [],
@@ -764,7 +764,7 @@ suite('extension integration', () => {
     } finally {
       canned(stub, 'status', { items: [] });
       canned(stub, 'context', contextDoc());
-      api.providers.updates.setCount(0);
+      api.providers.sidebar.setUpdateCount(0);
     }
   });
 
@@ -778,17 +778,17 @@ suite('extension integration', () => {
       error: { code: 'usage', exit: 64, message: "unexpected argument '--check' found" },
     });
     try {
-      api.providers.updates.setCount(3);
+      api.providers.sidebar.setUpdateCount(3);
       await api.publishUpdateCount();
       assert.strictEqual(
-        api.providers.updates.badge()?.value,
+        api.providers.sidebar.updateCount(),
         3,
         'the last count it could stand behind stays up; it is not cleared to 0',
       );
     } finally {
       canned(stub, 'status', { items: [] });
       canned(stub, 'context', contextDoc());
-      api.providers.updates.setCount(0);
+      api.providers.sidebar.setUpdateCount(0);
     }
   });
 
@@ -4203,22 +4203,16 @@ suite('view/title toolbar contributions (package.json)', () => {
     );
   });
 
-  test('the update count survives a window where Grimoire is never opened', () => {
-    // Three contributions carry it, and all three are load-bearing: the tree
-    // view exists from activation (a WebviewView badge does not — VS Code only
-    // resolves that view when it first becomes visible); its `when` key is the
-    // one setBadge sets, so no updates means no extra row in the container; and
-    // eager activation is what sets that key in a window nobody has opened.
-    const updates = pkg.contributes.views.grimoire.find((v) => v.id === 'grimoire.updates');
-    assert.ok(updates, 'the updates view must be contributed');
-    assert.strictEqual(updates.when, 'grimoire.updatesAvailable');
-    assert.ok(pkg.activationEvents.includes('onStartupFinished'));
-    assert.ok(
-      pkg.contributes.menus.commandPalette.some(
-        (entry) => entry.command === 'grimoire.showUpdates' && entry.when === 'false',
-      ),
-      'the row-click command is not a palette entry',
+  test('the container holds exactly one view, and activation is eager', () => {
+    // A second view in the container splits the folded header back out, so the
+    // title icons stop being permanently visible. Eager activation is what
+    // computes the count in a window nobody has opened Grimoire in — and with
+    // it `grimoire.updatesAvailable`, the key gating the Update All icon.
+    assert.deepStrictEqual(
+      pkg.contributes.views.grimoire.map((v) => v.id),
+      ['grimoire.marketplace'],
     );
+    assert.ok(pkg.activationEvents.includes('onStartupFinished'));
   });
 });
 
@@ -4805,10 +4799,10 @@ suite('grim version floor', () => {
 /** The activity-bar badge (outdated count). It rolls up into the icon number,
  *  so a stale count reads as "you still have updates" after a successful one. */
 suite('update badge', () => {
-  // The count lives on the activity-bar tree view, not on the sidebar's
-  // WebviewView — VS Code only resolves that one when the view first becomes
-  // visible, so a badge set there was invisible until Grimoire was opened.
-  const badgeOf = (api: GrimoireApi): vscode.ViewBadge | undefined => api.providers.updates.badge();
+  // Asserted as the published count rather than the ViewBadge object: the badge
+  // hangs off the sidebar's WebviewView, which VS Code only resolves when the
+  // view first becomes visible, so the count is the part that exists either way.
+  const countOf = (api: GrimoireApi): number => api.providers.sidebar.updateCount();
 
   /** A run override serving one installed artifact whose status `state` the
    *  caller picks — the field the badge count ultimately derives from on a
@@ -4847,21 +4841,6 @@ suite('update badge', () => {
     }) as ScopeService['run'];
   }
 
-  test('the tree view carries the count as a row and drops it at zero', async function () {
-    this.timeout(15000);
-    const api = await activateExtension();
-    const updates = api.providers.updates;
-    updates.setCount(3);
-    assert.deepStrictEqual(updates.getChildren(), ['updates'], 'a row to click through from');
-    assert.strictEqual(updates.getTreeItem().label, '3 updates available');
-    assert.strictEqual(updates.getTreeItem().command?.command, 'grimoire.showUpdates');
-    updates.setCount(1);
-    assert.strictEqual(updates.getTreeItem().label, '1 update available', 'singular at one');
-    updates.setCount(0);
-    assert.deepStrictEqual(updates.getChildren(), [], 'nothing to show with no updates');
-    assert.strictEqual(updates.badge(), undefined);
-  });
-
   test('the badge tracks the outdated count and clears once the update lands', async function () {
     this.timeout(15000);
     const api = await activateExtension();
@@ -4871,13 +4850,13 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(api)?.value, 1, 'an outdated install badges the activity bar');
+      assert.strictEqual(countOf(api), 1, 'an outdated install badges the activity bar');
       // What `grim update` leaves behind: the same artifact, no longer outdated.
       api.scopes.run = statusRun('installed');
       await api.providers.sidebar.refresh();
       assert.strictEqual(
-        badgeOf(api),
-        undefined,
+        countOf(api),
+        0,
         'the badge must clear after the update — a stale count reads as "still outdated"',
       );
     } finally {
@@ -4894,7 +4873,7 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(api)?.value, 1);
+      assert.strictEqual(countOf(api), 1);
       // The executable disappeared (uninstalled, PATH changed). That is a
       // definite answer, not a degraded one — the count must not survive it
       // pointing at an Updates tab that now renders the no-grim state.
@@ -4905,7 +4884,7 @@ suite('update badge', () => {
           message: 'grim not found',
         }) as GrimResult<T>) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(api), undefined);
+      assert.strictEqual(countOf(api), 0);
     } finally {
       api.scopes.run = originalRun;
     }
@@ -4920,7 +4899,7 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(badgeOf(api)?.value, 1);
+      assert.strictEqual(countOf(api), 1);
       // Install state is now UNKNOWN, not empty. The badge deliberately holds
       // its last value rather than clearing to a "no updates" claim it cannot
       // make. The Updates tab must not contradict it with a bare 0 either —
@@ -4942,7 +4921,7 @@ suite('update badge', () => {
       const last = states.at(-1);
       assert.ok(last);
       assert.strictEqual(last.phase, 'ready', 'the catalog is fine — browsing stays available');
-      assert.strictEqual(badgeOf(api)?.value, 1, 'the badge holds its last known count');
+      assert.strictEqual(countOf(api), 1, 'the badge holds its last known count');
       assert.ok(
         last.installStateUnknown?.includes('stale binary'),
         'the tabs render the reason instead of a count that would contradict the badge',
