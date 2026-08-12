@@ -10,11 +10,15 @@
 // Harmless actions are listed too, with an explicit `false`. A Set of the
 // mutating names cannot distinguish "known and safe" from "forgotten"; an
 // explicit `false` can, and the drift test (test/actions.test.ts) turns a
-// missing entry into a failure instead of a silently-unguarded button. Its
-// sweep is over the LITERAL `data-action="…"` values in render.ts and the
-// `action: '…'` values in model.ts — the three computed bindings that pick an
-// action at render time are outside it, so completeness is enforced for every
-// action written down, not proven for every action emitted.
+// missing entry into a failure instead of a silently-unguarded button.
+//
+// The sweep covers the browse and details templates only: the LITERAL
+// `data-action="…"` values in render.ts and the `action: '…'` values in
+// model.ts. Two things sit outside it — the three computed `data-action`
+// bindings that pick a name at render time, and the whole settings surface
+// (webview/settings/render.ts), whose ~20 actions this record does not list and
+// the test does not read. The settings webview runs its own dispatcher with no
+// busy guard, so nothing there is protected by this file today.
 export const MUTATING_ACTIONS: Record<string, boolean> = {
   // Runs grim. Refused while another mutation is in flight.
   install: true,

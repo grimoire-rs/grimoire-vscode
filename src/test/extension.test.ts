@@ -141,6 +141,16 @@ function canned(stub: Stub, command: string, doc: unknown): void {
   fs.writeFileSync(path.join(stub.dir, `${command}.json`), JSON.stringify(doc));
 }
 
+/** Drops a canned response so the command falls back to the stub script's own
+ *  behavior. Needed by any test that cans an ERROR for a command the suite does
+ *  not can in suiteSetup (describe, fetch): the file outlives the test, and the
+ *  next test to exercise that path silently gets the failure instead. */
+function uncan(stub: Stub, ...commands: string[]): void {
+  for (const command of commands) {
+    fs.rmSync(path.join(stub.dir, `${command}.json`), { force: true });
+  }
+}
+
 /** True when an argv line is a per-name `grim update` for `name`. The name is a
  *  POSITIONAL, so updateArgs puts it behind a `--` separator (argument
  *  injection: an artifact named `--force` must not reach clap as a flag) —
@@ -950,6 +960,43 @@ suite('extension integration', () => {
     assert.ok(
       !argvLines(stub).some((l) => l.startsWith('update')),
       'no update ran',
+    );
+  });
+
+  test('a refused Complete Install neither blocks the action nor skips its refresh', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // grim's locally-modified refusal, aborting the whole scope.
+    canned(stub, 'install', {
+      error: {
+        code: 'data',
+        exit: 65,
+        forceable: true,
+        reason: 'modified',
+        message: 'installed artifact was modified locally; rerun with --force to overwrite',
+      },
+    });
+    // A notification the user never clicks. Awaiting this is exactly the bug:
+    // it would hold the busy lock and the watcher suspension open indefinitely.
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    window.showErrorMessage = () => new Promise<string | undefined>(() => {});
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({ type: 'complete-install', scope: 'global' });
+    } finally {
+      window.showErrorMessage = original;
+      uncan(stub, 'install');
+    }
+    // Reaching here at all is the assertion: an awaited dialog times out the test.
+    const lines = argvLines(stub);
+    const installAt = lines.findIndex((l) => l.startsWith('install'));
+    assert.notStrictEqual(installAt, -1, `the install ran: ${lines.join(' | ')}`);
+    // The refusal falls through to the refresh it owes rather than returning —
+    // grim stops at the first modified artifact, having written the ones before.
+    assert.ok(
+      lines.slice(installAt + 1).some((l) => l.startsWith('status') || l.startsWith('context')),
+      `the refusal still refreshed: ${lines.join(' | ')}`,
     );
   });
 
@@ -2893,6 +2940,11 @@ suite('extension integration', () => {
   test('details view model build fetches and honors the describe fallback', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated like its neighbours: without this the assertions run against the
+    // developer's REAL globalStorage cache, where a genuine grim-usage entry
+    // merges its own tags in. It passed only because the post-action hook used
+    // to DELETE that entry; the hook expires instead now, so the leak shows.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -3493,7 +3545,7 @@ suite('extension integration', () => {
         true,
         'that open failed too, so the repo is still cooling',
       );
-      await api.providers.details.forget(repo);
+      await api.providers.details.expire(repo);
       assert.strictEqual(
         await api.providers.details.isFresh(repo),
         false,
@@ -3560,6 +3612,101 @@ suite('extension integration', () => {
         true,
         'promoted onto the six-hour window',
       );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('C-006: an action keeps the cache, so a partly-failed post-action probe holds content', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/keeps-content';
+    const cache = new DetailsCache(dir);
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'keeps-content',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'keeps-content', has_description: true, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch-description', {
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
+      files: [
+        { path: 'README.md', size: 30, content: 'post-action-readme-marker' },
+        { path: 'logo.png', size: 4, content: 'QUJD', encoding: 'base64' },
+      ],
+    });
+    canned(stub, 'uninstall', { kind: 'skill', name: 'keeps-content', status: 'removed' });
+    try {
+      await api.providers.details.buildVM(repo);
+      assert.strictEqual(
+        (await cache.load(repo))?.logoUri,
+        'data:image/png;base64,QUJD',
+        'content cached before the action',
+      );
+      // Now the companion tag stops answering — everything else still works, so
+      // the post-action probe is a PARTIAL failure, not a total one.
+      canned(stub, 'fetch-description', {
+        error: { code: 'network', exit: 75, message: 'registry unreachable', retryable: true },
+      });
+      const { panel, posts } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, {
+        type: 'uninstall',
+        kind: 'skill',
+        name: 'keeps-content',
+        scope: 'global',
+      });
+      const vm = posts.at(-1);
+      assert.ok(vm, 'the panel was repainted after the action');
+      // Evicting the entry first — which this path used to do — leaves
+      // mergeEntry nothing to fold, and both of these come back null.
+      assert.match(vm.readmeMarkdown ?? '', /post-action-readme-marker/);
+      assert.strictEqual(vm.logoUri, 'data:image/png;base64,QUJD', 'logo survived the action');
+      assert.strictEqual((await cache.load(repo))?.complete, false, 'and it knows it is partial');
+    } finally {
+      uncan(stub, 'describe', 'fetch', 'fetch-description', 'uninstall');
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('expire keeps the content and only ages the entry out', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/expiring';
+    const cache = new DetailsCache(dir);
+    await cache.save(repo, {
+      version: CACHE_VERSION,
+      repo,
+      artifactDigest: 'sha256:a',
+      companionDigest: null,
+      savedAt: new Date().toISOString(),
+      describe: null,
+      fetch: null,
+      readme: 'expire-readme-marker',
+      logoUri: 'data:image/png;base64,BBBB',
+      changelog: null,
+      complete: true,
+    });
+    try {
+      assert.strictEqual(await api.providers.details.isFresh(repo), true, 'fresh to begin with');
+      await api.providers.details.expire(repo);
+      // Stale, so the next sweep re-resolves it — the whole point of the hook.
+      assert.strictEqual(await api.providers.details.isFresh(repo), false, 'aged out');
+      // But still present, so a re-probe that partly fails has a merge base.
+      const after = await cache.load(repo);
+      assert.strictEqual(after?.readme, 'expire-readme-marker', 'content kept');
+      assert.strictEqual(after?.logoUri, 'data:image/png;base64,BBBB', 'logo kept');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

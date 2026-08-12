@@ -444,18 +444,27 @@ export function withFlags(args: string[], flags: string[]): string[] {
     : [...args.slice(0, sep), ...flags, ...args.slice(sep)];
 }
 
-/** The positional an action's argv names — the reference for `add`, the
+/** The FIRST positional an action's argv names — the reference for `add`, the
  *  artifact name for `update`. Reads the token after the `--` separator the
- *  builders emit, falling back to argv[1] for a builder that has none. Pure;
- *  used for the human-facing name in a failure dialog, never for a respawn. */
+ *  builders emit, and returns '' for a builder that emits none. Pure; used for
+ *  the human-facing name in a failure dialog, never for a respawn.
+ *
+ *  Contract limit: "first positional" is the artifact only for the single-
+ *  positional builders. `uninstallArgs`/`removeArgs` put the KIND first, so
+ *  they would yield `skill`, not the name — out of contract, and unreached
+ *  today (the force branch is gated on add/update, and grim raises
+ *  anchor-escape on the install path, not from uninstall). */
 export function positionalOf(args: string[]): string {
   const sep = args.indexOf('--');
   if (sep !== -1) {
     return args[sep + 1] ?? '';
   }
-  // No separator means no positional behind one — the builders shaped that way
-  // are the scope-wide ones, and their args[1] is a flag. `grim init --registry
-  // <url>` would otherwise report `--registry` where an artifact name belongs.
+  // No separator means no positional behind one, so whatever sits at argv[1] is
+  // a flag (`grim init --registry <url>`, which reported `--registry` where an
+  // artifact name belongs) or a subcommand word (`config list`, `config
+  // registry list`). Only the flag shape is filtered here — the subcommand ones
+  // are never fed to this function, and guessing at bare words would misread a
+  // real name.
   const first = args[1] ?? '';
   return first.startsWith('--') ? '' : first;
 }

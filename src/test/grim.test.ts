@@ -172,8 +172,9 @@ suite('grim arg builders', () => {
     assert.strictEqual(positionalOf(updateArgs(['demo'])), 'demo');
     // A builder with no positional to name yields nothing, not its subcommand.
     assert.strictEqual(positionalOf(updateArgs()), '');
-    // Nor a flag: the separator-less builders are the scope-wide ones, so
-    // whatever sits at args[1] there is an option, never an artifact.
+    // Nor a flag: with no separator there is no positional, so whatever sits at
+    // args[1] is an option — never an artifact. The first two are length-1 argvs
+    // and passed before the guard existed; only the third discriminates.
     assert.strictEqual(positionalOf(installArgs()), '');
     assert.strictEqual(positionalOf(initArgs()), '');
     assert.strictEqual(positionalOf(initArgs({ registry: 'https://example.test/r' })), '');
