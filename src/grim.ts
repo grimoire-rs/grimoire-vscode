@@ -115,6 +115,15 @@ export interface StatusItem {
   // project's client target is unset (autodetect — no explicit set to diff).
   clients_missing: string[];
   clients_extra: string[];
+  // Materialization drift: the outputs `grim install` would write RIGHT NOW that
+  // the install record does not already account for — a client that gained
+  // support since the last install, a recorded output deleted underneath grim, a
+  // render-layout move (reported at the NEW path). Same shape as `outputs`,
+  // always `[]` when an install would write nothing new. Never moves `state`: an
+  // intact artifact at the locked pin still reads "installed". Distinct from a
+  // present-but-drifted output, which IS `state: "modified"` — different problem,
+  // different remedy. Additive, so absent on a grim predating it; read as [].
+  outputs_pending?: StatusOutput[];
   // The `--check` surface: grim's live catalog lookup. `deprecated`/`replaced_by`
   // mirror `grim search`'s fields; `update_available` is a fresh per-artifact
   // re-resolution (true=registry newer, false=matches). All three are null on a
@@ -549,8 +558,8 @@ export function describeArgs(reference: string): string[] {
 
 /** `--check` re-checks every registry-sourced artifact against the live catalog
  *  (deprecation/replacement) and re-resolves each locked artifact's current tag
- *  for honest `update_available` — network-verified, so reserved for the explicit
- *  "Check for updates" command and the daily interval, never a plain refresh. */
+ *  for honest `update_available` — network-verified, so it rides a debounced
+ *  quiet window rather than every refresh directly (see CheckScheduler). */
 export function statusArgs(options: { check?: boolean } = {}): string[] {
   const args = ['status'];
   if (options.check) {
@@ -619,6 +628,16 @@ export function uninstallNotice(report: ActionReport): string | null {
  *  have to reason about. */
 export function updateArgs(names: string[] = []): string[] {
   return names.length > 0 ? ['update', '--', ...names] : ['update'];
+}
+
+/** Re-materializes a scope's whole lock — the remedy for `outputs_pending`
+ *  (materialization drift). Deliberately takes no artifact: `grim install`'s
+ *  only positional is a dev-install PATH for an undeclared local source, so
+ *  there is no way to re-materialize one member of the lock. `grim update`
+ *  would, but it also re-resolves floating tags and rolls the lock forward —
+ *  a version change, not a repair. */
+export function installArgs(): string[] {
+  return ['install'];
 }
 
 export function initArgs(options: { registry?: string } = {}): string[] {

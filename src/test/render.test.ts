@@ -16,6 +16,7 @@ import {
   kindIcon,
   renderCard,
   renderCardContextMenu,
+  renderCompactRow,
   renderCardMenu,
   renderDetails,
   renderRefreshingFooter,
@@ -463,6 +464,78 @@ suite('card rendering', () => {
       ),
     );
     assert.ok(!noDrift.includes('drift-badge'), 'empty arrays render no badge');
+  });
+
+  test('compact row slot ranks pending below an update and below real drift', async () => {
+    const base = {
+      scope: 'project' as const,
+      version: '1.4.2',
+      updateAvailable: false,
+      clients: ['claude'],
+      state: 'installed',
+      kind: 'skill',
+      name: 'grim-usage',
+      viaBundles: [],
+      outputsPending: [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }],
+    };
+    const slot = async (install: Record<string, unknown>): Promise<string> =>
+      litHtml(renderCompactRow(card({ state: 'installed', installs: [install as never] })));
+
+    assert.ok((await slot(base)).includes('row-pending'), 'pending alone shows the info glyph');
+    assert.ok(
+      (await slot({ ...base, updateAvailable: true })).includes('row-action update'),
+      'an update outranks a pending hint',
+    );
+    assert.ok(
+      (await slot({ ...base, state: 'modified' })).includes('row-warn'),
+      'real drift outranks a pending hint',
+    );
+    assert.ok(
+      (await slot({ ...base, outputsPending: [] })).includes('row-dot'),
+      'nothing pending falls through to the installed dot',
+    );
+  });
+
+  test('scope-variant card shows a pending badge iff outputs_pending is non-empty', async () => {
+    const installed = {
+      scope: 'project' as const,
+      version: '1.4.2',
+      updateAvailable: false,
+      clients: ['claude'],
+      state: 'installed',
+      kind: 'skill',
+      name: 'grim-usage',
+      viaBundles: [],
+    };
+    const withPending = await litHtml(
+      renderCard(
+        card({
+          state: 'installed',
+          installs: [
+            {
+              ...installed,
+              outputsPending: [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }],
+            },
+          ],
+        }),
+        { variant: 'scope', scope: 'project' },
+      ),
+    );
+    assert.ok(withPending.includes('pending-badge'));
+    assert.ok(withPending.includes('codicon-info'), 'info glyph, not a warning');
+    assert.ok(!withPending.includes('codicon-warning'), 'never badged as damage');
+    assert.ok(
+      withPending.includes('/repo/.cursor/skills/grim-usage'),
+      'tooltip names the path an install would write',
+    );
+
+    const none = await litHtml(
+      renderCard(card({ state: 'installed', installs: [{ ...installed, outputsPending: [] }] }), {
+        variant: 'scope',
+        scope: 'project',
+      }),
+    );
+    assert.ok(!none.includes('pending-badge'), 'an empty array renders no badge');
   });
 
   test('deprecated card marks the name only — no warning line', async () => {
@@ -1915,6 +1988,66 @@ suite('details rendering', () => {
         'title="Installed via bundle ghcr.io/grimoire-rs/bundles/grim-essentials — uninstall the bundle to remove it"',
       ),
     );
+  });
+
+  test('pending outputs: Complete Install leads the split button, the row reads "install incomplete"', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          scopes: { projectOpen: false, projectConfigured: false, projectName: null },
+          state: 'installed',
+          installs: [
+            {
+              scope: 'global',
+              version: '1.0.0',
+              updateAvailable: false,
+              clients: ['claude'],
+              state: 'installed',
+              kind: 'skill',
+              name: 'grim-usage',
+              viaBundles: [],
+              outputsPending: [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }],
+            },
+          ],
+        }),
+      ),
+    );
+    assert.ok(
+      html.includes('data-action="complete-install" data-scope="global"'),
+      'Complete Install is the split-main, scoped',
+    );
+    assert.ok(html.includes('install incomplete'), 'the status cell says so');
+    assert.ok(!html.includes('up to date'), 'and does not claim it is up to date');
+    assert.ok(html.includes('/repo/.cursor/skills/grim-usage'), 'tooltip names the pending path');
+    // Uninstall is still reachable, from the chevron menu.
+    assert.ok(html.includes('<span class="menu-label">Uninstall</span>'));
+  });
+
+  test('an update outranks pending outputs on the scope row button', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          scopes: { projectOpen: false, projectConfigured: false, projectName: null },
+          state: 'outdated',
+          latestVersion: '2.0.0',
+          installs: [
+            {
+              scope: 'global',
+              version: '1.0.0',
+              updateAvailable: true,
+              clients: ['claude'],
+              state: 'outdated',
+              kind: 'skill',
+              name: 'grim-usage',
+              viaBundles: [],
+              outputsPending: [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }],
+            },
+          ],
+        }),
+      ),
+    );
+    assert.ok(html.includes('data-action="update"'), 'Update still leads');
+    assert.ok(!html.includes('data-action="complete-install"'), 'no competing primary action');
   });
 
   test('outdated direct install: Update leads the split button, menu carries Switch + Uninstall, gear drops Update (item 1)', async () => {

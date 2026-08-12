@@ -45,6 +45,9 @@ export interface WireStatusItem {
   pinned: string | null;
   state: string;
   outputs: { client: string; path: string }[];
+  /** Outputs an install would write that the install record does not already
+   *  account for — materialization drift. Never moves `state`. */
+  outputs_pending?: { client: string; path: string }[];
   // grim's `status` surface (always emitted by a current grim; optional here —
   // like `source?` — so fixtures may omit them, and every reader tolerates
   // absence). clients_missing/clients_extra come from local state (plain
@@ -245,6 +248,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
       floating: item.pinned === null,
       clientsMissing: item.clients_missing ?? [],
       clientsExtra: item.clients_extra ?? [],
+      outputsPending: item.outputs_pending ?? [],
       deprecated: item.deprecated ?? null,
       replacedBy: item.replaced_by ?? null,
     });
@@ -262,6 +266,25 @@ export function hasClientDrift(
   install: Pick<InstallVM, 'clientsMissing' | 'clientsExtra'>,
 ): boolean {
   return (install.clientsMissing?.length ?? 0) > 0 || (install.clientsExtra?.length ?? 0) > 0;
+}
+
+/** True when an install would still write something for this artifact — grim
+ *  status's `outputs_pending`. Deliberately NOT drift or damage: the artifact is
+ *  installed and intact at its locked pin, there is simply an output (usually a
+ *  client that gained support since the last install) not yet materialized.
+ *  `grim install` clears it. */
+export function hasOutputsPending(install: Pick<InstallVM, 'outputsPending'>): boolean {
+  return (install.outputsPending?.length ?? 0) > 0;
+}
+
+/** Pending-outputs tooltip: one "client → path" per line, so the hint names
+ *  exactly what an install would write. Pure string builder for the render
+ *  layer. */
+export function outputsPendingTooltip(install: Pick<InstallVM, 'outputsPending'>): string {
+  const pending = install.outputsPending ?? [];
+  return ['An install would also write:', ...pending.map((o) => `${o.client} → ${o.path}`)].join(
+    '\n',
+  );
 }
 
 /** Drift badge tooltip: "Missing: a, b · Extra: c", either half omitted when
@@ -1051,6 +1074,16 @@ export function cardMenuEntries(
       data: { kind: target.kind, name: target.name, scope: target.scope },
     });
   }
+  // One entry per scope with materialization drift. Labelled by scope because
+  // that is genuinely what runs: `grim install` re-materializes the scope's
+  // whole lock, there being no way to target one artifact.
+  for (const install of card.installs.filter((i) => hasOutputsPending(i))) {
+    entries.push({
+      label: `Complete Install (${install.scope === 'project' ? 'Project' : 'Global'})`,
+      action: 'complete-install',
+      data: { scope: install.scope },
+    });
+  }
   for (const install of card.installs) {
     const label = install.scope === 'project' ? 'Project' : 'Global';
     if (install.viaBundles.length > 0) {
@@ -1096,21 +1129,31 @@ export function cardMenuEntries(
 /**
  * Per-scope-row gear menu on the details header. Uninstall and version-switching
  * live on the row's split button; Copy repo path lives in the header (redundant
- * per-row). The only entry left is Update, and only for a via-bundle outdated
- * install — whose button is the `Bundle` nav, not `Update`. Every other row's
- * gear is empty and hidden (see scopeGear); the plumbing stays for future entries.
+ * per-row). What is left are the actions a via-bundle row cannot reach from its
+ * split button, because that button is the `Bundle` nav: Update when it is
+ * outdated, Complete Install when an install would still write for it. Every
+ * other row's gear is empty and hidden (see scopeGear).
  */
 export function scopeRowMenuEntries(install: InstallVM | null): MenuEntry[] {
-  if (install?.updateAvailable && install.viaBundles.length > 0) {
-    return [
-      {
-        label: 'Update',
-        action: 'update',
-        data: { kind: install.kind, name: install.name, scope: install.scope },
-      },
-    ];
+  if (!install || install.viaBundles.length === 0) {
+    return [];
   }
-  return [];
+  const entries: MenuEntry[] = [];
+  if (install.updateAvailable) {
+    entries.push({
+      label: 'Update',
+      action: 'update',
+      data: { kind: install.kind, name: install.name, scope: install.scope },
+    });
+  }
+  if (hasOutputsPending(install)) {
+    entries.push({
+      label: 'Complete Install',
+      action: 'complete-install',
+      data: { scope: install.scope },
+    });
+  }
+  return entries;
 }
 
 // --- Shareable deep links (vscode://grimoire-rs.grimoire-vscode/open?repo=…) ---

@@ -490,6 +490,18 @@ vscode-button.sm {
   color: var(--vscode-descriptionForeground);
 }
 
+/* Installed at the right pin, but an install would still write (outputs_pending).
+   Info, not warning — nothing on this row is broken. */
+.scope-pending-hint {
+  font-size: 10.5px;
+  color: var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground));
+}
+
+.scope-glyph .codicon-info {
+  font-size: 12px;
+  color: var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground));
+}
+
 .scope-clients {
   display: inline-flex;
   gap: 5px;

@@ -523,6 +523,14 @@ root.addEventListener('click', (event) => {
         scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
       });
       break;
+    case 'complete-install':
+      // Scope-wide by nature: `grim install` re-materializes that scope's whole
+      // lock. No repo rides along because none would be honoured.
+      post({
+        type: 'complete-install',
+        scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
+      });
+      break;
     case 'switch':
       post({
         type: 'switch',

@@ -7,6 +7,7 @@ import {
   describeArgs,
   fetchArgs,
   initArgs,
+  installArgs,
   uninstallNotice,
   uninstallOrRemoveArgs,
   updateArgs,
@@ -489,6 +490,13 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
           message.scope,
           message.kind === 'bundle' ? 'Removing bundle…' : 'Uninstalling…',
         );
+        return;
+      case 'complete-install':
+        // Materialization drift: `grim install` writes the outputs the record
+        // does not cover, for the whole scope — install cannot target one
+        // artifact, and `update` would roll the lock forward instead of
+        // repairing it. See the sidebar host for why no --force is offered.
+        await this.action(repo, panel, [installArgs()], message.scope, 'Completing install…');
         return;
       case 'switch': {
         // Host-authoritative: the single banner button means "all installed
@@ -1232,6 +1240,7 @@ export function installState(
           name: item.name,
           viaBundles: parseViaBundles(item.source),
           floating: item.pinned === null,
+          outputsPending: item.outputs_pending ?? [],
         });
       }
     }

@@ -38,10 +38,12 @@ import {
   groupCards,
   groupKeyFor,
   hasClientDrift,
+  hasOutputsPending,
   hasUpdate,
   installedCards,
   monogram,
   normalizeKind,
+  outputsPendingTooltip,
   registryCount,
   registryLabel,
   relativeTime,
@@ -214,6 +216,17 @@ function clientDriftBadge(install: InstallVM | undefined): TemplateResult | type
   return html`<span class="drift-badge" title="${clientDriftTooltip(install)}"><span class="codicon codicon-warning"></span>Client drift</span>`;
 }
 
+/** Pending-outputs badge for an installed scope row (Installed tab): shown iff
+ *  grim reports outputs an install would still write. Info, never warning — the
+ *  artifact is installed and intact, and under autodetect this fires simply
+ *  because another tool created a client's marker directory. */
+function pendingBadge(install: InstallVM | undefined): TemplateResult | typeof nothing {
+  if (!install || !hasOutputsPending(install)) {
+    return nothing;
+  }
+  return html`<span class="pending-badge" title="${outputsPendingTooltip(install)}"><span class="codicon codicon-info"></span>Install incomplete</span>`;
+}
+
 export function renderCard(card: CardVM, options: CardVariant = {}): TemplateResult {
   const variant = options.variant ?? 'browse';
   const deprecatedClass = card.state === 'deprecated' ? ' deprecated' : '';
@@ -254,7 +267,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
         ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
         : nothing;
     body = html`${title}
-    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}
+    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}${pendingBadge(install)}
       <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button></span>
     </div>`;
   } else {
@@ -295,11 +308,14 @@ function depthClass(depth: number): string {
  *  | install state unknown | empty (width reserved — we claim nothing) |
  *  | update available | Update button |
  *  | grim state modified/missing | warning glyph, no action (details explains) |
+ *  | outputs pending | info glyph, no action (the repair is scope-wide) |
  *  | installed, clean | a dot — NOT a button: there is nothing to do here |
  *  | not installed | Install button |
  *
  *  The modified/missing row is the first surface in the extension to read
- *  {@link InstallVM.state}; rowState() collapses both into 'installed'. */
+ *  {@link InstallVM.state}; rowState() collapses both into 'installed'. Pending
+ *  ranks directly above installed, matching grim's own badge order — an update
+ *  and real drift both outrank it, because it is a hint and they are not. */
 function rowSlot(card: CardVM, installStateUnknown: boolean): TemplateResult {
   if (installStateUnknown) {
     return html`<span class="row-slot"></span>`;
@@ -316,6 +332,10 @@ function rowSlot(card: CardVM, installStateUnknown: boolean): TemplateResult {
         ? 'Installed files were modified locally'
         : 'Installed files are missing';
     return html`<span class="row-slot"><span class="row-warn codicon codicon-warning" title="${title}"></span></span>`;
+  }
+  const pending = card.installs.find((i) => hasOutputsPending(i));
+  if (pending) {
+    return html`<span class="row-slot"><span class="row-pending codicon codicon-info" title="${outputsPendingTooltip(pending)}"></span></span>`;
   }
   const install = effectiveInstall(card.installs);
   if (install) {
@@ -1055,6 +1075,18 @@ function scopeUpdateButton(vm: DetailsVM, install: InstallVM): TemplateResult {
   return html`<div class="split-button sm"><button class="split-main" data-action="update" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Update</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}"><span class="menu-label">Uninstall</span></button></div></div>`;
 }
 
+/** Per-scope Complete Install split button: shown when grim reports outputs an
+ *  install would still write (`outputs_pending`). Same geometry as the Update
+ *  split button, and it wins over Uninstall for the same reason Update does —
+ *  it is the one thing worth doing on this row.
+ *
+ *  The label says Complete Install, not Repair, because `grim install` has no
+ *  artifact positional: it re-materializes the whole scope's lock. Naming one
+ *  artifact's button "Repair" would promise a narrower action than it performs. */
+function scopeCompleteInstallButton(vm: DetailsVM, install: InstallVM): TemplateResult {
+  return html`<div class="split-button sm"><button class="split-main" data-action="complete-install" data-scope="${install.scope}" title="${outputsPendingTooltip(install)}">Complete Install</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}"><span class="menu-label">Uninstall</span></button></div></div>`;
+}
+
 /** Row gear (design 2a gear-first rework): sits first in the actions cell on
  *  every row, installed or not, so the split button after it lands at the
  *  same x on both — opens the shared row menu (model.scopeRowMenuEntries). */
@@ -1122,16 +1154,29 @@ function notInstalledScopeRow(vm: DetailsVM, scope: Scope, divided: boolean): Te
  *  Copy repo path) + the Uninstall split button — same shape as the
  *  not-installed row so the two align (design 2a gear-first rework). */
 function installedScopeRow(vm: DetailsVM, install: InstallVM, divided: boolean): TemplateResult {
-  const versionInfo = install.updateAvailable
-    ? html`<span class="mono scope-ver">${install.version ?? ''}</span><span class="scope-glyph"><span class="status-dot"></span></span><span class="scope-update-hint">${vm.latestVersion ? `${vm.latestVersion} available` : 'update available'}</span>`
-    : html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-check ok-check"></span></span><span class="scope-ok-hint">up to date</span>`;
+  const pending = hasOutputsPending(install);
+  let versionInfo: TemplateResult;
+  if (install.updateAvailable) {
+    versionInfo = html`<span class="mono scope-ver">${install.version ?? ''}</span><span class="scope-glyph"><span class="status-dot"></span></span><span class="scope-update-hint">${vm.latestVersion ? `${vm.latestVersion} available` : 'update available'}</span>`;
+  } else if (pending) {
+    // Not "up to date" — it is at the right version, but an install would still
+    // write. Info glyph, not a warning: nothing here is broken.
+    versionInfo = html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-info"></span></span><span class="scope-pending-hint" title="${outputsPendingTooltip(install)}">install incomplete</span>`;
+  } else {
+    versionInfo = html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-check ok-check"></span></span><span class="scope-ok-hint">up to date</span>`;
+  }
   // Update takes precedence on the one row button for a direct (non-bundle)
-  // outdated install; via-bundle rows always show the Bundle nav button (its
-  // update path stays in the gear), and up-to-date rows show Uninstall.
-  const button =
-    install.updateAvailable && install.viaBundles.length === 0
-      ? scopeUpdateButton(vm, install)
-      : scopeUninstallButton(vm, install);
+  // outdated install, then Complete Install; via-bundle rows always show the
+  // Bundle nav button (its update path stays in the gear), and rows with nothing
+  // outstanding show Uninstall.
+  let button: TemplateResult;
+  if (install.updateAvailable && install.viaBundles.length === 0) {
+    button = scopeUpdateButton(vm, install);
+  } else if (pending && install.viaBundles.length === 0) {
+    button = scopeCompleteInstallButton(vm, install);
+  } else {
+    button = scopeUninstallButton(vm, install);
+  }
   const cells = html`<span class="scope-version">${versionInfo}</span>
   <span class="scope-clients chip-list">${clientChips(install.clients)}</span>
   <span class="scope-actions">${scopeGear(scopeRowMenuEntries(install))}${button}</span>`;

@@ -255,6 +255,14 @@ root.addEventListener('click', (event) => {
         scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
       });
       break;
+    case 'complete-install':
+      // Scope-wide by nature — `grim install` re-materializes that scope's whole
+      // lock, so no artifact identity rides along.
+      vscode.postMessage({
+        type: 'complete-install',
+        scope: (target.dataset['scope'] as 'project' | 'global') ?? 'project',
+      });
+      break;
     case 'switch': {
       // The single banner button covers every installed scope; the host derives
       // the scope set + identity from its own snapshot, so the message carries a

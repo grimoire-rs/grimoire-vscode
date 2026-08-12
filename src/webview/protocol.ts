@@ -44,6 +44,12 @@ export interface InstallVM {
    *  targets (grim status `clients_extra`, recorded − desired). Same [] /
    *  absence semantics as {@link clientsMissing}. */
   clientsExtra?: string[];
+  /** Outputs `grim install` would write right now that the install record does
+   *  not account for (grim status `outputs_pending`) — materialization drift.
+   *  The artifact is still installed and intact; this is a repair hint, not a
+   *  fault, and under client autodetect it can fire because some OTHER tool
+   *  created a client's marker directory. Never badge it as damage. */
+  outputsPending?: { client: string; path: string }[];
   /** Per-status-item deprecation notice, populated only under `--check` (null
    *  otherwise) — buildInstalledCards' fallback source when the artifact isn't
    *  present in the browse catalog snapshot. */
@@ -174,6 +180,10 @@ export type SidebarToHost =
   | { type: 'install'; ref: string; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
   | { type: 'update'; kind: string; name: string; scope: Scope }
+  /** Re-materialize a scope's lock (`grim install`) — the remedy for grim
+   *  status's `outputs_pending`. Carries no artifact: install has no way to
+   *  target one member of the lock, and `update` would move the pins. */
+  | { type: 'complete-install'; scope: Scope }
   /** The view state changed (a title-bar action, or a click inside the view) —
    *  the host mirrors it into context keys so the title bar can swap each
    *  toggle's icon. State itself stays in the webview. */
@@ -354,6 +364,9 @@ export type DetailsToHost =
   | { type: 'install'; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
   | { type: 'update'; kind: string; name: string; scope: Scope }
+  /** Re-materialize this scope's lock (`grim install`) — the remedy for grim
+   *  status's `outputs_pending`. Scope-wide: install cannot target one member. */
+  | { type: 'complete-install'; scope: Scope }
   /** Deprecation-banner "Switch to replacement": install the named successor in
    *  every installed scope, then uninstall the old one. The single button
    *  covers all scopes — the host derives the actual set from its own snapshot

@@ -507,6 +507,29 @@ vscode-button.sm {
   font-size: 10px;
 }
 
+/* Materialization drift (outputs_pending): the artifact is installed and
+   intact, an install would simply still write something. Info tokens, never the
+   warning ones — under client autodetect this fires because some other tool
+   created a marker directory, so it is a hint, not a fault. */
+.pending-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground));
+  background: color-mix(
+    in srgb,
+    var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground)) 14%,
+    transparent
+  );
+}
+
+.pending-badge .codicon {
+  font-size: 10px;
+}
+
 /* Both menus (gear/chevron and right-click) append onto #root and position
    fixed via inline left/top from main.ts — inside the vscode-scrollable
    results viewport they would be clipped at the widget border. */
@@ -964,8 +987,16 @@ vscode-progress-bar {
 
 .row-action .codicon,
 .row-warn,
+.row-pending,
 .row-dot {
   font-size: 12px;
+}
+
+/* Pending outputs on a compact row: informational, so it sits below the warning
+   glyph in weight as well as in slot precedence. */
+.row-pending {
+  color: var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground));
+  cursor: default;
 }
 
 /* Installed and clean: a dot, not a button — there is nothing to click. */

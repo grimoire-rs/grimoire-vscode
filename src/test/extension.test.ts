@@ -922,6 +922,38 @@ suite('extension integration', () => {
     assert.ok(add && !add.includes('--global'), `install targets the project scope: ${add}`);
   });
 
+  test('complete-install runs a scope-wide grim install — never update, never --force', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'install', { items: [] });
+    fs.rmSync(stub.argvLog, { force: true });
+    await api.providers.sidebar.handleMessage({ type: 'complete-install', scope: 'global' });
+    await waitFor(() => argvLines(stub).some((l) => l.startsWith('install')));
+    const install = argvLines(stub).find((l) => l.startsWith('install'));
+    assert.ok(install);
+    assert.ok(install.includes('--global'), `scoped: ${install}`);
+    // No artifact positional: grim install cannot target one member of the lock.
+    assert.ok(!install.includes(' -- '), `no positional: ${install}`);
+    // Forcing a whole-lock install would discard local edits to OTHER artifacts.
+    assert.ok(!install.includes('--force'), `never forced: ${install}`);
+    // The remedy is install, not update — update would roll the pins forward.
+    assert.ok(
+      !argvLines(stub).some((l) => l.startsWith('update')),
+      'no update ran',
+    );
+  });
+
+  test('complete-install in project scope carries no --global', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'install', { items: [] });
+    fs.rmSync(stub.argvLog, { force: true });
+    await api.providers.sidebar.handleMessage({ type: 'complete-install', scope: 'project' });
+    await waitFor(() => argvLines(stub).some((l) => l.startsWith('install')));
+    const install = argvLines(stub).find((l) => l.startsWith('install'));
+    assert.ok(install && !install.includes('--global'), `project-scoped: ${install}`);
+  });
+
   test('sidebar uninstall message round-trips to grim uninstall in project scope', async function () {
     this.timeout(15000);
     const api = await activateExtension();

@@ -30,6 +30,8 @@ import {
   installedCards,
   monogram,
   hasClientDrift,
+  hasOutputsPending,
+  outputsPendingTooltip,
   hasUpdate,
   INTERACTIVE_SELECTOR,
   isInteractiveTarget,
@@ -446,6 +448,80 @@ suite('client drift', () => {
     assert.deepStrictEqual(cards[0]?.installs[0]?.clientsMissing, []);
     assert.deepStrictEqual(cards[0]?.installs[0]?.clientsExtra, []);
     assert.strictEqual(hasClientDrift(cards[0]?.installs[0] as InstallVM), false);
+  });
+});
+
+suite('materialization drift (outputs_pending)', () => {
+  const pending = [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }];
+
+  test('installIndex threads outputs_pending onto the InstallVM', () => {
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [statusItem({ outputs_pending: pending })],
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const cards = buildCards([searchItem()], [scope]);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.outputsPending, pending);
+    assert.strictEqual(hasOutputsPending(cards[0]?.installs[0] as InstallVM), true);
+    // It is drift in materialization, not in state: the row is still installed.
+    assert.strictEqual(cards[0]?.installs[0]?.state, 'installed');
+  });
+
+  test('an absent outputs_pending threads an empty array and reads as nothing pending', () => {
+    // A grim predating the field omits the key entirely — absence must never
+    // read as "something is pending".
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [statusItem()],
+      declared: { 'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2' },
+    };
+    const cards = buildCards([searchItem()], [scope]);
+    assert.deepStrictEqual(cards[0]?.installs[0]?.outputsPending, []);
+    assert.strictEqual(hasOutputsPending(cards[0]?.installs[0] as InstallVM), false);
+  });
+
+  test('the tooltip names every client and path an install would write', () => {
+    assert.strictEqual(
+      outputsPendingTooltip({
+        outputsPending: [
+          { client: 'cursor', path: '/repo/.cursor/skills/x' },
+          { client: 'codex', path: '/repo/.codex/skills/x' },
+        ],
+      }),
+      'An install would also write:\ncursor → /repo/.cursor/skills/x\ncodex → /repo/.codex/skills/x',
+    );
+  });
+
+  test('cardMenuEntries offers Complete Install per drifted scope, named by scope', () => {
+    const card = menuCard({
+      state: 'installed',
+      installs: [
+        install({ scope: 'project', outputsPending: pending }),
+        install({ scope: 'global' }),
+      ],
+    });
+    const entries = cardMenuEntries(card, { projectOpen: true, context: false });
+    const complete = entries.filter(
+      (e) => e !== 'separator' && e.action === 'complete-install',
+    ) as MenuItem[];
+    assert.strictEqual(complete.length, 1, 'only the drifted scope offers it');
+    assert.strictEqual(complete[0]?.label, 'Complete Install (Project)');
+    assert.deepStrictEqual(complete[0]?.data, { scope: 'project' });
+  });
+
+  test('a via-bundle row gets Complete Install in the gear, where its button cannot go', () => {
+    // The split button on a via-bundle row is the Bundle nav, so every other
+    // action for that row lives in the gear menu.
+    const entries = scopeRowMenuEntries(
+      install({ scope: 'global', viaBundles: ['ghcr.io/o/bundles/b'], outputsPending: pending }),
+    );
+    assert.deepStrictEqual(entries, [
+      { label: 'Complete Install', action: 'complete-install', data: { scope: 'global' } },
+    ]);
+  });
+
+  test('a direct row keeps an empty gear — its button carries the action', () => {
+    assert.deepStrictEqual(scopeRowMenuEntries(install({ outputsPending: pending })), []);
   });
 });
 

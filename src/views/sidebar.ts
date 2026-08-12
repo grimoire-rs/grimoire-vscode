@@ -14,6 +14,7 @@ import * as vscode from 'vscode';
 import {
   addArgs,
   initArgs,
+  installArgs,
   uninstallNotice,
   uninstallOrRemoveArgs,
   updateArgs,
@@ -313,6 +314,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           `Updating ${message.name}…`,
           message.name,
         );
+        return;
+      case 'complete-install':
+        // Materialization drift: `grim install` writes the outputs the record
+        // does not cover. NOT `grim update` — that would re-resolve floating
+        // tags and roll the lock forward, a version change dressed as a repair.
+        // No --force affordance either (offerForcedRetry only appends it for
+        // add/update): forcing a whole-lock install would discard local edits
+        // to unrelated artifacts. A refusal falls through to the error toast.
+        await this.runAction([installArgs()], message.scope, 'Completing install…');
         return;
       case 'switch':
         // Per-scope menu entry: the card supplied the install identity + the
