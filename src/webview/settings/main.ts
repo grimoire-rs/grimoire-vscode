@@ -4,6 +4,9 @@
 // the same pattern details/main.ts uses for `vm.busy`.
 import './settings.css';
 import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
+import '@vscode-elements/elements/dist/vscode-checkbox/index.js';
+import '@vscode-elements/elements/dist/vscode-radio/index.js';
+import '@vscode-elements/elements/dist/vscode-radio-group/index.js';
 import { render as litRender } from 'lit-html';
 import {
   registryFieldKey,

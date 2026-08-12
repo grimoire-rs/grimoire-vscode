@@ -675,26 +675,28 @@ body {
   color: var(--vscode-descriptionForeground);
 }
 
-.radio-row {
-  display: flex;
-  gap: 18px;
+/* `vscode-radio-group` lays its own slot out (flex, wrap) and spaces slotted
+   radios with `::slotted(vscode-radio) { margin-right: 20px }`. A page-level
+   rule on the light-DOM element wins over ::slotted regardless of specificity,
+   which is what pulls each radio back next to ITS info icon — the 18px gap
+   between the two kinds then lives on the icon wrapper instead. */
+.radio-row vscode-radio {
+  margin-right: 4px;
 }
 
-.radio-label,
-.checkbox-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-/* Per-radio info icon (design item 3) + its floating tooltip anchor. */
+/* Per-radio info icon (design item 3) + its floating tooltip anchor. A SIBLING
+   of the radio, not its parent (see renderRegistryKindOption), so it centers
+   itself against the slot's default stretch. */
 .radio-kind-wrap {
   position: relative;
   display: inline-flex;
+  align-self: center;
   align-items: center;
-  gap: 4px;
+  margin-right: 18px;
+}
+
+.radio-kind-wrap:last-child {
+  margin-right: 0;
 }
 
 .form-info-button {

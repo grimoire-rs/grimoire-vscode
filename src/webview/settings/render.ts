@@ -394,6 +394,12 @@ function renderRegistryHelpTooltip(
   return html`<div class="registry-help-tooltip">${registryFieldTooltip(fields, kind)}</div>`;
 }
 
+/** Two SIBLINGS, not one wrapped pair: `vscode-radio-group` finds its radios
+ *  with `queryAssignedElements({selector: 'vscode-radio'})`, which only sees
+ *  DIRECT children — a wrapper span around the radio would hide it from the
+ *  group and take its roving tab index and arrow-key navigation with it. Non-
+ *  radio children are simply filtered out, so the info button and its tooltip
+ *  ride along in the same slot and are positioned by CSS. */
 function renderRegistryKindOption(
   fields: SettingsRegistryFieldVM[],
   draft: AddRegistryDraft,
@@ -403,8 +409,8 @@ function renderRegistryKindOption(
 ): TemplateResult {
   const label = registryFieldLabel(fields, kind, fallbackLabel);
   return html`
+<vscode-radio name="registry-kind" data-field="kind" value="${kind}" ?checked="${draft.kind === kind}">${label}</vscode-radio>
 <span class="radio-kind-wrap">
-  <label class="radio-label"><input type="radio" name="registry-kind" data-field="kind" value="${kind}" ?checked="${draft.kind === kind}" />${label}</label>
   <button class="icon-button form-info-button" data-action="toggle-registry-help" data-kind="${kind}" title="What is this?"><span class="codicon codicon-info"></span></button>
   ${helpOpen === kind ? renderRegistryHelpTooltip(fields, kind) : nothing}
 </span>`;
@@ -518,7 +524,7 @@ function renderAddRegistryForm(
     registryEditSupported && draft.kind === 'oci'
       ? html`
   <div class="form-field">
-    <label class="checkbox-label"><input type="checkbox" data-field="insecure" ?checked="${draft.insecure}" />${registryFieldLabel(fields, 'insecure', 'Plain-HTTP transport')}</label>
+    <vscode-checkbox data-field="insecure" ?checked="${draft.insecure}">${registryFieldLabel(fields, 'insecure', 'Plain-HTTP transport')}</vscode-checkbox>
     <div class="row-hint">Contacts this host over <code class="inline-code">http://</code>, exactly as written including its port. <code class="inline-code">grimoire.toml</code> is normally committed, so this downgrades transport for everyone who clones the project.</div>
   </div>`
       : nothing;
@@ -545,10 +551,10 @@ function renderAddRegistryForm(
   </label>
   <div class="form-field">
     <span class="form-label">Type</span>
-    <div class="radio-row">
+    <vscode-radio-group class="radio-row" aria-label="Registry type">
       ${renderRegistryKindOption(fields, draft, helpOpen, 'index', 'Index')}
       ${renderRegistryKindOption(fields, draft, helpOpen, 'oci', 'OCI')}
-    </div>
+    </vscode-radio-group>
   </div>
   <label class="form-field">
     <span class="form-label">Locator</span>
@@ -556,7 +562,7 @@ function renderAddRegistryForm(
   </label>
   ${insecureField}
   ${filterFields}
-  <label class="checkbox-label"><input type="checkbox" data-field="default" ?checked="${draft.default}" />${registryFieldLabel(fields, 'default', 'Set as default registry')}</label>
+  <vscode-checkbox data-field="default" ?checked="${draft.default}">${registryFieldLabel(fields, 'default', 'Set as default registry')}</vscode-checkbox>
   ${errorLine}
   <div class="form-actions">
     <button class="btn primary" data-action="submit-add-registry" ?disabled="${saving || !addRegistryDraftValid(draft)}">${saving ? html`<span class="codicon codicon-loading codicon-modifier-spin"></span>Saving…` : submitLabel}</button>
