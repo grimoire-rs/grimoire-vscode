@@ -23,6 +23,7 @@ import {
   CACHE_VERSION,
   type CachedCardMeta,
   cardMetaOf,
+  paintSignature,
   DetailsCache,
   type DetailsCacheEntry,
   mergeEntry,
@@ -61,6 +62,7 @@ import { pickVersion } from './pickVersion';
 import { offerForcedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
+import { offerInstallRefusal } from './updateRefusal';
 
 export const DETAILS_VIEW_TYPE = 'grimoire.details';
 
@@ -570,6 +572,13 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     /** Artifact name for stale-lock recovery; set only by per-name update. */
     staleLockName?: string,
   ): Promise<void> {
+    // Drop the cached snapshot BEFORE the action runs, the way the sidebar
+    // already does. Painting the merged entry is right for a background probe
+    // and wrong straight after a user action: on a version switch, a partly
+    // failed post-action probe would fold the OLD version's README and logo in
+    // under the NEW version's header — a confident lie, where the unmerged null
+    // was at least visibly empty.
+    await this.forget(repo);
     await this.suspendWhile(() => this.actionInner(repo, panel, steps, scope, busy, staleLockName));
   }
 
@@ -616,6 +625,15 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
               this.onDidChange(),
             )
           ) {
+            await this.postVM(repo, panel);
+            return;
+          }
+          // A refused Complete Install: scope-wide, so there is no Overwrite to
+          // offer (forcing would discard edits to artifacts the user never
+          // touched) and offerForcedRetry declines it. Name the modified
+          // artifacts instead of leaving a bare toast about one the user has
+          // never heard of. After offerForcedRetry, so anchor-escape still wins.
+          if (await offerInstallRefusal(result, args, scope, this.scopes, this.output)) {
             await this.postVM(repo, panel);
             return;
           }
@@ -850,11 +868,16 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     if (!fetchValue) {
       return null;
     }
-    const incomplete = this.incompleteDocs(describe, fetchValue, companion);
+    const digest = fetchValue.digest ?? null;
+    // `complete` and `artifactDigest` say the same thing twice — this probe
+    // resolved everything and may be trusted — so they are derived from one
+    // expression. A digest-less fetch counts as incomplete for the same reason a
+    // missed doc does: there is nothing to short-circuit a later revalidate on.
+    const complete = !this.incompleteDocs(describe, fetchValue, companion) && digest !== null;
     return {
       version: CACHE_VERSION,
       repo,
-      artifactDigest: incomplete ? null : (fetchValue.digest ?? null),
+      artifactDigest: complete ? digest : null,
       companionDigest: companion.companionDigest,
       savedAt: new Date().toISOString(),
       describe,
@@ -862,7 +885,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       readme: companion.readme,
       logoUri: companion.logoUri,
       changelog: companion.changelog,
-      complete: !incomplete,
+      complete,
     };
   }
 
@@ -910,6 +933,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     const entry = this.entryFrom(repo, describe, fetchValue, companion);
     if (entry) {
       await this.saveEntry(repo, entry);
+    } else {
+      // Nothing was written, so there is no entry to age — without a cooldown
+      // this repo comes back on the very next viewport report. This is the
+      // sweep path, the one that repeats.
+      this.noteProbeFailure(repo);
     }
   }
 
@@ -925,28 +953,66 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  of repainting a cache entry up to six hours old. Failures are swallowed: a
    *  cache that would not delete is a stale paint, not a broken action. */
   async forget(repo: string): Promise<void> {
+    // Also clears any probe cooldown: forget runs after the user acted on this
+    // artifact, and a cooldown must never mute the refresh that follows.
+    this.failedProbes.delete(repo);
     await this.cache
       .forget(repo)
       .catch((e) => this.output.appendLine(`details cache forget failed for ${repo}: ${String(e)}`));
   }
 
-  /** The prefetch skip filter: true only for an entry still inside its TTL. An
-   *  older one is re-queued (cheap digest probe first) — "has an entry" alone
-   *  made a stale snapshot immortal, so an artifact that published a logo after
-   *  its first prefetch kept a codicon tile until the entry was evicted. An
-   *  unparsable savedAt reads as stale.
+  /** The prefetch skip filter — "do not probe this repo right now", for either
+   *  of the two reasons that can be true.
    *
-   *  The window depends on how the last probe went: a complete snapshot is
-   *  trusted for {@link PREFETCH_TTL_MS}, one that missed a doc only for
+   *  Reason one, freshness: an entry still inside its TTL. "Has an entry" alone
+   *  made a stale snapshot immortal, so an artifact that published a logo after
+   *  its first prefetch kept a codicon tile until the entry was evicted. The
+   *  window depends on how the last probe went — a complete snapshot is trusted
+   *  for {@link PREFETCH_TTL_MS}, one that missed a doc only for
    *  {@link RETRY_TTL_MS}. An entry predating the flag has no `complete` and
-   *  takes the short window — it re-probes once, then settles. */
+   *  takes the short window: it re-probes once, then settles. An unparsable
+   *  savedAt reads as stale, and so does a future-dated one, which used to read
+   *  fresh until the clock caught up.
+   *
+   *  Reason two, cooldown: the last probe failed outright, so nothing was
+   *  written and there is no entry to age. Without this a repo the registry is
+   *  refusing gets re-queued by EVERY viewport report — and under a 429 those
+   *  retries are what keep the 429 coming. Checked before the disk read, so a
+   *  cooling repo costs no I/O at all.
+   *
+   *  Only the background sweep consults this (Prefetcher.enqueue is the sole
+   *  caller). Opening a panel probes regardless — a cooldown that silences
+   *  something the user just asked for would be a bug, not a saving. An explicit
+   *  refresh passes `force`, which skips this call entirely.
+   *
+   *  It does NOT close a registry-wide 429: this is per repo, and 100 different
+   *  repos scrolling into view still each fire one probe. That needs a
+   *  per-origin breaker, which is deliberately not in this change. */
   async isFresh(repo: string): Promise<boolean> {
+    const failedAt = this.failedProbes.get(repo);
+    if (failedAt !== undefined) {
+      if (Date.now() - failedAt < RETRY_TTL_MS) {
+        return true;
+      }
+      // Expired. Drop it here rather than sweeping: a repo nobody looks at
+      // again would otherwise hold its key for the life of the window.
+      this.failedProbes.delete(repo);
+    }
     const entry = await this.cache.load(repo);
     if (entry === null) {
       return false;
     }
+    const age = Date.now() - Date.parse(entry.savedAt);
     const ttl = entry.complete === true ? PREFETCH_TTL_MS : RETRY_TTL_MS;
-    return Date.now() - Date.parse(entry.savedAt) < ttl;
+    return age >= 0 && age < ttl;
+  }
+
+  /** Records that a probe produced no entry at all, starting the cooldown above.
+   *  Written by every caller that observes a null from {@link entryFrom}; cleared
+   *  by {@link saveEntry} and {@link forget}. In memory only — a cooldown is a
+   *  hint about the last few minutes, not state worth surviving a reload. */
+  private noteProbeFailure(repo: string): void {
+    this.failedProbes.set(repo, Date.now());
   }
 
   /** Full-pipeline VM, persisting the snapshot for a future instant paint. Used
@@ -954,26 +1020,43 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  `grim status --check` so an explicit "Check for updates" refresh gives open
    *  panels network-verified update/deprecation data, matching the sidebar. */
   async buildVM(repo: string, options: { check?: boolean } = {}): Promise<DetailsVM> {
-    const { vm, entry } = await this.buildPipeline(repo, await this.scopes.snapshot(options));
-    if (entry) {
-      await this.saveEntry(repo, entry);
+    // Hoisted: vmFromCache needs the same snapshot buildPipeline resolves.
+    const snapshot = await this.scopes.snapshot(options);
+    const { vm, entry } = await this.buildPipeline(repo, snapshot);
+    if (!entry) {
+      // The fetch itself failed. This vm is the only one carrying vm.error, and
+      // there is nothing merged to paint instead.
+      this.noteProbeFailure(repo);
+      return vm;
     }
-    return vm;
+    // Paint what was stored, not what was probed: a partly-failed probe carries
+    // nulls that the merge just filled back in from cache.
+    return this.vmFromCache(repo, await this.saveEntry(repo, entry), snapshot);
   }
 
   /** The single save choke point — so the merge below covers every writer,
    *  present and future. A probe that partly failed carries nulls for the parts
    *  it could not resolve; {@link mergeEntry} keeps the cached content under
    *  them, and the sidebar repost fires off the MERGED entry, so a good logo is
-   *  never withdrawn from a browse card by a failed re-probe. */
-  private async saveEntry(repo: string, entry: DetailsCacheEntry): Promise<void> {
+   *  never withdrawn from a browse card by a failed re-probe.
+   *
+   *  Returns the merged entry, because the merge is also what the caller should
+   *  PAINT. Writing one thing and posting another is how the vanished-logo bug
+   *  survived its own fix: the cache kept the logo and the panel repainted the
+   *  null the probe had just failed to resolve. */
+  private async saveEntry(repo: string, entry: DetailsCacheEntry): Promise<DetailsCacheEntry> {
     const merged = mergeEntry(await this.cache.load(repo).catch(() => null), entry);
     await this.cache
       .save(repo, merged)
       .catch((e) => this.output.appendLine(`details cache save failed for ${repo}: ${String(e)}`));
+    // The repo answered, whatever else failed — so it is not in a cooldown.
+    this.failedProbes.delete(repo);
     if (cardMetaOf(merged)) {
       this.onCardMetaCached();
     }
+    // Returned even when the write threw: the merge is still the best truth we
+    // hold, and painting it beats painting the raw probe.
+    return merged;
   }
 
   /** Builds a VM from cached content + a given install/scope snapshot (sync — the
@@ -1003,10 +1086,6 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     });
   }
 
-  private async digestOnly(args: string[]): Promise<string | null> {
-    const result = await this.scopes.run<DigestResult>(args, 'global');
-    return result.ok ? result.value.digest : null;
-  }
 
   /** The SWR short-circuit, shared by the on-open revalidate and the prefetch
    *  re-probe: a live describe proves the cached content current when BOTH the
@@ -1023,16 +1102,33 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     if (cached.artifactDigest === null || live.digest !== cached.artifactDigest) {
       return false;
     }
-    const companionDigest =
-      live.has_description === true
-        ? await this.digestOnly(fetchArgs(repo, { description: true, digestOnly: true }))
-        : null;
-    return companionDigest === cached.companionDigest;
+    if (live.has_description !== true) {
+      // No companion to compare. A cached digest here means the artifact HAD one
+      // and the publisher removed it — content changed.
+      return cached.companionDigest === null;
+    }
+    const probe = await this.scopes.run<DigestResult>(
+      fetchArgs(repo, { description: true, digestOnly: true }),
+      'global',
+    );
+    if (!probe.ok) {
+      // A probe that could not run proves nothing. This used to collapse into
+      // the same null the "no companion" branch produces, so a failed probe
+      // against an entry with no cached companion digest compared null to null
+      // and declared the content current — then stamped it complete on the six
+      // hour window, hiding a newly published logo for exactly as long.
+      return false;
+    }
+    return probe.value.digest === cached.companionDigest;
   }
 
   /** Last concrete revalidate-failure message per repo, so the indicator click
    *  handler shows it without trusting webview-supplied text. */
   private lastFailure = new Map<string, string>();
+
+  /** repo → when its last probe failed outright. Drives the cooldown half of
+   *  {@link isFresh}; see {@link noteProbeFailure}. */
+  private readonly failedProbes = new Map<string, number>();
 
   /** Posts the background-revalidate status for the top-right indicator. Only
    *  used on warm reopens (a cached paint is on screen). */
@@ -1106,14 +1202,20 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       if (await this.contentUnchanged(repo, cached, live)) {
         if (JSON.stringify(live) !== JSON.stringify(cached.describe)) {
           // Metadata-only change: refresh describe, keep the cached content.
+          // Complete by construction — contentUnchanged matched the artifact
+          // digest AND either proved the companion digest or proved there is no
+          // companion, so nothing this artifact publishes is unaccounted for.
+          // Stating it also promotes an entry written before the flag existed
+          // off the short retry window instead of re-arming it every visit.
           const entry: DetailsCacheEntry = {
             ...cached,
             describe: live,
             savedAt: new Date().toISOString(),
+            complete: true,
           };
-          await this.saveEntry(repo, entry);
+          const stored = await this.saveEntry(repo, entry);
           const snap = snapshot ?? (await this.scopes.snapshot());
-          await this.postBuilt(repo, panel, this.vmFromCache(repo, entry, snap));
+          await this.postBuilt(repo, panel, this.vmFromCache(repo, stored, snap));
         }
         this.postRevalidate(panel, 'done'); // unchanged or metadata-only: both settle to done
         return;
@@ -1121,12 +1223,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
     // Content changed, no cache, or describe failed (offline): full pipeline.
     // ponytail: re-runs describe once here — one extra list_tags, fine.
-    const { vm, entry } = await this.buildPipeline(
-      repo,
-      snapshot ?? (await this.scopes.snapshot()),
-    );
-    if (entry) {
-      await this.saveEntry(repo, entry);
+    const snap = snapshot ?? (await this.scopes.snapshot());
+    const { vm, entry } = await this.buildPipeline(repo, snap);
+    const stored = entry ? await this.saveEntry(repo, entry) : null;
+    if (!entry) {
+      this.noteProbeFailure(repo);
     }
     if (!cached) {
       // Cold: vm.error (fetch failed, no content) renders the in-body error block.
@@ -1137,7 +1238,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       await this.postBuilt(repo, panel, vm);
       return;
     }
-    if (!entry) {
+    if (!stored) {
       // Revalidate failed with a cached paint on screen: keep it, no in-body error.
       // The fetch error (whichever step surfaced it) rides in vm.error; store it so
       // the indicator click can show the concrete message, and notify (deduped —
@@ -1149,11 +1250,13 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       this.postRevalidate(panel, 'failed', message);
       return;
     }
-    const changed =
-      entry.artifactDigest !== cached.artifactDigest ||
-      entry.companionDigest !== cached.companionDigest;
-    if (changed) {
-      await this.postBuilt(repo, panel, vm);
+    // Repost when the user would SEE something different — not when a digest
+    // moved. Digests are wrong both ways here: an incomplete probe nulls them,
+    // so a retry that recovered a logo compared null to null and stayed silent
+    // while the cache quietly improved; and a fold that restored identical
+    // content still differs by digest, which repainted for nothing.
+    if (paintSignature(stored) !== paintSignature(cached)) {
+      await this.postBuilt(repo, panel, this.vmFromCache(repo, stored, snap));
     }
     this.postRevalidate(panel, 'done');
   }

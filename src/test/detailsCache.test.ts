@@ -8,8 +8,9 @@ import {
   DetailsCache,
   type DetailsCacheEntry,
   mergeEntry,
+  paintSignature,
 } from '../detailsCache';
-import type { DescribeResult } from '../grim';
+import type { DescribeResult, FetchResult } from '../grim';
 
 /** A describe payload carrying just the field the card enrichment reads. */
 function describedAs(version: string | null): DescribeResult {
@@ -31,6 +32,19 @@ function describedAs(version: string | null): DescribeResult {
     replaced_by: null,
     tags: [],
     annotations: {},
+  };
+}
+
+/** A fetch payload — one of the five fields a rendered panel paints. */
+function fetchedAs(digest: string): FetchResult {
+  return {
+    ref: 'ghcr.io/o/skills/x:latest',
+    digest,
+    kind: 'skill',
+    name: 'x',
+    vendor: 'canonical',
+    content: '# Descriptor',
+    files: [],
   };
 }
 
@@ -259,5 +273,133 @@ suite('mergeEntry', () => {
   test('no cached entry returns the fresh one unchanged', () => {
     const fresh = entry(repo, { logoUri: null });
     assert.deepStrictEqual(mergeEntry(null, fresh), fresh);
+  });
+
+  test('A4 / C-003: a COMPLETE probe propagates a deleted logo instead of folding the old one back', () => {
+    // S-004: the publisher removed the logo and the changelog. This probe
+    // resolved everything the artifact is known to publish, so its nulls are
+    // the publisher's answer, not bytes it lost. Folding them would resurrect
+    // the old logo under the NEW digest and pin it there until the entry was
+    // evicted by hand — a transient vanishing traded for a permanent wrong.
+    const cached = entry(repo, {
+      artifactDigest: 'sha256:old',
+      logoUri: 'data:image/png;base64,AAA',
+      readme: '# Real',
+      changelog: '# Changes',
+      describe: describedAs('1.2.3'),
+      complete: true,
+    });
+    const fresh = entry(repo, {
+      artifactDigest: 'sha256:new',
+      logoUri: null,
+      changelog: null,
+      readme: '# Real, still',
+      describe: describedAs('2.0.0'),
+      complete: true,
+    });
+    const merged = mergeEntry(cached, fresh);
+    assert.strictEqual(merged.logoUri, null, 'the deleted logo disappears');
+    assert.strictEqual(merged.changelog, null, 'the deleted changelog disappears');
+    assert.deepStrictEqual(merged, fresh, 'a complete probe replaces the entry wholesale');
+  });
+
+  test('a probe carrying no completeness verdict still folds (strict === true)', () => {
+    // The guard reads `fresh.complete === true`, so an entry built by a path
+    // that never set the flag keeps the repairing fold rather than being
+    // mistaken for a clean probe.
+    const cached = entry(repo, { logoUri: 'data:image/png;base64,AAA', complete: true });
+    const fresh = entry(repo, { logoUri: null });
+    assert.strictEqual(fresh.complete, undefined, 'the fixture states no verdict');
+    assert.strictEqual(mergeEntry(cached, fresh).logoUri, cached.logoUri, 'content folded');
+  });
+});
+
+suite('paintSignature', () => {
+  const repo = 'ghcr.io/o/skills/x';
+
+  test('A8 / C-007: probe metadata alone never changes the signature', () => {
+    // savedAt, complete and the two digests describe the PROBE. A repost gate
+    // that watched them repainted a panel whose pixels were identical, and — the
+    // other direction — stayed silent when an incomplete retry nulled them both.
+    const painted = {
+      describe: describedAs('1.2.3'),
+      fetch: fetchedAs('sha256:art1'),
+      readme: '# Real',
+      logoUri: 'data:image/png;base64,AAA',
+      changelog: '# Changes',
+    };
+    const before = entry(repo, {
+      ...painted,
+      artifactDigest: 'sha256:art1',
+      companionDigest: 'sha256:comp1',
+      savedAt: '2020-01-01T00:00:00.000Z',
+      complete: true,
+    });
+    const after = entry(repo, {
+      ...painted,
+      artifactDigest: null,
+      companionDigest: null,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      complete: false,
+    });
+    assert.strictEqual(paintSignature(after), paintSignature(before));
+  });
+
+  test('A8 / C-007: changing any one painted field changes the signature', () => {
+    const base = entry(repo, {
+      describe: describedAs('1.2.3'),
+      fetch: fetchedAs('sha256:art1'),
+      readme: '# Real',
+      logoUri: 'data:image/png;base64,AAA',
+      changelog: '# Changes',
+    });
+    const baseline = paintSignature(base);
+    assert.notStrictEqual(
+      paintSignature({ ...base, describe: describedAs('2.0.0') }),
+      baseline,
+      'describe',
+    );
+    assert.notStrictEqual(
+      paintSignature({ ...base, fetch: fetchedAs('sha256:art2') }),
+      baseline,
+      'fetch',
+    );
+    assert.notStrictEqual(paintSignature({ ...base, readme: '# Other' }), baseline, 'readme');
+    assert.notStrictEqual(paintSignature({ ...base, logoUri: null }), baseline, 'logoUri');
+    assert.notStrictEqual(paintSignature({ ...base, changelog: null }), baseline, 'changelog');
+  });
+
+  test('A8 / C-007: the signature does not depend on key insertion order', () => {
+    // Two entries with identical values, built in opposite literal order — the
+    // signature writes its own key order out, so JSON.stringify's dependence on
+    // insertion order cannot leak into it and repost a panel for nothing.
+    const savedAt = '2026-01-01T00:00:00.000Z';
+    const forward: DetailsCacheEntry = {
+      version: CACHE_VERSION,
+      repo,
+      artifactDigest: 'sha256:art1',
+      companionDigest: null,
+      savedAt,
+      describe: describedAs('1.2.3'),
+      fetch: fetchedAs('sha256:art1'),
+      readme: '# Real',
+      logoUri: 'data:image/png;base64,AAA',
+      changelog: '# Changes',
+      complete: true,
+    };
+    const reversed: DetailsCacheEntry = {
+      complete: true,
+      changelog: '# Changes',
+      logoUri: 'data:image/png;base64,AAA',
+      readme: '# Real',
+      fetch: fetchedAs('sha256:art1'),
+      describe: describedAs('1.2.3'),
+      savedAt,
+      companionDigest: null,
+      artifactDigest: 'sha256:art1',
+      repo,
+      version: CACHE_VERSION,
+    };
+    assert.strictEqual(paintSignature(reversed), paintSignature(forward));
   });
 });

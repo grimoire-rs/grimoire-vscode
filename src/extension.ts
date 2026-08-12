@@ -35,10 +35,10 @@ import { pickVersion } from './views/pickVersion';
 import { SettingsManager } from './views/settings';
 import { SidebarProvider, scopeStatuses } from './views/sidebar';
 import { Watchers } from './watchers';
+import { offerModifiedRefusal } from './views/updateRefusal';
 import {
   addRegistryPrompt,
   artifactName,
-  declaredKey,
   firstUnknownScope,
   isValidRepo,
   parseAddRegistryLink,
@@ -114,59 +114,6 @@ export function mementoCheckStore(
       await memento(scope).update(CHECK_VERDICTS_KEY, record);
     },
   };
-}
-
-/** Answers a bare `grim update` that refused because an artifact is locally
- *  modified (exit 65, forceable — grim 0.13 runs install's integrity gate on
- *  update, where it used to overwrite silently). The refusal aborts the whole
- *  scope's update, so the user needs a way forward.
- *
- *  It is deliberately NOT the Overwrite dialog: retrying this call with
- *  `--force` would overwrite EVERY modified artifact in the scope while grim's
- *  message names only the first one it hit. Instead, name them from the
- *  snapshot — structural, never scraped out of grim's prose — and offer to open
- *  one, whose own Update button confirms and forces that artifact alone.
- *
- *  Exported for the wiring test. */
-export async function offerUpdateRefusal(
-  scopes: ScopeService,
-  scope: Scope,
-  message: string,
-): Promise<void> {
-  const snapshot = scopes.cachedSnapshot() ?? (await scopes.snapshot());
-  const snap = snapshot[scope];
-  const modified = (snap?.status ?? []).filter((item) => item.state === 'modified');
-  const repos = new Map<string, string>();
-  for (const item of modified) {
-    const declared = snap?.declared[declaredKey(item.kind, item.name)];
-    const ref = declared ?? item.pinned;
-    if (ref) {
-      repos.set(item.name, refRepo(ref));
-    }
-  }
-  const only = repos.size === 1 ? [...repos.entries()][0] : undefined;
-  if (only) {
-    const [name, repo] = only;
-    const choice = await vscode.window.showErrorMessage(
-      `Grimoire: update stopped — ${message}`,
-      `Open ${name}`,
-      'Show Output',
-    );
-    if (choice === `Open ${name}`) {
-      await vscode.commands.executeCommand('grimoire.openDetails', repo);
-    } else if (choice === 'Show Output') {
-      await vscode.commands.executeCommand('grimoire.showOutput');
-    }
-    return;
-  }
-  const named = repos.size > 1 ? ` Locally modified: ${[...repos.keys()].join(', ')}.` : '';
-  const choice = await vscode.window.showErrorMessage(
-    `Grimoire: update (${scope}) stopped — ${message}${named}`,
-    'Show Output',
-  );
-  if (choice === 'Show Output') {
-    await vscode.commands.executeCommand('grimoire.showOutput');
-  }
 }
 
 export function activate(context: vscode.ExtensionContext): GrimoireApi {
@@ -729,8 +676,16 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // Network-verified update/deprecation check (`grim status --check`), on
     // explicit request only — plain refreshes stay offline and cheap.
     vscode.commands.registerCommand('grimoire.checkArtifactUpdates', () => checkNow()),
-    vscode.commands.registerCommand('grimoire.updateAll', () =>
-      suspendWhile(async () => {
+    vscode.commands.registerCommand('grimoire.updateAll', async () => {
+      // Refusals are COLLECTED here and shown after everything has settled.
+      // A VS Code error notification carrying buttons does not auto-dismiss, so
+      // awaiting one inside the wrappers below meant a project-scope refusal
+      // held the global update hostage along with the busy lock (every action
+      // control in every open view goes inert), watcher suspension (events are
+      // dropped, not queued, for the duration), the progress spinner, and the
+      // closing refresh — until a human happened to click the toast.
+      const refusals: (() => Promise<void>)[] = [];
+      await suspendWhile(async () => {
         await runWithStatusProgress('Updating all artifacts', async () => {
           // Skip project unless it has a grimoire.toml — `grim update --project`
           // in an unconfigured workspace just errors.
@@ -749,7 +704,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
                 result.kind === 'not-found' ? 'grim executable not found' : result.message;
               output.appendLine(`error: grim update --${scope}: ${message}`);
               if (result.kind === 'error' && isForceable(result)) {
-                await offerUpdateRefusal(scopes, scope, message);
+                refusals.push(() => offerModifiedRefusal(scopes, scope, 'update', message));
                 return;
               }
               notifyError(`Grimoire: grim update (${scope}): ${message}`);
@@ -811,8 +766,14 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
           }
         });
         await refreshAll();
-      }),
-    ),
+      });
+      // Outside suspendWhile and the progress: the busy lock is released, the
+      // watchers are live again, both scopes have run. Sequentially, so two
+      // refusals do not fight for focus.
+      for (const show of refusals) {
+        await show();
+      }
+    }),
     vscode.commands.registerCommand('grimoire.initProject', () =>
       suspendWhile(async () => {
         const result = await scopes.run<ActionReport>(initArgs(), 'project');

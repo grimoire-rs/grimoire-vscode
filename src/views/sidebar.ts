@@ -38,6 +38,7 @@ import {
   buildInstalledCards,
   buildShareLink,
   firstUnknownScope,
+  isValidRepo,
   refRepo,
   registryUrlHost,
   repoForInstall,
@@ -59,6 +60,7 @@ import { webviewHtml } from './html';
 import { offerForcedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
+import { offerInstallRefusal } from './updateRefusal';
 
 /** globalState key for the view preference (density / list-vs-tree / grouping). */
 const VIEW_PREFS_KEY = 'grimoire.sidebar.view';
@@ -67,6 +69,13 @@ const VIEW_PREFS_KEY = 'grimoire.sidebar.view';
  *  reports its viewport. Roughly a tall window of compact rows — the real work
  *  list is the `visible` report, which supersedes this within a frame or two. */
 const SEED_SWEEP = 24;
+
+/** Sanity ceiling on the webview's viewport report. A tall sidebar of compact
+ *  rows plus the observer's 400px margin reports on the order of 100 repos, so
+ *  this is far above any real viewport — it exists so a webview that ever posted
+ *  a pathological list could not turn it into that many grim spawns, not to
+ *  reinstate the fixed top-K the viewport sweep replaced. */
+const MAX_VISIBLE_REPOS = 500;
 
 export interface SidebarDelegate {
   openDetails(repo: string, mode: 'preview' | 'permanent'): void;
@@ -343,7 +352,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // The rows on screen ARE the prefetch work list. The force flag belongs
         // to the results round that produced this render, not to the scroll —
         // consumed once, so a later scroll re-probes only what is stale.
-        this.delegate.prefetch(message.repos, { force: this.consumeForcePrefetch() });
+        //
+        // Validated and bounded first: this list is webview-supplied, and every
+        // element becomes a grim spawn and a cache filename. isValidRepo is the
+        // same check the deep-link handler uses; the cap is a sanity ceiling
+        // well above any viewport, NOT a return of the fixed top-K this branch
+        // deliberately removed.
+        this.delegate.prefetch(
+          (Array.isArray(message.repos) ? message.repos : [])
+            .filter((repo) => typeof repo === 'string' && isValidRepo(repo))
+            .slice(0, MAX_VISIBLE_REPOS),
+          { force: this.consumeForcePrefetch() },
+        );
         return;
       case 'pickVersion':
         this.delegate.forgetCached(message.repo);
@@ -477,6 +497,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.delegate.refreshAll(),
         )
       ) {
+        return;
+      }
+      // A refused Complete Install: scope-wide, so there is no Overwrite to
+      // offer (forcing would discard edits to artifacts the user never touched)
+      // and offerForcedRetry declines it. Name the modified artifacts instead of
+      // leaving a bare toast about one the user has never heard of. After
+      // offerForcedRetry, so an anchor-escape refusal still takes that branch.
+      if (await offerInstallRefusal(result, args, scope, this.scopes, this.output)) {
         return;
       }
       // Name the failing step — an init→add sequence can fail halfway.

@@ -53,7 +53,13 @@ export function mergeEntry(
   cached: DetailsCacheEntry | null,
   fresh: DetailsCacheEntry,
 ): DetailsCacheEntry {
-  if (!cached) {
+  // A COMPLETE probe replaces the entry outright. Folding is a repair for a
+  // probe that failed, and a complete probe did not fail — so a null in it is
+  // the publisher's answer, not a lost byte, and honouring it is how a deleted
+  // logo or README actually disappears. Without this the fold made every
+  // removal unpropagatable: the old content came back under the new digest and
+  // stayed until the cache was evicted by hand.
+  if (!cached || fresh.complete === true) {
     return fresh;
   }
   return {
@@ -63,6 +69,31 @@ export function mergeEntry(
     logoUri: fresh.logoUri ?? cached.logoUri,
     changelog: fresh.changelog ?? cached.changelog,
   };
+}
+
+/** Everything a rendered details panel takes from an entry, as one comparable
+ *  string — the answer to "would the user see anything different?".
+ *
+ *  Lives here, beside {@link cardMetaOf}, for the same reason: one place decides
+ *  what a surface reads out of an entry. The revalidate repost used to compare
+ *  digests instead, which is wrong in both directions — an incomplete probe
+ *  nulls the digest, so a retry that recovered a logo compared null-to-null and
+ *  never reposted, while a merged entry whose content the fold left identical
+ *  still differed by digest and reposted a flicker.
+ *
+ *  Key order is written out rather than taken from the object, so the signature
+ *  cannot change with how the entry was built. `describe` and `fetch` are grim's
+ *  own JSON: stable per digest (annotations are a BTreeMap, optional fields are
+ *  skip_serializing_if), so the residual risk is a single self-healing spurious
+ *  repost if a future grim reorders a struct's fields. */
+export function paintSignature(entry: DetailsCacheEntry): string {
+  return JSON.stringify({
+    describe: entry.describe,
+    fetch: entry.fetch,
+    readme: entry.readme,
+    logoUri: entry.logoUri,
+    changelog: entry.changelog,
+  });
 }
 
 /** What a cached snapshot lends a sidebar card: the artifact logo and the

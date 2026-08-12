@@ -6,6 +6,7 @@ import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
 import { nothing, render as litRender } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import type { DetailsToHost, DetailsVM, HostToDetails, RevalidateState, Scope } from '../protocol';
+import { isMutating } from '../actions';
 import { armBrokenImages } from '../brokenImage';
 import { createMarkdown } from '../markdown';
 import { isInteractiveTarget, shouldResetUi } from '../model';
@@ -37,10 +38,10 @@ let vm: DetailsVM | null = null;
 // panel opened while some other view's install runs — and taking that at face
 // value would unlock the page while grim still holds its lock.
 let busy: string | null = null;
-// Actions that run a grim command. Refused outright while `busy`, not only
-// dimmed by .details-header.busy: pointer-events leaves a button reachable by
-// keyboard, and the deprecation banner's Switch sits outside .scope-actions.
-const MUTATING_ACTIONS = new Set(['install', 'update', 'uninstall', 'switch', 'pick-version']);
+// Which actions run a grim command now lives in webview/actions.ts, shared with
+// the sidebar entry. Refused outright while `busy`, not only dimmed by
+// .details-header.busy: pointer-events leaves a button reachable by keyboard,
+// and the deprecation banner's Switch sits outside .scope-actions.
 // The artifact currently rendered. The preview tab is retargeted in place (no
 // webview reboot), so a VM for a different repo can arrive; null until the first
 // render lands.
@@ -221,7 +222,7 @@ root.addEventListener('click', (event) => {
     return;
   }
   event.preventDefault();
-  if (busy !== null && MUTATING_ACTIONS.has(action)) {
+  if (busy !== null && isMutating(action)) {
     closeScopeMenus();
     return;
   }

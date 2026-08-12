@@ -157,6 +157,7 @@ function makeSidebar(
   provider: SidebarProvider;
   posted: HostToSidebar[];
   view: vscode.WebviewView;
+  prefetchCalls: { repos: string[]; force: boolean | undefined }[];
 } {
   const queue = [...snapshots];
   let last = queue[0] ?? healthySnapshot();
@@ -179,8 +180,11 @@ function makeSidebar(
     suspendWhile: (fn) => fn(),
     cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
     forgetCached: () => {},
-    prefetch: () => {},
+    prefetch: (repos, options) => {
+      prefetchCalls.push({ repos, force: options?.force });
+    },
   };
+  const prefetchCalls: { repos: string[]; force: boolean | undefined }[] = [];
   const posted: HostToSidebar[] = [];
   const output = vscode.window.createOutputChannel('grimoire-test');
   // A throwaway globalState: the provider stores the view preference there.
@@ -202,7 +206,7 @@ function makeSidebar(
   );
   const view = fakeView(posted);
   provider.resolveWebviewView(view);
-  return { provider, posted, view };
+  return { provider, posted, view, prefetchCalls };
 }
 
 suite('unknown install state: sidebar', () => {
@@ -514,5 +518,60 @@ suite('unknown install state: details panel', () => {
       manager.installSlice(REPO, unknown),
       'an empty scope and an unknown scope must produce different slices',
     );
+  });
+});
+
+// The viewport report is the branch's only new host-side mutable protocol
+// state, and nothing exercised it — which is how the force flag shipped
+// consumable by a report from the previous results round.
+suite('viewport prefetch: the visible report', () => {
+  test('an explicit refresh forces exactly one report, then scrolling does not (H12a)', async () => {
+    const { provider, prefetchCalls } = makeSidebar([healthySnapshot(), healthySnapshot()]);
+    await provider.refresh({ refresh: true });
+    prefetchCalls.length = 0; // drop the seed sweep; the reports are what is under test
+
+    await provider.handleMessage({ type: 'visible', repos: ['ghcr.io/acme/demo'] });
+    await provider.handleMessage({ type: 'visible', repos: ['ghcr.io/acme/demo'] });
+
+    assert.strictEqual(prefetchCalls.length, 2);
+    assert.strictEqual(prefetchCalls[0]?.force, true, 'the refresh round re-resolves');
+    assert.strictEqual(prefetchCalls[1]?.force, false, 'a later scroll is not a refresh');
+  });
+
+  test('a plain results round never forces', async () => {
+    const { provider, prefetchCalls } = makeSidebar([healthySnapshot(), healthySnapshot()]);
+    await provider.refresh();
+    prefetchCalls.length = 0;
+
+    await provider.handleMessage({ type: 'visible', repos: ['ghcr.io/acme/demo'] });
+
+    assert.strictEqual(prefetchCalls[0]?.force, false);
+  });
+
+  test('the report is validated and bounded before it becomes grim spawns (C-030)', async () => {
+    const { provider, prefetchCalls } = makeSidebar([healthySnapshot()]);
+    prefetchCalls.length = 0;
+
+    // Every element becomes a child process and a cache filename, and the
+    // sender is the untrusted side of the boundary. A non-string would throw in
+    // the cache's sha1, and an unbounded list is unbounded spawns.
+    const hostile = [
+      'ghcr.io/acme/demo',
+      '--flag-shaped',
+      '',
+      42 as unknown as string,
+      null as unknown as string,
+      ...Array.from({ length: 900 }, (_, i) => `ghcr.io/acme/pkg${i}`),
+    ];
+    await provider.handleMessage({ type: 'visible', repos: hostile });
+
+    const sent = prefetchCalls[0]?.repos ?? [];
+    assert.ok(sent.length <= 500, `expected the list capped, got ${sent.length}`);
+    assert.ok(
+      sent.every((r) => typeof r === 'string' && r.length > 0),
+      'every forwarded repo is a non-empty string',
+    );
+    assert.ok(!sent.includes('--flag-shaped'), 'a flag-shaped entry never reaches argv');
+    assert.ok(sent.includes('ghcr.io/acme/demo'), 'valid repos still get through');
   });
 });

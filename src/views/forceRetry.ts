@@ -55,12 +55,16 @@ export async function offerForcedRetry(
   // name (e.g. "demo") has no slash or tag, so it passes through unchanged.
   // positionalOf, not args[1]: the builders put their positionals behind a `--`.
   const name = artifactName(refRepo(positionalOf(args)));
+  // `grim install` is the one builder with no `--` and no positional, so
+  // positionalOf returns '' for it and the notice below rendered an empty pair
+  // of backticks. A scope-wide command has no artifact to name — say so.
+  const subject = positionalOf(args) === '' ? `the ${scope} scope` : `\`${name}\``;
   // Normalized, not `===`: a case/whitespace variant of this reason arriving
   // together with forceable:true must still take the security branch below,
   // never the override branch — see CWE-697/CWE-20 in the anchor-escape ADR.
   if (result.reason?.trim().toLowerCase() === 'anchor-escape') {
     const choice = await vscode.window.showErrorMessage(
-      `Grimoire: \`${name}\`: a recorded path resolves outside its anchor root. grim will not ` +
+      `Grimoire: ${subject}: a recorded path resolves outside its anchor root. grim will not ` +
         `read or write through it. Uninstall and reinstall it to repair. Files may remain on ` +
         `disk and must be removed manually.`,
       'Show Output',

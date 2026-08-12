@@ -20,8 +20,16 @@ import type {
   RevalidateState,
   SidebarState,
 } from '../webview/protocol';
-import { offerUpdateRefusal, type GrimoireApi } from '../extension';
-import { addArgs, updateArgs, type ContextInfo, type GrimResult, type Scope } from '../grim';
+import { type GrimoireApi } from '../extension';
+import { offerModifiedRefusal } from '../views/updateRefusal';
+import {
+  addArgs,
+  updateArgs,
+  type ContextInfo,
+  type DescribeResult,
+  type GrimResult,
+  type Scope,
+} from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
 import { offerForcedRetry } from '../views/forceRetry';
@@ -1384,6 +1392,89 @@ suite('extension integration', () => {
     assert.ok(updates.some((l) => !l.includes('--global')));
   });
 
+  test('a forceable updateAll refusal routes to the dialog AND lets the other scope run (H12b)', async () => {
+    // The wiring nothing covered. Two claims, and the second is the one that
+    // matters: the refusal used to be AWAITED inside runWithStatusProgress
+    // inside suspendWhile, so a project-scope refusal held the global update,
+    // the closing refresh, the busy lock and watcher delivery hostage behind a
+    // notification that does not auto-dismiss. Refusals are collected now and
+    // shown once everything has settled.
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    canned(stub, 'update', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'demo is locally modified; rerun with --force',
+        reason: 'modified',
+        forceable: true,
+      },
+    });
+    canned(stub, 'status', { items: [] });
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    // Snapshotted AT DIALOG TIME, per dialog. This is the assertion that
+    // actually pins the fix: a stub that returns immediately would let the old
+    // awaited-in-place code pass a "both scopes ran by the end" check, because
+    // the block it caused only lasts as long as a real human ignores the
+    // notification. What the stub CAN see is ordering — with the refusal
+    // awaited inside the command, only the project update had been issued (and
+    // the closing refresh had not run) when the dialog opened.
+    const calls: { items: string[]; updates: number; searches: number }[] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      const lines = argvLines(stub);
+      calls.push({
+        items: [message, ...items],
+        updates: lines.filter(isFullUpdate).length,
+        searches: lines.filter((l) => l.startsWith('search')).length,
+      });
+      return undefined; // dismissed
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await vscode.commands.executeCommand('grimoire.updateAll');
+    } finally {
+      window.showErrorMessage = original;
+      canned(stub, 'context', contextDoc());
+      canned(stub, 'update', { items: [] });
+    }
+
+    // Both scopes ran. Before the fix the project refusal returned out of the
+    // whole command with the global update never issued.
+    const updates = argvLines(stub).filter(isFullUpdate);
+    assert.strictEqual(updates.length, 2, `both scopes still update: ${updates.join(' | ')}`);
+    assert.ok(updates.some((l) => l.includes('--global')));
+
+    assert.strictEqual(
+      calls[0]?.updates,
+      2,
+      'the dialog waits until both scopes have run — it no longer blocks the command',
+    );
+    assert.ok((calls[0]?.searches ?? 0) > 0, 'and until the closing refreshAll has run');
+
+    // S-008: one dialog per refusing scope, sequentially, project first. The
+    // snapshot holds no modified rows, so both take the unnamed form (S-009's
+    // documented degradation) — which is also what makes them distinguishable
+    // by scope here. The named `Open <name>` form is covered directly above.
+    const messages = calls.map((c) => c.items[0] ?? '');
+    assert.strictEqual(calls.length, 2, `one dialog per refusal: ${messages.join(' | ')}`);
+    assert.ok(messages[0]?.includes('update (project) stopped'), `project first: ${messages[0]}`);
+    assert.ok(messages[1]?.includes('update (global) stopped'), `global second: ${messages[1]}`);
+    assert.ok(
+      messages.every((m) => m.includes('demo is locally modified')),
+      `each carries grim's own message: ${messages.join(' | ')}`,
+    );
+    // The named dialog, never the plain toast — which reads
+    // "grim update (<scope>): <message>" and offers nothing to act on.
+    assert.ok(
+      !messages.some((m) => m.includes('grim update (')),
+      `no plain error toast for a forceable refusal: ${messages.join(' | ')}`,
+    );
+    assert.ok(
+      !calls.some((c) => c.items.some((i) => i.toLowerCase().includes('overwrite'))),
+      'never a one-click force for a whole-scope run',
+    );
+  });
+
   test('updateAll toasts when a row reaps or keeps-modified a client output', async () => {
     canned(stub, 'update', {
       items: [
@@ -1452,7 +1543,12 @@ suite('extension integration', () => {
       return undefined; // dismissed — never executes the open command here
     };
     try {
-      await offerUpdateRefusal(scopes, 'global', 'demo is locally modified; rerun with --force');
+      await offerModifiedRefusal(
+        scopes,
+        'global',
+        'update',
+        'demo is locally modified; rerun with --force',
+      );
     } finally {
       window.showErrorMessage = original;
     }
@@ -1488,7 +1584,12 @@ suite('extension integration', () => {
       return undefined;
     };
     try {
-      await offerUpdateRefusal(scopes, 'project', 'one is locally modified; rerun with --force');
+      await offerModifiedRefusal(
+        scopes,
+        'project',
+        'update',
+        'one is locally modified; rerun with --force',
+      );
     } finally {
       window.showErrorMessage = original;
     }
@@ -2794,18 +2895,539 @@ suite('extension integration', () => {
     }
   });
 
+  // A1 / C-002 — the eight-row contentUnchanged table. Each row seeds one cache
+  // entry, cans the live describe (plus whatever the companion digest probe
+  // would answer) and drives the background sweep, then reads the outcome off
+  // the stub's argv log: a content fetch means the full pipeline ran
+  // ("changed"), none means the metadata-only short circuit took it
+  // ("unchanged"). The probe count is asserted on every row, because the return
+  // value alone cannot tell a short circuit that skipped the probe from one that
+  // ran it and ignored the answer — rows 5-8 must spawn nothing at all.
+  const contentUnchangedRows: Array<{
+    row: number;
+    why: string;
+    cachedArtifact: string | null;
+    cachedCompanion: string | null;
+    liveDigest: string;
+    hasDescription: boolean;
+    /** What the companion digest probe answers; null = it fails to run. */
+    probeAnswer: string | null;
+    expected: 'unchanged' | 'changed';
+    probes: number;
+  }> = [
+    {
+      row: 1,
+      why: 'both digests still match → unchanged',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art1',
+      hasDescription: true,
+      probeAnswer: 'sha256:comp1',
+      expected: 'unchanged',
+      probes: 1,
+    },
+    {
+      row: 2,
+      why: 'a FAILED companion probe with no cached companion digest → changed (H2: null proved nothing)',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: null,
+      liveDigest: 'sha256:art1',
+      hasDescription: true,
+      probeAnswer: null,
+      expected: 'changed',
+      probes: 1,
+    },
+    {
+      row: 3,
+      why: 'a FAILED companion probe against a cached companion digest → changed',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art1',
+      hasDescription: true,
+      probeAnswer: null,
+      expected: 'changed',
+      probes: 1,
+    },
+    {
+      row: 4,
+      why: 'a companion digest that moved → changed',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art1',
+      hasDescription: true,
+      probeAnswer: 'sha256:comp2',
+      expected: 'changed',
+      probes: 1,
+    },
+    {
+      row: 5,
+      why: 'no companion and none cached (the common case) → unchanged, zero probes',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: null,
+      liveDigest: 'sha256:art1',
+      hasDescription: false,
+      probeAnswer: 'sha256:comp1',
+      expected: 'unchanged',
+      probes: 0,
+    },
+    {
+      row: 6,
+      why: 'a companion removed upstream (cached digest, none live) → changed, zero probes',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art1',
+      hasDescription: false,
+      probeAnswer: 'sha256:comp1',
+      expected: 'changed',
+      probes: 0,
+    },
+    {
+      row: 7,
+      why: 'a null cached artifact digest → changed before any probe',
+      cachedArtifact: null,
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art1',
+      hasDescription: true,
+      probeAnswer: 'sha256:comp1',
+      expected: 'changed',
+      probes: 0,
+    },
+    {
+      row: 8,
+      why: 'an artifact digest that moved → changed before any probe',
+      cachedArtifact: 'sha256:art1',
+      cachedCompanion: 'sha256:comp1',
+      liveDigest: 'sha256:art2',
+      hasDescription: true,
+      probeAnswer: 'sha256:comp1',
+      expected: 'changed',
+      probes: 0,
+    },
+  ];
+
+  for (const row of contentUnchangedRows) {
+    test(`A1 / C-002 row ${row.row}: ${row.why}`, async function () {
+      this.timeout(20000);
+      const api = await activateExtension();
+      const dir = isolateCache(api);
+      const name = `cu-row${row.row}`;
+      const repo = `ghcr.io/grimoire-rs/skills/${name}`;
+      const cache = new DetailsCache(dir);
+      // No `complete` key: a legacy entry, so an unchanged row also shows the
+      // metadata-only writer promoting it off the short window (C-009).
+      await cache.save(repo, {
+        version: CACHE_VERSION,
+        repo,
+        artifactDigest: row.cachedArtifact,
+        companionDigest: row.cachedCompanion,
+        savedAt: new Date().toISOString(),
+        describe: null,
+        fetch: null,
+        readme: 'cached-readme-marker',
+        logoUri: null,
+        changelog: null,
+      });
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, { name, has_description: row.hasDescription, digest: row.liveDigest }),
+      );
+      canned(stub, 'fetch', {
+        ref: `${repo}:latest`,
+        digest: row.liveDigest,
+        kind: 'skill',
+        name,
+        vendor: 'canonical',
+        content: '# Descriptor',
+        files: [],
+      });
+      // Canned on every row, including the four that must never ask: a probe
+      // that fires anyway then gets a plausible answer instead of falling
+      // through to the artifact fetch, so the count is the only thing that moves.
+      canned(
+        stub,
+        'fetch-desc-digest',
+        row.probeAnswer === null
+          ? { error: { code: 'network', exit: 75, message: 'registry unreachable' } }
+          : { ref: `${repo}:__grimoire`, digest: row.probeAnswer },
+      );
+      // What the full pipeline gets when a row reaches it.
+      canned(stub, 'fetch-description', {
+        ref: `${repo}:__grimoire`,
+        digest: 'sha256:comp2',
+        kind: 'desc',
+        files: [{ path: 'README.md', size: 20, content: 'fresh-readme-marker' }],
+      });
+      fs.rmSync(stub.argvLog, { force: true });
+      try {
+        await api.providers.details.prefetchInto(repo);
+        const fetches = argvLines(stub).filter((l) => l.startsWith('fetch'));
+        const probes = fetches.filter((l) => l.includes('--digest-only'));
+        const content = fetches.filter((l) => !l.includes('--digest-only'));
+        assert.strictEqual(
+          probes.length,
+          row.probes,
+          `companion digest probes spawned: ${fetches.join(' | ')}`,
+        );
+        const after = await cache.load(repo);
+        if (row.expected === 'unchanged') {
+          assert.strictEqual(content.length, 0, `no content fetch: ${fetches.join(' | ')}`);
+          assert.strictEqual(after?.readme, 'cached-readme-marker', 'cached content kept');
+          assert.strictEqual(after?.complete, true, 'a digest match is proof of completeness');
+        } else {
+          assert.ok(content.length > 0, `the full pipeline ran: ${fetches.join(' | ')}`);
+        }
+      } finally {
+        for (const f of ['fetch-desc-digest', 'fetch-description']) {
+          fs.rmSync(path.join(stub.dir, `${f}.json`), { force: true });
+        }
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('A2 / S-001: a partly-failed revalidate keeps PAINTING the cached README and logo', async function () {
+    // The shape whose absence let B1 ship: the cache was repaired by the fold
+    // and the open panel was repainted from the raw probe, so the user watched
+    // the README and logo vanish from a panel that had just shown them. Every
+    // assertion here is on what reached the webview, not on what is on disk.
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/keeps-paint';
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'keeps-paint',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'keeps-paint', has_description: true, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch-description', {
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
+      files: [
+        { path: 'README.md', size: 20, content: 'cached-readme-marker' },
+        { path: 'logo.png', size: 4, content: 'QUJD', encoding: 'base64' },
+      ],
+    });
+    try {
+      await api.providers.details.buildVM(repo); // a complete entry: README + logo
+      // The artifact rolls forward (so the revalidate takes the full pipeline)
+      // and the companion tag stops answering (so the fresh probe carries nulls
+      // for both docs).
+      canned(
+        stub,
+        'describe',
+        describeDoc(repo, {
+          name: 'keeps-paint',
+          has_description: true,
+          digest: 'sha256:art2',
+          tags: ['1.0.0', '2.0.0', 'latest'],
+        }),
+      );
+      canned(stub, 'fetch', {
+        ref: `${repo}:latest`,
+        digest: 'sha256:art2',
+        kind: 'skill',
+        name: 'keeps-paint',
+        vendor: 'canonical',
+        content: '# Descriptor',
+        files: [],
+      });
+      canned(stub, 'fetch-description', {
+        error: { code: 'network', exit: 75, message: 'registry unreachable' },
+      });
+      const { panel, posts, revalidates } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      assert.match(
+        posts[0]?.readmeMarkdown ?? '',
+        /cached-readme-marker/,
+        'the panel opened showing the cached README',
+      );
+      const last = posts[posts.length - 1];
+      // The new tag pins this to the repost the partly-failed probe produced —
+      // without it, an unrelated install-row repost of the untouched cached
+      // entry would satisfy the content assertions below for the wrong reason.
+      assert.ok(last?.tags?.includes('2.0.0'), `the last post is the fresh one: ${last?.tags}`);
+      assert.match(
+        last?.readmeMarkdown ?? '',
+        /cached-readme-marker/,
+        'the README the panel already showed is still painted',
+      );
+      assert.strictEqual(
+        last?.logoUri,
+        'data:image/png;base64,QUJD',
+        'the logo the panel already showed is still painted',
+      );
+      assert.deepStrictEqual(
+        revalidates,
+        ['checking', 'done'],
+        'a partly-failed probe settles done — the content is whole',
+      );
+    } finally {
+      fs.rmSync(path.join(stub.dir, 'fetch-description.json'), { force: true });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('A3 / S-002: an incomplete retry that recovers a logo reposts it', async function () {
+    // Both the cached entry and the retry are incomplete, so BOTH carry a null
+    // artifactDigest: the old digest-comparison repost gate compared null to
+    // null, called it unchanged and left the worse paint on screen while the
+    // cache quietly improved. paintSignature compares what the user sees.
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/recovers';
+    const cache = new DetailsCache(dir);
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'recovers', has_description: false, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'recovers',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [
+        { path: 'logo.png', size: 70 },
+        { path: 'CHANGELOG.md', size: 12 },
+      ],
+    });
+    const flaky = { error: { code: 'network', exit: 75, message: 'flaky' } };
+    canned(stub, 'fetch-logo', flaky);
+    canned(stub, 'fetch-changelog', flaky);
+    try {
+      await api.providers.details.buildVM(repo);
+      const before = await cache.load(repo);
+      assert.strictEqual(before?.logoUri, null, 'the first probe missed the logo');
+      assert.strictEqual(before?.artifactDigest, null, 'an incomplete probe pins no digest');
+      // The logo comes back; the changelog still fails, so this retry is
+      // incomplete too — and describe/fetch are byte-identical to the cached
+      // ones, so the logo is the ONLY thing that differs.
+      canned(stub, 'fetch-logo', {
+        ref: `${repo}:latest`,
+        digest: 'sha256:art1',
+        kind: 'skill',
+        name: 'recovers',
+        vendor: 'canonical',
+        path: 'logo.png',
+        content: LOGO_B64,
+        encoding: 'base64',
+      });
+      const { panel, posts, revalidates } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      assert.ok(posts.length >= 2, 'the recovered logo triggered a repost');
+      assert.strictEqual(posts[0]?.logoUri ?? null, null, 'the cached paint had no logo');
+      assert.strictEqual(
+        posts[posts.length - 1]?.logoUri,
+        `data:image/png;base64,${LOGO_B64}`,
+        'the recovered logo reached the panel',
+      );
+      const after = await cache.load(repo);
+      assert.strictEqual(after?.complete, false, 'still incomplete — the changelog is still gone');
+      assert.strictEqual(after?.artifactDigest, null, 'so it stays on the short retry window');
+      assert.deepStrictEqual(revalidates, ['checking', 'done']);
+    } finally {
+      for (const f of ['fetch-logo', 'fetch-changelog']) {
+        fs.rmSync(path.join(stub.dir, `${f}.json`), { force: true });
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('A5 / C-004: complete is true exactly when artifactDigest is not null', async function () {
+    // The third case of the invariant — a folded entry is never complete — is
+    // the failed-companion test above, which asserts complete:false with a null
+    // digest after a merge.
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const cache = new DetailsCache(dir);
+    const whole = 'ghcr.io/grimoire-rs/skills/whole-probe';
+    canned(
+      stub,
+      'describe',
+      describeDoc(whole, { name: 'whole-probe', has_description: false, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch', {
+      ref: `${whole}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'whole-probe',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    try {
+      await api.providers.details.buildVM(whole);
+      const good = await cache.load(whole);
+      assert.strictEqual(good?.complete, true, 'a probe that resolved everything is complete');
+      assert.strictEqual(good?.artifactDigest, 'sha256:art1', 'and pins the digest it saw');
+
+      // grim types FetchResult.digest as a string, but the extension never
+      // assumes a field is present. An entry with no digest has nothing a later
+      // revalidate could short-circuit on, so calling it complete would park
+      // unverifiable content on the six-hour window.
+      const digestless = 'ghcr.io/grimoire-rs/skills/no-digest';
+      canned(
+        stub,
+        'describe',
+        describeDoc(digestless, {
+          name: 'no-digest',
+          has_description: false,
+          digest: 'sha256:art1',
+        }),
+      );
+      canned(stub, 'fetch', {
+        ref: `${digestless}:latest`,
+        kind: 'skill',
+        name: 'no-digest',
+        vendor: 'canonical',
+        content: '# Descriptor',
+        files: [],
+      });
+      await api.providers.details.buildVM(digestless);
+      const entry = await cache.load(digestless);
+      assert.strictEqual(entry?.artifactDigest, null, 'no digest to pin');
+      assert.strictEqual(entry?.complete, false, 'and therefore never complete');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('A6 / C-010+C-011+C-012: a probe that failed outright cools down; forget clears it', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/cooling';
+    const down = { error: { code: 'network', exit: 75, message: 'registry unreachable' } };
+    canned(stub, 'describe', down);
+    canned(stub, 'fetch', down);
+    try {
+      await api.providers.details.prefetchInto(repo);
+      assert.strictEqual(
+        await new DetailsCache(dir).load(repo),
+        null,
+        'a total failure writes no entry',
+      );
+      // Nothing on disk to age, so without a cooldown the very next viewport
+      // report re-queues this repo — and under a 429 the retries are what keep
+      // the 429 coming.
+      assert.strictEqual(
+        await api.providers.details.isFresh(repo),
+        true,
+        'the sweep skips a cooling repo',
+      );
+      // A cooldown that silenced something the user just asked for would be a
+      // bug, not a saving: only the sweep consults isFresh.
+      fs.rmSync(stub.argvLog, { force: true });
+      const { panel } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      assert.ok(
+        argvLines(stub).some((l) => invokes(l, 'describe', repo)),
+        'a user-initiated open probes immediately regardless',
+      );
+      assert.strictEqual(
+        await api.providers.details.isFresh(repo),
+        true,
+        'that open failed too, so the repo is still cooling',
+      );
+      await api.providers.details.forget(repo);
+      assert.strictEqual(
+        await api.providers.details.isFresh(repo),
+        false,
+        'forget clears the cooldown — the next sweep probes again',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('A7 / C-009: a metadata-only revalidate stamps complete, promoting a legacy entry', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/legacy-entry';
+    const cache = new DetailsCache(dir);
+    // An entry written before the `complete` field existed: no verdict, so it
+    // reads incomplete and re-arms the 10-minute window on every single visit.
+    await cache.save(repo, {
+      version: CACHE_VERSION,
+      repo,
+      artifactDigest: 'sha256:art1',
+      companionDigest: null,
+      savedAt: new Date().toISOString(),
+      describe: describeDoc(repo, {
+        name: 'legacy-entry',
+        has_description: false,
+        digest: 'sha256:art1',
+      }) as unknown as DescribeResult,
+      fetch: null,
+      readme: 'legacy-readme-marker',
+      logoUri: null,
+      changelog: null,
+    });
+    assert.strictEqual((await cache.load(repo))?.complete, undefined, 'seeded with no verdict');
+    // Same manifest digest, one new tag → the metadata-only branch.
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, {
+        name: 'legacy-entry',
+        has_description: false,
+        digest: 'sha256:art1',
+        tags: ['1.0.0', '1.1.0', 'latest'],
+      }),
+    );
+    try {
+      const { panel } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      const after = await cache.load(repo);
+      assert.strictEqual(after?.complete, true, 'the digest match is the proof');
+      assert.strictEqual(after?.readme, 'legacy-readme-marker', 'content untouched');
+      // The verdict is what buys the six-hour window: aged an hour, this entry
+      // now reads fresh where an incomplete one is re-queued in minutes.
+      const name = fs.readdirSync(dir).find((f) => f.endsWith('.json')) as string;
+      const file = path.join(dir, name);
+      const aged = {
+        ...(JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>),
+        savedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      };
+      fs.writeFileSync(file, JSON.stringify(aged));
+      assert.strictEqual(
+        await api.providers.details.isFresh(repo),
+        true,
+        'promoted onto the six-hour window',
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('isFresh trusts a complete snapshot for hours, an incomplete one for minutes', async function () {
     this.timeout(20000);
     const api = await activateExtension();
     const dir = isolateCache(api);
     const cache = new DetailsCache(dir);
     const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const entry = (repo: string, complete: boolean): DetailsCacheEntry => ({
+    const entry = (repo: string, complete: boolean, savedAt = anHourAgo): DetailsCacheEntry => ({
       version: CACHE_VERSION,
       repo,
       artifactDigest: 'sha256:a',
       companionDigest: null,
-      savedAt: anHourAgo,
+      savedAt,
       describe: null,
       fetch: null,
       readme: null,
@@ -2815,11 +3437,20 @@ suite('extension integration', () => {
     });
     await cache.save('ghcr.io/o/skills/whole', entry('ghcr.io/o/skills/whole', true));
     await cache.save('ghcr.io/o/skills/partial', entry('ghcr.io/o/skills/partial', false));
+    // Edge 5: a future-dated savedAt (a clock skew, a hand-edited file) used to
+    // read fresh until the clock caught up — immortal for as long as the skew.
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await cache.save('ghcr.io/o/skills/future', entry('ghcr.io/o/skills/future', true, tomorrow));
     assert.strictEqual(await api.providers.details.isFresh('ghcr.io/o/skills/whole'), true);
     assert.strictEqual(
       await api.providers.details.isFresh('ghcr.io/o/skills/partial'),
       false,
       'a failed probe is re-queued in minutes, not hours',
+    );
+    assert.strictEqual(
+      await api.providers.details.isFresh('ghcr.io/o/skills/future'),
+      false,
+      'a future-dated entry reads stale, not immortal',
     );
   });
 
