@@ -1,0 +1,64 @@
+/* The two artifact-icon fallbacks, shared by every surface that shows one:
+   browse cards and rows in the sidebar, the header in the details panel. One
+   file so the two webviews cannot drift into different fallbacks for the same
+   artifact — the tint is a stable hash of the repo (model.avatarTint), so the
+   same package keeps the same colour wherever it appears.
+
+   `.monogram` stands in for a logo the publisher never shipped; `.broken-image`
+   for one that shipped and could not load (webview/brokenImage.ts). Same chip
+   geometry, deliberately: they are two states of one slot. The broken state is
+   outlined rather than filled and carries no tint — a fallback that failed
+   should read as emptier than a fallback that is simply the default.
+
+   Geometry is the caller's: each surface sizes its own box and font-size, this
+   only supplies the skin. */
+
+.monogram {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--avatar-tint) 22%, transparent);
+  color: var(--avatar-tint);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.broken-image.codicon {
+  border-radius: 3px;
+  /* currentColor, not --vscode-widget-border: that token is near-invisible on
+     most themes, and the element-wide opacity below faded what was left of it.
+     Tying the outline to the glyph keeps the two equally legible at any size. */
+  border: 2px solid currentColor;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  box-sizing: border-box;
+}
+
+.avatar-0 {
+  --avatar-tint: var(--vscode-charts-blue, #3794ff);
+}
+.avatar-1 {
+  --avatar-tint: var(--vscode-charts-purple, #c586c0);
+}
+.avatar-2 {
+  --avatar-tint: var(--vscode-charts-green, #89d185);
+}
+.avatar-3 {
+  --avatar-tint: var(--vscode-charts-yellow, #cca700);
+}
+.avatar-4 {
+  --avatar-tint: var(--vscode-charts-red, #f14c4c);
+}
+/* charts-orange reads too dark as a tint on dark themes — the same 50% pull
+   toward the theme foreground the bundle kind tint uses. */
+.avatar-5 {
+  --avatar-tint: color-mix(
+    in srgb,
+    var(--vscode-charts-orange, #ce9178) 50%,
+    var(--vscode-foreground) 50%
+  );
+}

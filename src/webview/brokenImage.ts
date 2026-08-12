@@ -24,11 +24,11 @@ export function armBrokenImages(root: HTMLElement): void {
         return;
       }
       const placeholder = document.createElement('span');
-      // circle-slash, not file-media: the codicon set has no broken-image
-      // glyph, and the file-media one reads as a document rather than as a
-      // failure. A slashed circle standing where the image would be says "this
-      // did not load" without pretending to be a torn-image icon.
-      placeholder.className = 'codicon codicon-circle-slash broken-image';
+      // The codicon set has no broken-image glyph; file-media (an image file)
+      // in the slot an image should have filled reads as the missing picture
+      // itself, where an error glyph would overstate it — muted by
+      // .broken-image, since absent publisher content is not a fault here.
+      placeholder.className = 'codicon codicon-file-media broken-image';
       // The src is the useful part of the diagnosis (an unpacked asset name, or
       // a remote host the CSP refused), so keep it reachable on hover. Set as a
       // property, never markup — this text is publisher-controlled.

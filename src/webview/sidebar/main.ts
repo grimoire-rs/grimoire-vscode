@@ -1,4 +1,5 @@
 // Sidebar webview entry: dumb event wiring over the pure lit renderers.
+import '../monogram.css';
 import './sidebar.css';
 import '@vscode-elements/elements/dist/vscode-button/index.js';
 import '@vscode-elements/elements/dist/vscode-textfield/index.js';

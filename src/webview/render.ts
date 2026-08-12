@@ -1337,9 +1337,13 @@ export function revalidateIndicator(
 const revalidateHost = html`<div class="revalidate-indicator" id="revalidate-indicator"></div>`;
 
 export function renderDetails(vm: DetailsVM): TemplateResult {
+  // No logo → the same monogram chip the sidebar rows show, tinted by the same
+  // hash of the same repo, NOT the kind tile: one artifact must not have two
+  // different faces depending on which surface you look at it from. The kind is
+  // already stated by the badge beside the name.
   const icon = vm.logoUri
     ? html`<div class="header-icon"><img class="header-logo" src="${vm.logoUri}" alt=""/></div>`
-    : kindTile(vm.kind, 'header-icon');
+    : html`<div class="header-icon monogram avatar-${avatarTint(vm.repo)}" aria-hidden="true">${monogram(vm.name)}</div>`;
   const nameClass = vm.deprecated ? 'header-name struck' : 'header-name';
   // While an action runs, or before the real VM has landed, the header actions
   // are inert (CSS) — this stops a double click starting a second grim command

@@ -1,4 +1,5 @@
 // Details webview entry: renders the artifact page and the markdown bodies.
+import '../monogram.css';
 import './details.css';
 import '@vscode-elements/elements/dist/vscode-button/index.js';
 import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';

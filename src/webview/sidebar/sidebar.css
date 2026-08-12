@@ -137,21 +137,36 @@ body {
   object-fit: contain;
 }
 
-/* Stands in for an image that could not load (see webview/brokenImage.ts).
-   Muted, so a publisher's unpacked asset reads as missing content rather than
-   as an extension error. Sized per slot — it inherits nothing from the <img>
-   it replaced. */
-.broken-image.codicon {
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.65;
+/* Skin in webview/monogram.css, beside the monogram it is the failed twin of.
+   Sized per slot here — it inherits nothing from the <img> it replaced.
+
+   In a logo slot the placeholder takes over the whole box and centres itself,
+   rather than relying on the slot to centre it: it stands in for an <img> that
+   sized itself (width/height 100%, or max-width/height), and a bare inline
+   glyph inherits none of that — it lands wherever the box's own alignment
+   happens to put it, which on some slots is the top-left corner.
+   .kind-tile, not .card-tile: the logo variant is `.kind-tile.has-logo`. */
+.kind-tile .broken-image.codicon,
+.row-logo .broken-image.codicon {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.card-tile .broken-image.codicon {
+.kind-tile .broken-image.codicon {
   font-size: 18px;
 }
 
+.kind-tile.sm .broken-image.codicon {
+  font-size: 12px;
+}
+
+/* A 16px slot cannot carry the 2px outline — it would eat the glyph. */
 .row-logo .broken-image.codicon {
   font-size: 12px;
+  border-width: 1px;
 }
 
 .kind-badge {
@@ -884,43 +899,12 @@ vscode-progress-bar {
   border-radius: 2px;
 }
 
-/* No logo published: a monogram chip in one of six tints, picked by a stable
-   hash of the repo (model.avatarTint). Same geometry as the logo it stands in
-   for, so a mixed list keeps one column. */
+/* The chip itself lives in webview/monogram.css, shared with the details
+   header so one artifact never gets two different fallbacks. Only its size in
+   this surface is set here: same geometry as the logo it stands in for, so a
+   mixed list keeps one column. */
 .monogram {
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--avatar-tint) 22%, transparent);
-  color: var(--avatar-tint);
   font-size: 8px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0.02em;
-  user-select: none;
-}
-
-.avatar-0 {
-  --avatar-tint: var(--vscode-charts-blue, #3794ff);
-}
-.avatar-1 {
-  --avatar-tint: var(--vscode-charts-purple, #c586c0);
-}
-.avatar-2 {
-  --avatar-tint: var(--vscode-charts-green, #89d185);
-}
-.avatar-3 {
-  --avatar-tint: var(--vscode-charts-yellow, #cca700);
-}
-.avatar-4 {
-  --avatar-tint: var(--vscode-charts-red, #f14c4c);
-}
-/* charts-orange reads too dark as a tint on dark themes — the same 50% pull
-   toward the theme foreground the bundle kind tint uses. */
-.avatar-5 {
-  --avatar-tint: color-mix(
-    in srgb,
-    var(--vscode-charts-orange, #ce9178) 50%,
-    var(--vscode-foreground) 50%
-  );
 }
 
 .kind-tile.sm .codicon {

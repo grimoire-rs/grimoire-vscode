@@ -108,6 +108,13 @@ body {
   width: var(--header-icon);
   height: var(--header-icon);
   border-radius: 8px;
+  /* Centres whatever sits in the box. The logo <img> centred itself through
+     its own max-width/height; a replacement placeholder has no such rule and
+     would otherwise sit top-left. Inert for the kind-tile variant of this
+     class, which is already a centring flex box. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .header-icon .codicon {
@@ -120,17 +127,25 @@ body {
   border-radius: 8px;
 }
 
-/* Stands in for an image that could not load (see webview/brokenImage.ts) —
-   most often a README asset the publisher never packed into the description
-   companion, or a remote URL the CSP blocks. Muted: it is missing content, not
-   an extension error. */
-.broken-image.codicon {
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.65;
+/* The no-logo chip at header scale (skin + tints: webview/monogram.css). Same
+   corner radius as a real logo, so the box does not change shape with it. */
+.header-icon.monogram {
+  font-size: calc(var(--header-icon) * 0.3);
+  border-radius: 8px;
 }
 
+/* Skin in webview/monogram.css. Fills and centres itself in the header box,
+   for the reason the sidebar's logo slots do — see the matching rule there.
+   The 8px radius matches a real logo and the monogram, so the box keeps its
+   shape whichever of the three lands in it. */
 .header-icon .broken-image.codicon {
-  font-size: calc(var(--header-icon) * 0.6);
+  border-radius: 8px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--header-icon) * 0.4);
 }
 
 /* Inline in a README/CHANGELOG body: big enough to be legible as a deliberate
