@@ -122,6 +122,18 @@ on disk, i.e. Installed shows registries Browse does not.
 Both rig launch configs set that variable. Plain **Run Extension** does not — use
 a rig config, or the local registries stay invisible to Browse.
 
+Outside the rig (a real workspace pointed at a plain-HTTP registry) the same
+variable goes in the `grimoire.extraEnv` setting, which is passed to every grim
+child process:
+
+```jsonc
+"grimoire.extraEnv": { "GRIM_INSECURE_REGISTRIES": "localhost:5050" }
+```
+
+There is no dedicated setting for it, and there should not be: insecure-ness is
+a property of the registry, not of the editor. It belongs in the `[[registries]]`
+entry once grim carries it — see `../grimoire/.agents/handover_insecure_registry_config.md`.
+
 ## 4. Producing the interesting states
 
 ```sh
