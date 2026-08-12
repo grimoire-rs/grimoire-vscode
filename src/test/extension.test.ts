@@ -25,6 +25,7 @@ import { addArgs, updateArgs, type ContextInfo, type GrimResult, type Scope } fr
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
 import { offerForcedRetry } from '../views/forceRetry';
+import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 
 const isWindows = process.platform === 'win32';
 
@@ -2642,6 +2643,84 @@ suite('extension integration', () => {
     } finally {
       fs.rmSync(path.join(stub.dir, 'fetch-description.json'), { force: true });
     }
+  });
+
+  test('a failed companion re-probe keeps the cached logo and marks the entry incomplete', async function () {
+    // The reported bug: logos show after opening the details panel, then vanish
+    // from the browse list. A re-probe whose companion fetch failed used to
+    // overwrite the good snapshot with nulls AND stamp it fresh for six hours.
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/flaky';
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'flaky',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'flaky', has_description: true, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch-description', {
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
+      files: [{ path: 'logo.png', size: 4, content: 'QUJD', encoding: 'base64' }],
+    });
+    try {
+      await api.providers.details.buildVM(repo);
+      const cache = new DetailsCache(dir);
+      const good = await cache.load(repo);
+      assert.strictEqual(good?.logoUri, 'data:image/png;base64,QUJD', 'logo cached first');
+      assert.strictEqual(good?.complete, true, 'a whole probe is complete');
+
+      // The companion tag stops answering; everything else still works.
+      canned(stub, 'fetch-description', {
+        error: { code: 'network', exit: 75, message: 'registry unreachable', retryable: true },
+      });
+      await api.providers.details.prefetchInto(repo);
+      const after = await cache.load(repo);
+      assert.strictEqual(after?.logoUri, good?.logoUri, 'logo NOT withdrawn by a failed probe');
+      assert.strictEqual(after?.complete, false, 'entry marked incomplete');
+      assert.strictEqual(after?.artifactDigest, null, 'no digest to short-circuit a retry on');
+    } finally {
+      fs.rmSync(path.join(stub.dir, 'fetch-description.json'), { force: true });
+    }
+  });
+
+  test('isFresh trusts a complete snapshot for hours, an incomplete one for minutes', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const dir = isolateCache(api);
+    const cache = new DetailsCache(dir);
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const entry = (repo: string, complete: boolean): DetailsCacheEntry => ({
+      version: CACHE_VERSION,
+      repo,
+      artifactDigest: 'sha256:a',
+      companionDigest: null,
+      savedAt: anHourAgo,
+      describe: null,
+      fetch: null,
+      readme: null,
+      logoUri: null,
+      changelog: null,
+      complete,
+    });
+    await cache.save('ghcr.io/o/skills/whole', entry('ghcr.io/o/skills/whole', true));
+    await cache.save('ghcr.io/o/skills/partial', entry('ghcr.io/o/skills/partial', false));
+    assert.strictEqual(await api.providers.details.isFresh('ghcr.io/o/skills/whole'), true);
+    assert.strictEqual(
+      await api.providers.details.isFresh('ghcr.io/o/skills/partial'),
+      false,
+      'a failed probe is re-queued in minutes, not hours',
+    );
   });
 
   test('describe without has_description fetches no companion — in-tree content only', async function () {

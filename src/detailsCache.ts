@@ -30,6 +30,39 @@ export interface DetailsCacheEntry {
   readme: string | null;
   logoUri: string | null;
   changelog: string | null;
+  /** False when this snapshot is missing a doc the artifact is known to
+   *  publish — a probe that partly failed. It still paints (merged content is
+   *  never worse than what was there), but it gets the SHORT retry TTL instead
+   *  of the full one, so a transient failure costs minutes, not hours.
+   *  Optional: an entry written before this field reads as incomplete, which
+   *  re-probes it once and then settles. */
+  complete?: boolean;
+}
+
+/** Folds a fresh snapshot onto the cached one so a probe can only ever ADD
+ *  content. A partly-failed pipeline yields nulls for the pieces it could not
+ *  resolve (a companion fetch that failed leaves `logoUri: null`), and writing
+ *  those over a good entry is what made browse-list logos vanish: the null was
+ *  stamped fresh and the row was skipped until the TTL expired. Deliberate
+ *  eviction is still {@link DetailsCache.forget} / a CACHE_VERSION bump.
+ *
+ *  `fetch` and the digests always come from the fresh run — they describe the
+ *  probe that just happened, and a stale digest would defeat the freshness
+ *  check itself. */
+export function mergeEntry(
+  cached: DetailsCacheEntry | null,
+  fresh: DetailsCacheEntry,
+): DetailsCacheEntry {
+  if (!cached) {
+    return fresh;
+  }
+  return {
+    ...fresh,
+    describe: fresh.describe ?? cached.describe,
+    readme: fresh.readme ?? cached.readme,
+    logoUri: fresh.logoUri ?? cached.logoUri,
+    changelog: fresh.changelog ?? cached.changelog,
+  };
 }
 
 /** What a cached snapshot lends a sidebar card: the artifact logo and the

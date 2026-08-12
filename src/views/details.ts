@@ -24,6 +24,7 @@ import {
   cardMetaOf,
   DetailsCache,
   type DetailsCacheEntry,
+  mergeEntry,
 } from '../detailsCache';
 import type { CatalogService } from '../catalog';
 import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
@@ -68,13 +69,21 @@ const LOGO_MIME: Record<string, string> = {
   svg: 'image/svg+xml',
 };
 
-/** How long a cached snapshot is trusted before the browse-list prefetch
- *  re-probes it. A plain "is it cached?" filter made the FIRST snapshot immortal:
- *  a package that gained a logo (or README) after it was cached never showed one
- *  on its card, because the prefetcher skipped every repo that had any entry. The
- *  re-probe is one manifest describe per repo (see {@link DetailsManager.prefetchInto}),
- *  not a blob download. ponytail: fixed TTL, not per-repo tracking. */
+/** How long a COMPLETE cached snapshot is trusted before the browse-list
+ *  prefetch re-probes it. A plain "is it cached?" filter made the FIRST snapshot
+ *  immortal: a package that gained a logo (or README) after it was cached never
+ *  showed one on its card, because the prefetcher skipped every repo that had any
+ *  entry. The re-probe is one manifest describe per repo (see
+ *  {@link DetailsManager.prefetchInto}), not a blob download. */
 const PREFETCH_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** The same trust window for a snapshot whose probe partly failed
+ *  (DetailsCacheEntry.complete === false). A failed probe used to be stamped
+ *  exactly as fresh as a good one, so one network hiccup hid a logo for six
+ *  hours — the reported "logos appear on click, then vanish". Missing content
+ *  is the case that most deserves a retry, so it gets the shortest one that is
+ *  still polite to the registry. */
+const RETRY_TTL_MS = 10 * 60 * 1000;
 
 const KIND_LABELS: Record<string, string> = {
   skill: 'Skill',
@@ -791,20 +800,36 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return { describe, fetchValue, fetchError, companion };
   }
 
-  /** True when the artifact ADVERTISES a doc in its file list that resolved to
-   *  null — i.e. the `--path` fetch failed, since absence and failure are both
-   *  null. Caching that under a valid digest pins the miss to that digest
-   *  forever: every later revalidate short-circuits on the matching digest and
-   *  never retries, so one transient error hides a logo/README for good. The
-   *  caller nulls the digest instead — content still paints instantly from
-   *  cache, but the pipeline re-runs until the doc actually lands. */
-  private incompleteDocs(fetchValue: FetchResult, docs: CompanionDocs): boolean {
+  /** True when this probe did NOT resolve everything the artifact is known to
+   *  publish. Three ways that happens, all of them a failed sub-fetch rather
+   *  than an artifact with nothing to show:
+   *
+   *  - a doc ADVERTISED in the in-tree file list resolved to null (the `--path`
+   *    fetch failed — absence and failure are both null);
+   *  - `describe` says there IS a description companion but the companion fetch
+   *    failed, so its digest is null. The companion logo is NOT in the artifact's
+   *    file list, so the check above cannot see it — this is the case that let a
+   *    null logo be cached as a good snapshot;
+   *  - `describe` itself failed, so we do not even know what to expect.
+   *
+   *  Caching an incomplete snapshot under a valid digest would pin the miss to
+   *  that digest forever: every later revalidate short-circuits on the matching
+   *  digest and never retries. The caller nulls the digest and marks the entry
+   *  incomplete instead — content still paints instantly from cache, and the
+   *  short retry TTL re-probes it in minutes. */
+  private incompleteDocs(
+    describe: DescribeResult | null,
+    fetchValue: FetchResult,
+    companion: CompanionDocs & { companionDigest: string | null },
+  ): boolean {
     const missed = (names: string[], value: string | null): boolean =>
       value === null && findAssetPath(fetchValue.files, names) !== null;
     return (
-      missed(LOGO_NAMES, docs.logoUri) ||
-      missed(['readme.md'], docs.readme) ||
-      missed(['changelog.md'], docs.changelog)
+      describe === null ||
+      (describe.has_description === true && companion.companionDigest === null) ||
+      missed(LOGO_NAMES, companion.logoUri) ||
+      missed(['readme.md'], companion.readme) ||
+      missed(['changelog.md'], companion.changelog)
     );
   }
 
@@ -814,22 +839,23 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     fetchValue: FetchResult | null,
     companion: CompanionDocs & { companionDigest: string | null },
   ): DetailsCacheEntry | null {
-    return fetchValue
-      ? {
-          version: CACHE_VERSION,
-          repo,
-          artifactDigest: this.incompleteDocs(fetchValue, companion)
-            ? null
-            : (fetchValue.digest ?? null),
-          companionDigest: companion.companionDigest,
-          savedAt: new Date().toISOString(),
-          describe,
-          fetch: fetchValue,
-          readme: companion.readme,
-          logoUri: companion.logoUri,
-          changelog: companion.changelog,
-        }
-      : null;
+    if (!fetchValue) {
+      return null;
+    }
+    const incomplete = this.incompleteDocs(describe, fetchValue, companion);
+    return {
+      version: CACHE_VERSION,
+      repo,
+      artifactDigest: incomplete ? null : (fetchValue.digest ?? null),
+      companionDigest: companion.companionDigest,
+      savedAt: new Date().toISOString(),
+      describe,
+      fetch: fetchValue,
+      readme: companion.readme,
+      logoUri: companion.logoUri,
+      changelog: companion.changelog,
+      complete: !incomplete,
+    };
   }
 
   /** The full open pipeline. Returns the VM and the cache entry to persist (null
@@ -860,10 +886,14 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       const live = await this.describe(repo);
       if (live && (await this.contentUnchanged(repo, cached, live))) {
         // Unchanged: keep the content, refresh the metadata and the TTL stamp.
+        // Complete by construction — contentUnchanged matched BOTH digests, so
+        // every doc this artifact publishes is accounted for. Stating it also
+        // promotes a pre-`complete` entry off the short retry window.
         await this.saveEntry(repo, {
           ...cached,
           describe: live,
           savedAt: new Date().toISOString(),
+          complete: true,
         });
         return;
       }
@@ -892,14 +922,23 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       .catch((e) => this.output.appendLine(`details cache forget failed for ${repo}: ${String(e)}`));
   }
 
-  /** The prefetch skip filter: true only for an entry younger than
-   *  {@link PREFETCH_TTL_MS}. An older one is re-queued (cheap digest probe
-   *  first) — "has an entry" alone made a stale snapshot immortal, so an
-   *  artifact that published a logo after its first prefetch kept a codicon
-   *  tile until the entry was evicted. An unparsable savedAt reads as stale. */
+  /** The prefetch skip filter: true only for an entry still inside its TTL. An
+   *  older one is re-queued (cheap digest probe first) — "has an entry" alone
+   *  made a stale snapshot immortal, so an artifact that published a logo after
+   *  its first prefetch kept a codicon tile until the entry was evicted. An
+   *  unparsable savedAt reads as stale.
+   *
+   *  The window depends on how the last probe went: a complete snapshot is
+   *  trusted for {@link PREFETCH_TTL_MS}, one that missed a doc only for
+   *  {@link RETRY_TTL_MS}. An entry predating the flag has no `complete` and
+   *  takes the short window — it re-probes once, then settles. */
   async isFresh(repo: string): Promise<boolean> {
     const entry = await this.cache.load(repo);
-    return entry !== null && Date.now() - Date.parse(entry.savedAt) < PREFETCH_TTL_MS;
+    if (entry === null) {
+      return false;
+    }
+    const ttl = entry.complete === true ? PREFETCH_TTL_MS : RETRY_TTL_MS;
+    return Date.now() - Date.parse(entry.savedAt) < ttl;
   }
 
   /** Full-pipeline VM, persisting the snapshot for a future instant paint. Used
@@ -914,11 +953,17 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return vm;
   }
 
+  /** The single save choke point — so the merge below covers every writer,
+   *  present and future. A probe that partly failed carries nulls for the parts
+   *  it could not resolve; {@link mergeEntry} keeps the cached content under
+   *  them, and the sidebar repost fires off the MERGED entry, so a good logo is
+   *  never withdrawn from a browse card by a failed re-probe. */
   private async saveEntry(repo: string, entry: DetailsCacheEntry): Promise<void> {
+    const merged = mergeEntry(await this.cache.load(repo).catch(() => null), entry);
     await this.cache
-      .save(repo, entry)
+      .save(repo, merged)
       .catch((e) => this.output.appendLine(`details cache save failed for ${repo}: ${String(e)}`));
-    if (cardMetaOf(entry)) {
+    if (cardMetaOf(merged)) {
       this.onCardMetaCached();
     }
   }

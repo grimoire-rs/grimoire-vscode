@@ -3,7 +3,12 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
+import {
+  CACHE_VERSION,
+  DetailsCache,
+  type DetailsCacheEntry,
+  mergeEntry,
+} from '../detailsCache';
 import type { DescribeResult } from '../grim';
 
 /** A describe payload carrying just the field the card enrichment reads. */
@@ -180,5 +185,79 @@ suite('DetailsCache', () => {
     const file = fileFor(dir, 'ghcr.io/o/skills/asked');
     fs.writeFileSync(file, JSON.stringify(entry('ghcr.io/o/skills/other')));
     assert.strictEqual(await cache.load('ghcr.io/o/skills/asked'), null);
+  });
+
+  test('the complete flag round-trips', async () => {
+    const cache = new DetailsCache(dir);
+    const e = entry('ghcr.io/o/skills/x', { complete: false });
+    await cache.save(e.repo, e);
+    assert.strictEqual((await cache.load(e.repo))?.complete, false);
+  });
+});
+
+suite('mergeEntry', () => {
+  const repo = 'ghcr.io/o/skills/x';
+
+  test('a probe that resolved nothing keeps the cached content', () => {
+    // The reported bug: describe or the companion fetch fails, the pipeline
+    // yields nulls, and the browse card's logo disappears.
+    const cached = entry(repo, {
+      logoUri: 'data:image/png;base64,AAA',
+      readme: '# Real',
+      changelog: '# Changes',
+      describe: describedAs('1.2.3'),
+      complete: true,
+    });
+    const degraded = entry(repo, {
+      logoUri: null,
+      readme: null,
+      changelog: null,
+      describe: null,
+      complete: false,
+    });
+    const merged = mergeEntry(cached, degraded);
+    assert.strictEqual(merged.logoUri, cached.logoUri, 'logo survived');
+    assert.strictEqual(merged.readme, cached.readme, 'readme survived');
+    assert.strictEqual(merged.changelog, cached.changelog, 'changelog survived');
+    assert.deepStrictEqual(merged.describe, cached.describe, 'describe survived');
+  });
+
+  test('the fresh probe still owns completeness, digests and savedAt', () => {
+    // Content is merged, provenance is not: a stale digest would let the next
+    // revalidate short-circuit on a snapshot that was never re-verified, and a
+    // stale `complete` would put a failed probe back on the six-hour window.
+    const cached = entry(repo, {
+      artifactDigest: 'sha256:old',
+      companionDigest: 'sha256:oldc',
+      savedAt: '2020-01-01T00:00:00.000Z',
+      logoUri: 'data:image/png;base64,AAA',
+      complete: true,
+    });
+    const fresh = entry(repo, {
+      artifactDigest: null,
+      companionDigest: null,
+      savedAt: '2026-01-01T00:00:00.000Z',
+      logoUri: null,
+      complete: false,
+    });
+    const merged = mergeEntry(cached, fresh);
+    assert.strictEqual(merged.artifactDigest, null);
+    assert.strictEqual(merged.companionDigest, null);
+    assert.strictEqual(merged.savedAt, fresh.savedAt);
+    assert.strictEqual(merged.complete, false);
+    assert.strictEqual(merged.logoUri, cached.logoUri, 'content still merged');
+  });
+
+  test('fresh content wins over cached content', () => {
+    const cached = entry(repo, { logoUri: 'data:image/png;base64,OLD', readme: '# Old' });
+    const fresh = entry(repo, { logoUri: 'data:image/png;base64,NEW', readme: '# New' });
+    const merged = mergeEntry(cached, fresh);
+    assert.strictEqual(merged.logoUri, 'data:image/png;base64,NEW');
+    assert.strictEqual(merged.readme, '# New');
+  });
+
+  test('no cached entry returns the fresh one unchanged', () => {
+    const fresh = entry(repo, { logoUri: null });
+    assert.deepStrictEqual(mergeEntry(null, fresh), fresh);
   });
 });
