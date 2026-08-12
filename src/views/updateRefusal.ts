@@ -86,18 +86,25 @@ export async function offerModifiedRefusal(
  * The output line is written here and is not optional: returning true skips the
  * caller's reportGrimFailure, which is what would otherwise have logged the very
  * line this dialog's own "Show Output" button sends the user to.
+ *
+ * The dialog is NOT awaited, unlike offerForcedRetry's. That one is a confirm:
+ * the retry it gates cannot proceed until the user answers. This one only
+ * informs, so nothing downstream needs its answer — and awaiting it would hold
+ * the busy lock and watcher suspension of a scope-wide install open for as long
+ * as the notification sits unclicked, which is the shape Update All was just
+ * fixed to stop doing. The button handlers still run when the user gets to them.
  */
-export async function offerInstallRefusal(
+export function offerInstallRefusal(
   result: FailedResult,
   args: string[],
   scope: Scope,
   scopes: ScopeService,
   output: vscode.OutputChannel,
-): Promise<boolean> {
+): boolean {
   if (result.kind !== 'error' || args[0] !== 'install' || !isForceable(result)) {
     return false;
   }
   output.appendLine(`error: grim install --${scope}: ${result.message}`);
-  await offerModifiedRefusal(scopes, scope, 'install', result.message);
+  void offerModifiedRefusal(scopes, scope, 'install', result.message);
   return true;
 }

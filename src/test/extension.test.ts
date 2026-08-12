@@ -21,9 +21,10 @@ import type {
   SidebarState,
 } from '../webview/protocol';
 import { type GrimoireApi } from '../extension';
-import { offerModifiedRefusal } from '../views/updateRefusal';
+import { offerInstallRefusal, offerModifiedRefusal } from '../views/updateRefusal';
 import {
   addArgs,
+  installArgs,
   updateArgs,
   type ContextInfo,
   type DescribeResult,
@@ -1596,6 +1597,116 @@ suite('extension integration', () => {
     const [call] = calls;
     assert.ok(call?.[0]?.includes('one, two'), `names every modified artifact: ${call?.[0]}`);
     assert.ok(!call?.some((c) => c.startsWith('Open ')), 'no single artifact to open');
+  });
+
+  // --- Complete Install's refusal (offerInstallRefusal) ---
+
+  /** A scope with exactly one locally-modified artifact, enough for the
+   *  named-and-openable branch. */
+  function modifiedScopes(): ScopeService {
+    return {
+      cachedSnapshot: () => ({
+        project: {
+          status: [{ kind: 'skill', name: 'demo', state: 'modified', pinned: null, outputs: [] }],
+          declared: { 'skill:demo': 'ghcr.io/o/skills/demo:1.0.0' },
+        },
+      }),
+    } as unknown as ScopeService;
+  }
+
+  function captureErrors(): { calls: string[][]; restore: () => void } {
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const calls: string[][] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      calls.push([message, ...items]);
+      return undefined;
+    };
+    return { calls, restore: () => (window.showErrorMessage = original) };
+  }
+
+  const forceableInstallRefusal = {
+    ok: false as const,
+    kind: 'error' as const,
+    code: 'data',
+    exitCode: 65,
+    reason: 'modified',
+    forceable: true,
+    message: 'installed artifact was modified locally; rerun with --force to overwrite',
+  };
+
+  test('offerInstallRefusal handles a refused Complete Install: logs, names it, says "install"', async () => {
+    const lines: string[] = [];
+    const output = { appendLine: (l: string) => lines.push(l) } as unknown as vscode.OutputChannel;
+    const errors = captureErrors();
+    let handled: boolean;
+    try {
+      handled = offerInstallRefusal(
+        forceableInstallRefusal,
+        installArgs(),
+        'project',
+        modifiedScopes(),
+        output,
+      );
+      // The dialog is deliberately not awaited by the caller, so let the
+      // fire-and-forget continuation reach showErrorMessage before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      errors.restore();
+    }
+    assert.strictEqual(handled, true, 'the refusal is handled, not a fall-through');
+    // Returning true skips the caller's reportGrimFailure, so this helper owes
+    // the output line its own "Show Output" button sends the user to.
+    assert.ok(
+      lines.some((l) => l.includes('grim install --project') && l.includes('modified locally')),
+      `logged the failure itself: ${JSON.stringify(lines)}`,
+    );
+    const [call] = errors.calls;
+    assert.ok(call, 'an error was surfaced');
+    // "install stopped", never "update stopped" — the operation verb is the
+    // whole reason offerModifiedRefusal takes one.
+    assert.ok(call[0]?.includes('install stopped'), `names the operation: ${call[0]}`);
+    assert.ok(call.includes('Open demo'), `offers to open the artifact: ${call.join(' | ')}`);
+    // The BUTTONS, not the message — grim's own text says "rerun with --force
+    // to overwrite" and is quoted verbatim on purpose.
+    assert.ok(
+      !call.slice(1).some((c) => c.toLowerCase().includes('overwrite')),
+      'still no one-click force for a scope-wide call',
+    );
+  });
+
+  test('offerInstallRefusal declines everything that is not a forceable install', async () => {
+    const output = { appendLine: () => {} } as unknown as vscode.OutputChannel;
+    const errors = captureErrors();
+    const scopes = modifiedScopes();
+    let update: boolean;
+    let plain: boolean;
+    try {
+      // Right refusal, wrong verb: `grim update`'s own refusal belongs to
+      // extension.ts's updateAll handler, which passes operation:'update'.
+      update = offerInstallRefusal(
+        forceableInstallRefusal,
+        updateArgs(),
+        'project',
+        scopes,
+        output,
+      );
+      // Right verb, ordinary failure: no forceable flag, so this is not the
+      // locally-modified refusal and must reach the plain error toast.
+      plain = offerInstallRefusal(
+        { ok: false, kind: 'error', code: 'data', exitCode: 65, message: 'registry unreachable' },
+        installArgs(),
+        'project',
+        scopes,
+        output,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      errors.restore();
+    }
+    assert.strictEqual(update, false, 'a non-install argv falls through');
+    assert.strictEqual(plain, false, 'a non-forceable install failure falls through');
+    assert.deepStrictEqual(errors.calls, [], 'neither case opened a dialog');
   });
 
   test('updateAll stays silent when no row reaps or keeps-modified a client output (autodetect)', async () => {

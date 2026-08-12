@@ -633,15 +633,17 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
           // touched) and offerForcedRetry declines it. Name the modified
           // artifacts instead of leaving a bare toast about one the user has
           // never heard of. After offerForcedRetry, so anchor-escape still wins.
-          if (await offerInstallRefusal(result, args, scope, this.scopes, this.output)) {
-            await this.postVM(repo, panel);
-            return;
+          const refused = offerInstallRefusal(result, args, scope, this.scopes, this.output);
+          if (!refused) {
+            // Name the failing step — an init→add sequence can fail halfway.
+            reportGrimFailure(result, this.output, `grim ${args[0]}`);
           }
-          // Name the failing step — an init→add sequence can fail halfway.
-          reportGrimFailure(result, this.output, `grim ${args[0]}`);
           // An earlier step may have changed state (init created grimoire.toml),
-          // so refresh the views even on failure, then clear the busy state.
-          if (last !== undefined) {
+          // so refresh the views even on failure, then clear the busy state. A
+          // refused scope-wide install counts as such a change on its own: grim
+          // stops at the first modified artifact, having already written every
+          // one it reached before it.
+          if (last !== undefined || refused) {
             await this.onDidChange();
           }
           await this.postVM(repo, panel);

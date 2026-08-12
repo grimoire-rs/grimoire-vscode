@@ -330,7 +330,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // tags and roll the lock forward, a version change dressed as a repair.
         // No --force affordance either (offerForcedRetry only appends it for
         // add/update): forcing a whole-lock install would discard local edits
-        // to unrelated artifacts. A refusal falls through to the error toast.
+        // to unrelated artifacts. A refusal is named by offerInstallRefusal in
+        // runActionInner, which lists the modified artifacts and offers a way in.
         await this.runAction([installArgs()], message.scope, 'Completing install…');
         return;
       case 'switch':
@@ -504,11 +505,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // and offerForcedRetry declines it. Name the modified artifacts instead of
       // leaving a bare toast about one the user has never heard of. After
       // offerForcedRetry, so an anchor-escape refusal still takes that branch.
-      if (await offerInstallRefusal(result, args, scope, this.scopes, this.output)) {
-        return;
+      // Falls through rather than returning: the notice is not awaited, and the
+      // refreshAll below is owed either way — a scope-wide install that stopped
+      // at a modified artifact may already have materialized the ones before it.
+      if (!offerInstallRefusal(result, args, scope, this.scopes, this.output)) {
+        // Name the failing step — an init→add sequence can fail halfway.
+        reportGrimFailure(result, this.output, `grim ${args[0]}`);
       }
-      // Name the failing step — an init→add sequence can fail halfway.
-      reportGrimFailure(result, this.output, `grim ${args[0]}`);
     } else {
       const notice = uninstallNotice(result.value);
       if (notice) {
