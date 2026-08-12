@@ -17,6 +17,9 @@ for the swarm/finalize skills (`task verify`, `task checkpoint`, `task git:merge
 - `npm run check` — lint + type-check + build. Run after every change.
 - `npm test` — full suite under @vscode/test-cli with coverage (c8). Linux headless: `xvfb-run -a npm test`.
 - `npm run package` — build the .vsix (vsce, `--no-dependencies`).
+- `docs/manual-testing.md` — driving the extension against grim's manual rig
+  (`../grimoire/test/manual`, two real local registries). Two `F5` launch
+  configs point at its consumer projects.
 
 ## Architecture
 

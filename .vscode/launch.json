@@ -10,6 +10,46 @@
       "preLaunchTask": "npm: watch"
     },
     {
+      // Manual rig, single registry: the full sample catalog (version matrix,
+      // deprecated old-reviewer, the folded playbooks/ci/release chain) with
+      // the project's artifacts already locked. See docs/manual-testing.md —
+      // it needs ../grimoire/test/manual/scripts/bootstrap.sh run once first.
+      "name": "Run Extension (manual rig — project)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/../grimoire/test/manual/project"
+      ],
+      "env": {
+        "PATH": "${workspaceFolder}/../grimoire/test/bin:${env:PATH}",
+        "GRIM_HOME": "${workspaceFolder}/../grimoire/test/manual/.grim-home",
+        "GRIM_DEFAULT_REGISTRY": "localhost:5050",
+        "GRIM_INSECURE_REGISTRIES": "localhost:5050,localhost:5051"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: watch"
+    },
+    {
+      // Manual rig, two registries: two tree roots, the private-registry lock,
+      // and cross-registry grouping.
+      "name": "Run Extension (manual rig — multi-registry)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/../grimoire/test/manual/project-multi"
+      ],
+      "env": {
+        "PATH": "${workspaceFolder}/../grimoire/test/bin:${env:PATH}",
+        "GRIM_HOME": "${workspaceFolder}/../grimoire/test/manual/.grim-home",
+        "GRIM_DEFAULT_REGISTRY": "localhost:5050",
+        "GRIM_INSECURE_REGISTRIES": "localhost:5050,localhost:5051"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: watch"
+    },
+    {
       "name": "Extension Tests",
       "type": "extensionHost",
       "request": "launch",

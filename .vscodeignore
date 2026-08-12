@@ -22,6 +22,7 @@ AGENTS.md
 CLAUDE.md
 CONTRIBUTING.md
 TODO.md
+docs/**
 handoff.zip
 .mcp.json
 .serena/**
