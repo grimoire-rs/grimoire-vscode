@@ -5,6 +5,7 @@ import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
 import { nothing, render as litRender } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import type { DetailsToHost, DetailsVM, HostToDetails, RevalidateState, Scope } from '../protocol';
+import { armBrokenImages } from '../brokenImage';
 import { createMarkdown } from '../markdown';
 import { isInteractiveTarget, shouldResetUi } from '../model';
 import { renderDetails, revalidateIndicator } from '../render';
@@ -17,6 +18,9 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root') as HTMLElement;
+// README/CHANGELOG images are publisher-supplied and routinely unresolvable
+// (an asset left out of the companion, or a remote URL the CSP blocks).
+armBrokenImages(root);
 // html:false (default) — raw HTML in fetched markdown stays inert; the factory
 // also permits our data:image/svg+xml companion images (see createMarkdown).
 const md = createMarkdown();

@@ -137,6 +137,23 @@ body {
   object-fit: contain;
 }
 
+/* Stands in for an image that could not load (see webview/brokenImage.ts).
+   Muted, so a publisher's unpacked asset reads as missing content rather than
+   as an extension error. Sized per slot — it inherits nothing from the <img>
+   it replaced. */
+.broken-image.codicon {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+}
+
+.card-tile .broken-image.codicon {
+  font-size: 18px;
+}
+
+.row-logo .broken-image.codicon {
+  font-size: 12px;
+}
+
 .kind-badge {
   flex: none;
   margin-left: auto;

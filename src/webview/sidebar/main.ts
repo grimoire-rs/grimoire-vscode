@@ -7,6 +7,7 @@ import '@vscode-elements/elements/dist/vscode-progress-bar/index.js';
 import '@vscode-elements/elements/dist/vscode-icon/index.js';
 import '@vscode-elements/elements/dist/vscode-scrollable/index.js';
 import { render as litRender, type TemplateResult } from 'lit-html';
+import { armBrokenImages } from '../brokenImage';
 import type {
   CardVM,
   HostToSidebar,
@@ -72,6 +73,9 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root') as HTMLElement;
+// Card and row logos are data: URIs built from companion bytes — a truncated or
+// mistyped asset decodes to nothing and would paint the browser's own glyph.
+armBrokenImages(root);
 // Item 3: six independently-updatable regions, each its own lit render root.
 // A search-result state update re-renders only the results (and the filters,
 // when their content differs) and never destroys the textfield the user is

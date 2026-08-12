@@ -120,6 +120,25 @@ body {
   border-radius: 8px;
 }
 
+/* Stands in for an image that could not load (see webview/brokenImage.ts) —
+   most often a README asset the publisher never packed into the description
+   companion, or a remote URL the CSP blocks. Muted: it is missing content, not
+   an extension error. */
+.broken-image.codicon {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.65;
+}
+
+.header-icon .broken-image.codicon {
+  font-size: calc(var(--header-icon) * 0.6);
+}
+
+/* Inline in a README/CHANGELOG body: big enough to be legible as a deliberate
+   placeholder, standing where the image would have been. */
+.md-body .broken-image.codicon {
+  font-size: 28px;
+}
+
 .header-main {
   flex: 1;
   min-width: 0;
