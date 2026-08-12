@@ -574,12 +574,17 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   ): Promise<void> {
     // Deliberately does NOT forget the cached entry first. That was tried, on
     // the theory that a post-action probe could fold an older version's content
-    // under a newer header — but the panel's repo is tagless (refRepo strips the
-    // tag), so every fetch here resolves `:latest` and no action on this path can
-    // move what the cache holds. Version switching does not even come through
-    // here; it runs pickVersion directly. Forgetting would only disable the
-    // merge, so a partly-failed post-action probe would repaint the nulls this
-    // branch exists to stop showing — on the one path the user is watching.
+    // under a newer header. It can — but it could already, before the action:
+    // install, update, uninstall and complete-install are all LOCAL, and none of
+    // them changes what the registry serves for this repo. The post-action probe
+    // is just another revalidate, and folding a partly-failed revalidate over
+    // cached content is Ruling 2, the whole design of this branch. The merge can
+    // only re-show content the panel was already painting.
+    //
+    // Forgetting, by contrast, leaves mergeEntry nothing to fold, so a partly
+    // failed probe repaints the nulls this branch exists to stop showing — on
+    // the one path the user is watching. Version switching never comes through
+    // here anyway; it runs pickVersion directly.
     await this.suspendWhile(() => this.actionInner(repo, panel, steps, scope, busy, staleLockName));
   }
 
@@ -639,14 +644,14 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
             // Name the failing step — an init→add sequence can fail halfway.
             reportGrimFailure(result, this.output, `grim ${args[0]}`);
           }
-          // An earlier step may have changed state (init created grimoire.toml),
-          // so refresh the views even on failure, then clear the busy state. A
-          // refused scope-wide install counts as such a change on its own: grim
-          // stops at the first modified artifact, having already written every
-          // one it reached before it.
-          if (last !== undefined || refused) {
-            await this.onDidChange();
-          }
+          // Refresh the views even on failure, then clear the busy state. Any
+          // failure can leave state behind — an earlier step in the sequence
+          // (init creating grimoire.toml), or a scope-wide install that stopped
+          // partway, having already written every artifact it reached first.
+          // Unconditional, matching sidebar.ts's runActionInner: gating this on
+          // "an earlier step succeeded" is narrower than the reason for it, and
+          // left the two hosts disagreeing on identical input.
+          await this.onDidChange();
           await this.postVM(repo, panel);
           return;
         }
@@ -951,21 +956,39 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return this.cache.presentCardMeta(repos);
   }
 
-  /** Drops a repo's cached snapshot — the post-action hook, so the refresh that
-   *  follows an install/update/version switch re-resolves that artifact instead
-   *  of repainting a cache entry up to six hours old. Failures are swallowed: a
-   *  cache that would not delete is a stale paint, not a broken action. */
-  async forget(repo: string): Promise<void> {
-    // Also clears any probe cooldown: forget runs because the user acted on this
+  /** Ages a repo's cached snapshot out — the post-action hook, so the refresh
+   *  that follows an install/update/version switch re-resolves that artifact
+   *  instead of trusting an entry up to six hours old.
+   *
+   *  Expires, does NOT delete. Deleting was the original shape and it reopened
+   *  the vanished-logo bug from the far side: with no entry left, {@link
+   *  mergeEntry} has nothing to fold, so a post-action probe that partly failed
+   *  painted its nulls over content the user was already looking at. Only the
+   *  timestamp is discarded — every probe treats the entry as stale and
+   *  re-resolves, and whatever comes back merges over content that is still
+   *  there. Failures are swallowed: an entry that would not rewrite is a stale
+   *  paint, not a broken action. */
+  async expire(repo: string): Promise<void> {
+    // Also clears any probe cooldown: this runs because the user acted on the
     // artifact, and a cooldown must never mute the refresh that follows. Clears
     // it as of now, not for the future — a probe already in flight here can land
     // its failure afterwards and re-arm the cooldown, costing the sweep one
     // retry window. Left alone deliberately: reaching it needs the registry to
     // be failing outright, which is when a cooldown is the correct answer.
     this.failedProbes.delete(repo);
-    await this.cache
-      .forget(repo)
-      .catch((e) => this.output.appendLine(`details cache forget failed for ${repo}: ${String(e)}`));
+    await this.withRepoLock(repo, async () => {
+      const cached = await this.cache.load(repo).catch(() => null);
+      if (!cached) {
+        return;
+      }
+      // Epoch, not "now minus the TTL": the TTL that applies depends on the
+      // entry's own `complete` flag, and a fixed floor is stale under both.
+      await this.cache
+        .save(repo, { ...cached, savedAt: new Date(0).toISOString() })
+        .catch((e) =>
+          this.output.appendLine(`details cache expire failed for ${repo}: ${String(e)}`),
+        );
+    });
   }
 
   /** The prefetch skip filter — "do not probe this repo right now", for either
@@ -1052,23 +1075,43 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  survived its own fix: the cache kept the logo and the panel repainted the
    *  null the probe had just failed to resolve.
    *
-   *  Serialized per repo, because load → merge → save is a read-modify-write
-   *  with two awaits inside it. Opening a panel while the background sweep is
-   *  probing the SAME repo is the ordinary case, not a rare one — the viewport
-   *  reports the row the user just clicked — and unserialized the later save
-   *  merges against a snapshot taken before the earlier one landed, dropping
-   *  exactly the content the merge exists to preserve. Different repos never
-   *  wait on each other. */
+   *  Serialized per repo ({@link withRepoLock}), because load → merge → save is
+   *  a read-modify-write with two awaits inside it. Opening a panel while the
+   *  background sweep is probing the SAME repo is the ordinary case, not a rare
+   *  one — the viewport reports the row the user just clicked — and unserialized
+   *  the later save merges against a snapshot taken before the earlier one
+   *  landed, dropping exactly the content the merge exists to preserve.
+   *
+   *  The lock covers this path and {@link expire}, not every writer: the two
+   *  metadata-only saves (the unchanged-digest branch of {@link prefetchInto},
+   *  and revalidate) read `cached` outside it and hand back a `complete: true`
+   *  entry, which mergeEntry takes wholesale. Those rest on C-004 — incomplete
+   *  implies a null artifactDigest, so `contentUnchanged` cannot match against
+   *  an incomplete entry and they only ever run over content already proven
+   *  current. Relaxing C-004 reopens this class; the lock would not catch it. */
   private async saveEntry(repo: string, entry: DetailsCacheEntry): Promise<DetailsCacheEntry> {
+    return this.withRepoLock(repo, () => this.saveEntryInner(repo, entry));
+  }
+
+  /** Runs `fn` with no other locked write in flight for the same repo. Different
+   *  repos never wait on each other.
+   *
+   *  ponytail: per-process, and unbounded. Two VS Code windows sharing
+   *  globalStorage still race each other — DetailsCache.save already writes via
+   *  a tmp file for that reason — and a `fn` that never settles wedges its repo
+   *  for the session. Per-window is the ceiling; a cross-process lock or a
+   *  timeout is the upgrade path, and neither is worth it for a content cache
+   *  whose worst case is one re-probe. */
+  private async withRepoLock<T>(repo: string, fn: () => Promise<T>): Promise<T> {
     const prior = this.saveQueue.get(repo);
     let release!: () => void;
+    // Resolve-only by construction, so awaiting it needs no rejection handler:
+    // `finally` below is what guarantees a thrown predecessor still releases.
     const tail = new Promise<void>((resolve) => (release = resolve));
     this.saveQueue.set(repo, tail);
-    // A predecessor that threw must not cancel its successors — the chain is a
-    // lock, not a dependency.
-    await prior?.catch(() => {});
+    await prior;
     try {
-      return await this.saveEntryInner(repo, entry);
+      return await fn();
     } finally {
       release();
       if (this.saveQueue.get(repo) === tail) {
@@ -1163,7 +1206,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  {@link isFresh}; see {@link noteProbeFailure}. */
   private readonly failedProbes = new Map<string, number>();
 
-  /** repo → the tail of its in-flight {@link saveEntry} chain. Entries are
+  /** repo → the tail of its in-flight {@link withRepoLock} chain. Entries are
    *  dropped as soon as the chain drains, so this holds only active repos. */
   private readonly saveQueue = new Map<string, Promise<void>>();
 

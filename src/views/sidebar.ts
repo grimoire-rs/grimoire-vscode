@@ -89,9 +89,11 @@ export interface SidebarDelegate {
   /** Cached logo + latest-version card decorations for the given repos (misses
    *  omitted). */
   cachedCardMeta(repos: string[]): Promise<Map<string, CachedCardMeta>>;
-  /** Drops a repo's cached registry snapshot after an action changed that
-   *  artifact, so the refresh that follows re-resolves its version. */
-  forgetCached(repo: string): void;
+  /** Ages a repo's cached registry snapshot out after an action changed that
+   *  artifact, so the refresh that follows re-resolves its version. Expires
+   *  rather than deletes — the content stays as the merge base a partly-failed
+   *  re-probe folds into, which is the whole point (DetailsManager.expire). */
+  expireCached(repo: string): void;
   /** Background-prefetch the top of a fresh browse result list into the cache.
    *  `force` bypasses the cache TTL — an explicit refresh re-resolves versions
    *  rather than repainting yesterday's answer. */
@@ -301,7 +303,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // probe must not trigger init — see the method's doc.
         const needsInit = message.scope === 'project' && (await this.scopes.projectNeedsInit());
         const steps = needsInit ? [initArgs(), addArgs(message.ref)] : [addArgs(message.ref)];
-        this.delegate.forgetCached(refRepo(message.ref));
+        this.delegate.expireCached(refRepo(message.ref));
         await this.runAction(steps, message.scope, `Installing ${message.ref}…`);
         return;
       }
@@ -367,7 +369,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         );
         return;
       case 'pickVersion':
-        this.delegate.forgetCached(message.repo);
+        this.delegate.expireCached(message.repo);
         await this.delegate.pickVersion(message.repo);
         return;
       case 'openDetails':
@@ -444,7 +446,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const cards = [...(this.lastReady?.cards ?? []), ...(this.lastReady?.installed ?? [])];
     const repo = repoForInstall(cards, kind, name, scope);
     if (repo !== null) {
-      this.delegate.forgetCached(repo);
+      this.delegate.expireCached(repo);
     }
   }
 

@@ -180,7 +180,7 @@ function makeSidebar(
     pickVersion: async () => {},
     suspendWhile: (fn) => fn(),
     cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
-    forgetCached: () => {},
+    expireCached: () => {},
     prefetch: (repos, options) => {
       prefetchCalls.push({ repos, force: options?.force });
     },

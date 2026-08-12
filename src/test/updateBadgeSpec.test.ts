@@ -149,7 +149,7 @@ function makeSidebar(options: {
     pickVersion: async () => {},
     suspendWhile: (fn) => fn(),
     cachedCardMeta: async () => new Map<string, CachedCardMeta>(),
-    forgetCached: () => {},
+    expireCached: () => {},
     prefetch: () => {},
   };
   const posted: HostToSidebar[] = [];

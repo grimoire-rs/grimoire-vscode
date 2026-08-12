@@ -43,8 +43,9 @@ export interface DetailsCacheEntry {
  *  content. A partly-failed pipeline yields nulls for the pieces it could not
  *  resolve (a companion fetch that failed leaves `logoUri: null`), and writing
  *  those over a good entry is what made browse-list logos vanish: the null was
- *  stamped fresh and the row was skipped until the TTL expired. Deliberate
- *  eviction is still {@link DetailsCache.forget} / a CACHE_VERSION bump.
+ *  stamped fresh and the row was skipped until the TTL expired. Nothing evicts
+ *  a single entry any more — the post-action hook ages one out instead
+ *  (DetailsManager.expire), and a CACHE_VERSION bump drops the whole directory.
  *
  *  `fetch` and the digests always come from the fresh run — they describe the
  *  probe that just happened, and a stale digest would defeat the freshness
@@ -190,13 +191,6 @@ export class DetailsCache {
       }),
     );
     return out;
-  }
-
-  /** Drops the repo's entry, so the next read misses and re-resolves. Called
-   *  after a mutating action on that artifact: the 6h TTL is right for a
-   *  background sweep and wrong for the artifact the user just changed. */
-  async forget(repo: string): Promise<void> {
-    await fs.rm(this.fileFor(repo), { force: true }).catch(() => {});
   }
 
   /** Overwrites the repo's entry in place (latest-only, no version history),

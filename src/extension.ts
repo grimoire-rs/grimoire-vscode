@@ -342,7 +342,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     pickVersion: (repo: string) =>
       suspendWhile(() => pickVersion(repo, scopes, output, refreshAll)),
     cachedCardMeta: (repos: string[]) => details.cachedCardMeta(repos),
-    forgetCached: (repo: string) => void details.forget(repo),
+    expireCached: (repo: string) => void details.expire(repo),
     prefetch: (repos: string[], options?: { force?: boolean }) =>
       void prefetcher.enqueue(repos, options ?? {}),
   };
