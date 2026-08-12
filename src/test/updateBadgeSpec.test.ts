@@ -10,7 +10,7 @@ import * as os from 'os';
 import * as vscode from 'vscode';
 import type { CatalogService, CatalogState } from '../catalog';
 import type { GrimoireApi } from '../extension';
-import { artifactCheckDue, mementoCheckStore } from '../extension';
+import { mementoCheckStore } from '../extension';
 import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { CheckedFields, ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
@@ -379,31 +379,6 @@ suite('the activity-bar row and its badge (cluster F)', () => {
     } finally {
       updates.setCount(0);
     }
-  });
-});
-
-suite('artifactCheckDue', () => {
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const NOW = 1_700_000_000_000;
-
-  test('the check is never due while the setting is off', () => {
-    assert.strictEqual(
-      artifactCheckDue(false, 0, NOW, DAY_MS),
-      false,
-      'off means off, however long ago the last check was',
-    );
-  });
-
-  test('a check within the last day is not due again', () => {
-    assert.strictEqual(artifactCheckDue(true, NOW - DAY_MS + 1, NOW, DAY_MS), false);
-  });
-
-  test('a check a full day old is due', () => {
-    assert.strictEqual(artifactCheckDue(true, NOW - DAY_MS, NOW, DAY_MS), true);
-  });
-
-  test('never having checked is due', () => {
-    assert.strictEqual(artifactCheckDue(true, 0, NOW, DAY_MS), true);
   });
 });
 

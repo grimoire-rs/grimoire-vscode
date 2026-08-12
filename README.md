@@ -21,9 +21,9 @@ AI artifacts your tools rely on.
   The tab lists them; an **Update All** icon appears in the sidebar's title bar
   whenever updates are pending and updates them in one click (also always
   available in the title bar's `…` menu). Check on demand with
-  **Grimoire: Check for Artifact Updates**, or turn the daily one off with the
-  `grimoire.checkArtifactUpdates` **setting** — the verdicts already gathered
-  keep counting either way. The daily check asks the registries your
+  **Grimoire: Check for Artifact Updates**, or turn the automatic ones off with
+  the `grimoire.checkArtifactUpdates` **setting** — the verdicts already gathered
+  keep counting either way. The update check asks the registries your
   `grimoire.toml` names, so it is skipped in a **restricted** (untrusted)
   workspace and starts as soon as you trust the folder. The command is
   deliberately not gated that way: running it yourself is the go-ahead.
@@ -101,7 +101,7 @@ available.
 | `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
 | `grimoire.prefetchDetails`      | `true`    | Prefetch top Browse results so details open instantly and card logos appear                                                                                                           |
 | `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
-| `grimoire.checkArtifactUpdates` | `true`    | Once a day, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on. Off stops the daily check only; remembered verdicts keep counting |
+| `grimoire.checkArtifactUpdates` | `true`    | After a refresh settles, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on. Debounced, so a burst of changes costs one check. Off stops the automatic rounds only; remembered verdicts keep counting |
 | `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
 
 ## Requirements

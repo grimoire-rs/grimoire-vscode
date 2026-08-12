@@ -366,17 +366,11 @@ async function activateExtension(): Promise<GrimoireApi> {
  *
  *  `activate()` resolves long before it is finished: it kicks off
  *  `publishUpdateCount()` and `checkForUpdates()` without awaiting either, and
- *  the first of those CONSUMES the daily-check throttle — it stamps
- *  `artifactCheck.lastCheck` before it spawns. A test that resets that stamp to
- *  "never checked" while the chain is still in flight has its reset eaten:
- *  `refreshWithDueCheck` then finds the round not due and runs a plain `grim
- *  status`, which is what made the due-check test fail intermittently. Clearing
- *  the argv log mid-chain is the same hazard from the other side.
+ *  a test that clears the argv log mid-chain sees the tail of activation's own
+ *  spawns land in what it is about to assert on.
  *
  *  Settles on three consecutive quiet polls (~300ms) after at least one spawn,
- *  rather than waiting for a specific argv line: activation's shape varies with
- *  whether its own round was due, and a round that WAS due ends in a second
- *  full refresh. */
+ *  rather than waiting for a specific argv line: activation's shape varies. */
 async function settleActivation(stub: Stub): Promise<void> {
   let previous = -1;
   let quiet = 0;
@@ -664,11 +658,9 @@ suite('extension integration', () => {
     }
   });
 
-  // The daily check's gate is three-part: enabled, due, and TRUSTED. The
-  // throttle stamp is persisted and outlives the window, so a test can only
-  // reach the due path by writing it (activation consumed the never-checked
-  // state before any test body ran) — hence api.globalState.
-  const THROTTLE_KEY = 'artifactCheck.lastCheck';
+  // Automatic checks are gated on the setting AND workspace trust; the round
+  // itself is debounced (see CheckScheduler), so these assert what a refresh
+  // ARMS rather than waiting out the real quiet window.
 
   /** Runs `fn` with the window reporting itself untrusted. `isTrusted` is an
    *  accessor on the vscode namespace object and is configurable in this host,
@@ -689,73 +681,68 @@ suite('extension integration', () => {
     }
   }
 
-  test('refreshWithDueCheck spawns status --check when the daily round is due', async function () {
+  test('a plain refresh arms a check round — no daily throttle any more', async function () {
     this.timeout(15000);
     const api = await activateExtension();
     canned(stub, 'context', contextDoc({ config_exists: true }));
-    await api.globalState.update(THROTTLE_KEY, 0); // never checked → due
     try {
-      fs.rmSync(stub.argvLog, { force: true });
-      await api.refreshWithDueCheck();
-      const status = argvLines(stub).filter((l) => l.startsWith('status'));
-      assert.ok(status.length > 0, 'status was invoked');
-      assert.ok(
-        status.some((l) => l.includes('--check')),
-        `the due round goes online: ${status.join(' | ')}`,
-      );
-      const stamped = api.globalState.get<number>(THROTTLE_KEY, 0);
-      assert.ok(
-        stamped > 0 && Date.now() - stamped < 60_000,
-        `the round stamped the throttle before calling: ${stamped}`,
-      );
-      // ...and that stamp is the whole throttle: the next round stays offline.
-      fs.rmSync(stub.argvLog, { force: true });
-      await api.refreshWithDueCheck();
-      const second = argvLines(stub).filter((l) => l.startsWith('status'));
-      assert.ok(second.length > 0, 'the second round still refreshed');
-      assert.ok(
-        second.every((l) => !l.includes('--check')),
-        `a stamped throttle keeps the next round off the network: ${second.join(' | ')}`,
-      );
+      await api.refresh();
+      assert.ok(api.checkPending(), 'the refresh asked for verdicts');
+      // …and it stays armed round after round: nothing consumes a daily stamp.
+      await api.refresh();
+      assert.ok(api.checkPending(), 'a second refresh is not throttled out');
     } finally {
       canned(stub, 'context', contextDoc());
-      await api.globalState.update(THROTTLE_KEY, Date.now());
     }
   });
 
-  test('an untrusted window neither checks nor stamps', async function () {
+  test('checkNow spawns status --check every time it is called', async function () {
     this.timeout(15000);
     const api = await activateExtension();
     canned(stub, 'context', contextDoc({ config_exists: true }));
-    await api.globalState.update(THROTTLE_KEY, 0); // due — only trust can stop it
     try {
-      await whileUntrusted(async () => {
+      for (const round of ['first', 'second']) {
         fs.rmSync(stub.argvLog, { force: true });
-        await api.refreshWithDueCheck();
+        await api.checkNow();
         const status = argvLines(stub).filter((l) => l.startsWith('status'));
-        assert.ok(status.length > 0, 'the refresh itself still runs — only the check is gated');
+        assert.ok(status.length > 0, `${round}: status was invoked`);
         assert.ok(
-          status.every((l) => !l.includes('--check')),
-          `a restricted window resolves nothing against the registry: ${status.join(' | ')}`,
+          status.some((l) => l.includes('--check')),
+          `${round} round goes online: ${status.join(' | ')}`,
         );
-        assert.strictEqual(
-          api.globalState.get<number>(THROTTLE_KEY, 0),
-          0,
-          'and it must not stamp — the check has to still be due when trust arrives',
-        );
-      });
-      // Which is exactly what happens the moment it does.
-      fs.rmSync(stub.argvLog, { force: true });
-      await api.refreshWithDueCheck();
-      assert.ok(
-        argvLines(stub)
-          .filter((l) => l.startsWith('status'))
-          .some((l) => l.includes('--check')),
-        'the check the untrusted window skipped runs as soon as trust is granted',
-      );
+      }
+      assert.strictEqual(api.checkPending(), false, 'an explicit round drops the armed one');
     } finally {
       canned(stub, 'context', contextDoc());
-      await api.globalState.update(THROTTLE_KEY, Date.now());
+    }
+  });
+
+  test('an untrusted window arms no automatic check, but still obeys the command', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    try {
+      await whileUntrusted(async () => {
+        await api.refresh();
+        assert.strictEqual(
+          api.checkPending(),
+          false,
+          'a restricted window resolves nothing against the registry on its own',
+        );
+        // The command is the user's own gesture, so it is deliberately ungated.
+        fs.rmSync(stub.argvLog, { force: true });
+        await api.checkNow();
+        assert.ok(
+          argvLines(stub)
+            .filter((l) => l.startsWith('status'))
+            .some((l) => l.includes('--check')),
+          'the explicit check still runs',
+        );
+      });
+      await api.refresh();
+      assert.ok(api.checkPending(), 'and automatic rounds resume the moment trust is granted');
+    } finally {
+      canned(stub, 'context', contextDoc());
     }
   });
 
@@ -764,9 +751,6 @@ suite('extension integration', () => {
     const api = await activateExtension();
     canned(stub, 'context', contextDoc({ config_exists: true }));
     canned(stub, 'status', { items: [statusDoc({ state: 'outdated' })] });
-    // Not due: a due round ends in a full refreshAll, and its catalog search is
-    // the very thing this test says the count does not need.
-    await api.globalState.update(THROTTLE_KEY, Date.now());
     try {
       api.providers.updates.setCount(0);
       fs.rmSync(stub.argvLog, { force: true });
@@ -793,7 +777,6 @@ suite('extension integration', () => {
     canned(stub, 'status', {
       error: { code: 'usage', exit: 64, message: "unexpected argument '--check' found" },
     });
-    await api.globalState.update(THROTTLE_KEY, Date.now());
     try {
       api.providers.updates.setCount(3);
       await api.publishUpdateCount();
