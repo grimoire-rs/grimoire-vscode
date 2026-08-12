@@ -313,6 +313,11 @@ root.addEventListener('click', (event) => {
   closeScopeMenus();
 });
 
+// Clicking outside this webview lands in a different frame, so the click
+// handler above never runs and an open menu would float on over an unfocused
+// panel. The frame's blur is the dismissal signal (same fix as the sidebar's).
+window.addEventListener('blur', () => closeScopeMenus());
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     closeScopeMenus();
