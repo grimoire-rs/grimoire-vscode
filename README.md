@@ -56,9 +56,9 @@ AI artifacts your tools rely on.
   modified artifact and offers to open it, so you can decide one at a time.
 - **Finish an incomplete install** — when an artifact is installed and intact but
   `grim` would still write something for it (a client that gained support since
-  the last install, or a recorded output deleted underneath it), the row shows an
-  **Install incomplete** hint and a **Complete Install** action that
-  re-materializes that scope's lock.
+  the last install, or a render-layout move), the row shows an **Install
+  incomplete** hint and a **Complete Install** action that re-materializes that
+  scope's lock.
 - **Share a link** — copy a `vscode://` deep link to any artifact; opening it
   reveals that artifact's details.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to

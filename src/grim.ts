@@ -116,19 +116,22 @@ export interface StatusItem {
   clients_missing: string[];
   clients_extra: string[];
   // Materialization drift: the outputs `grim install` would write RIGHT NOW that
-  // the install record does not already account for — a client that gained
-  // support since the last install, a recorded output deleted underneath grim, a
-  // render-layout move (reported at the NEW path). Same shape as `outputs`,
+  // the install record does not already account for — TWO causes only: a client
+  // that gained support since the last install, and a render-layout move
+  // (reported at the NEW path). A recorded output DELETED underneath grim is not
+  // one of them; that surfaces as `state: "missing"`. Same shape as `outputs`,
   // always `[]` when an install would write nothing new. Never moves `state`: an
   // intact artifact at the locked pin still reads "installed". Distinct from a
   // present-but-drifted output, which IS `state: "modified"` — different problem,
   // different remedy. Additive, so absent on a grim predating it; read as [].
   outputs_pending?: StatusOutput[];
   // The `--check` surface: grim's live catalog lookup. `deprecated`/`replaced_by`
-  // mirror `grim search`'s fields; `update_available` is a fresh per-artifact
-  // re-resolution (true=registry newer, false=matches). All three are null on a
-  // plain `grim status` (no `--check` ⇒ no network) and for rows with no registry
-  // pin (bundle members, dev-installs, path sources); absence never lies as false.
+  // mirror `grim search`'s fields; `update_available` re-resolves the DECLARED
+  // reference, tag and all — it answers "would `grim update` move this pin?",
+  // not "is the registry newer". A pin declared at a fixed tag reads false even
+  // when a later version exists. All three are null on a plain `grim status`
+  // (no `--check` ⇒ no network) and for rows with no registry pin (bundle
+  // members, dev-installs, path sources); absence never lies as false.
   deprecated: string | null;
   replaced_by: string | null;
   update_available: boolean | null;
