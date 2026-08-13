@@ -1233,6 +1233,9 @@ suite('extension integration', () => {
   test('details uninstall of a bundle-held member notifies without a panel error', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated: these drive real details actions on a shared repo, and an
+    // un-isolated cache is both read from and written to by every run.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -1893,6 +1896,9 @@ suite('extension integration', () => {
   test('details stale-lock update offers a full re-resolve without a panel error', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated: these drive real details actions on a shared repo, and an
+    // un-isolated cache is both read from and written to by every run.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -2754,6 +2760,9 @@ suite('extension integration', () => {
   test('details update wiring: a forceable refusal offers Overwrite and retries with --force', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated: these drive real details actions on a shared repo, and an
+    // un-isolated cache is both read from and written to by every run.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -2821,6 +2830,9 @@ suite('extension integration', () => {
   test('details update wiring: an anchor-escape refusal shows a non-modal notice, no retry', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated: these drive real details actions on a shared repo, and an
+    // un-isolated cache is both read from and written to by every run.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -2879,6 +2891,9 @@ suite('extension integration', () => {
   test('details update wiring: a plain refusal (neither stale-lock, forceable, nor anchor-escape) keeps the panel error toast', async function () {
     this.timeout(20000);
     const api = await activateExtension();
+    // Isolated: these drive real details actions on a shared repo, and an
+    // un-isolated cache is both read from and written to by every run.
+    isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
       digest: 'sha256:1',
@@ -2927,6 +2942,19 @@ suite('extension integration', () => {
       posted.some((m) => m.type === 'artifact'),
       'the panel re-rendered (busy cleared) after the failure',
     );
+    // A first-step failure refreshes the other views too, not just this panel.
+    // The old gate ran onDidChange only when an EARLIER step had succeeded, so
+    // this exact input — one step, failing — left the sidebar untouched while
+    // the same failure through the sidebar host refreshed unconditionally.
+    // `search` is the discriminator, not status/context: postVM rebuilds this
+    // panel's own VM and spawns those two by itself either way. Only the sidebar
+    // refresh onDidChange drives runs a catalog search.
+    const lines = argvLines(stub);
+    const failedAt = lines.findIndex((l) => updatesArtifact(l, 'grim-usage'));
+    assert.ok(
+      lines.slice(failedAt + 1).some((l) => l.startsWith('search')),
+      `the failure still refreshed the other views: ${lines.join(' | ')}`,
+    );
   });
 
   test('initProject invokes grim init without --global', async () => {
@@ -2940,10 +2968,12 @@ suite('extension integration', () => {
   test('details view model build fetches and honors the describe fallback', async function () {
     this.timeout(20000);
     const api = await activateExtension();
-    // Isolated like its neighbours: without this the assertions run against the
-    // developer's REAL globalStorage cache, where a genuine grim-usage entry
-    // merges its own tags in. It passed only because the post-action hook used
-    // to DELETE that entry; the hook expires instead now, so the leak shows.
+    // Isolated like its neighbours. Without this the assertions run against the
+    // runner profile's persistent cache (.vscode-test/user-data/…/globalStorage),
+    // which survives across runs and carries real entries from F5 sessions — a
+    // genuine grim-usage entry merges its own tags in. It passed only because
+    // the post-action hook used to DELETE that entry; the hook expires instead
+    // now, so the leak shows.
     isolateCache(api);
     canned(stub, 'fetch', {
       ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
