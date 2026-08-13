@@ -16,6 +16,7 @@ import {
   isRetryable,
   parseReport,
   positionalOf,
+  refusedNames,
   editRegistrySteps,
   registryAddArgs,
   registrySetArgs,
@@ -624,6 +625,26 @@ suite('grim report parsing', () => {
     assert.deepStrictEqual(result.value.items, []);
   });
 
+  test('a normal report with a nonzero exit stays ok, value intact', () => {
+    // The single claim the whole refused-update design rests on. grim >= 0.13.0
+    // pairs a refused `grim update` with exit 65 AND its normal report, because
+    // the run did not stop — every other row reconciled irreversibly. parseReport
+    // keys on the payload (`error` document or not) and discards the code, so
+    // the report survives and `refusedNames` can read the rows off it.
+    const doc =
+      '{"items":[{"kind":"skill","name":"demo","old":"sha256:a","new":"sha256:b",' +
+      '"action":"updated","reaped_clients":[],"kept_modified_clients":[],"refused":true}]}';
+    const result = parseReport<ItemsEnvelope<UpdateEntry>>(doc, 65, 'error: update refused …');
+    assert.ok(result.ok, 'exit 65 alone never demotes a normal report to a failure');
+    assert.strictEqual(result.value.items.length, 1);
+    assert.strictEqual(result.value.items[0]?.refused, true);
+    assert.strictEqual(
+      result.value.items[0]?.action,
+      'updated',
+      "a refused row still reports the lock diff — the pin moved, only the files didn't",
+    );
+  });
+
   test('error document wins over exit code', () => {
     const doc = '{"error":{"code":"auth","exit":80,"message":"401 from registry"}}';
     const result = parseReport(doc, 80, '');
@@ -1010,5 +1031,70 @@ suite('isForceable', () => {
     const numberOne = { forceable: 1 } as unknown as { forceable?: boolean };
     assert.strictEqual(isForceable(stringTrue), false);
     assert.strictEqual(isForceable(numberOne), false);
+  });
+});
+
+suite('refusedNames', () => {
+  /** One row of grim >= 0.13.0's update report. */
+  function row(name: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      kind: 'skill',
+      name,
+      old: 'sha256:old',
+      new: 'sha256:new',
+      // A refused row's `action` still reports the LOCK diff — the pin rolled
+      // forward, only the materialization was refused.
+      action: 'updated',
+      reaped_clients: [],
+      kept_modified_clients: [],
+      ...extra,
+    };
+  }
+
+  test('names every refused row, in report order, and nothing else', () => {
+    const report = {
+      items: [row('clean'), row('demo', { refused: true }), row('other', { refused: false })],
+    };
+    assert.deepStrictEqual(refusedNames(report), ['demo']);
+  });
+
+  test('multiple refused rows all come back', () => {
+    const report = { items: [row('a', { refused: true }), row('b', { refused: true })] };
+    assert.deepStrictEqual(refusedNames(report), ['a', 'b']);
+  });
+
+  test('a 0.12-shaped report with no refused key names nothing', () => {
+    // The field is additive: a grim below the floor emits rows without it, and
+    // an absent key must never read as a refusal.
+    assert.deepStrictEqual(refusedNames({ items: [row('demo'), row('other')] }), []);
+  });
+
+  test('a non-boolean truthy refused value is rejected — same `=== true` rule as isForceable', () => {
+    // The value crosses a subprocess/JSON boundary untrusted, and this one
+    // authorizes an overwrite prompt. No truthiness coercion.
+    const report = {
+      items: [row('a', { refused: 'true' }), row('b', { refused: 1 })],
+    };
+    assert.deepStrictEqual(refusedNames(report), []);
+  });
+
+  test('a refused row with a non-string name is skipped', () => {
+    const report = { items: [row('ok', { refused: true }), row('x', { refused: true, name: 7 })] };
+    assert.deepStrictEqual(refusedNames(report), ['ok']);
+  });
+
+  test('non-report shapes are empty, never a throw', () => {
+    // Called unconditionally on every ok action report, so every shape the
+    // hosts can hand it has to be inert: an ActionReport (the per-artifact
+    // hosts' declared type), a null/undefined value, a non-array items.
+    assert.deepStrictEqual(
+      refusedNames({ kind: 'skill', name: 'demo', status: 'updated', pinned: 'x@sha256:1' }),
+      [],
+    );
+    assert.deepStrictEqual(refusedNames(null), []);
+    assert.deepStrictEqual(refusedNames(undefined), []);
+    assert.deepStrictEqual(refusedNames({ items: 'nope' }), []);
+    assert.deepStrictEqual(refusedNames({ items: [null, 'x', 42] }), []);
+    assert.deepStrictEqual(refusedNames('{"items":[]}'), []);
   });
 });

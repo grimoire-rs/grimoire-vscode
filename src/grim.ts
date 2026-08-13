@@ -233,6 +233,14 @@ export interface UpdateEntry {
   action: 'updated' | 'unchanged' | 'removed' | 'kept-modified';
   reaped_clients: string[];
   kept_modified_clients: string[];
+  // Additive (same tolerance pattern as `RegistryInfo.authenticated`): true when
+  // the integrity gate refused to overwrite this row's locally-modified files.
+  // A refusal is PARTIAL — every other row still reconciled and this row's own
+  // pin rolled forward, so `action` reports the lock diff and a refused row can
+  // read "updated". Only the files on disk were left alone. Carried on a normal
+  // report with exit 65, not an error document (grim ≥ 0.13.0); absent on
+  // anything older. Read through refusedNames, never `item.refused` directly.
+  refused?: boolean;
 }
 
 // --- Config wire types (`grim config ...`). `type` is grim's presentation
@@ -432,6 +440,47 @@ export function isRetryable(result: { exitCode: number; retryable?: boolean }): 
  *  is true. Pure; exported for tests. */
 export function isForceable(result: { forceable?: boolean }): boolean {
   return result.forceable === true;
+}
+
+/** The artifacts a `grim update` report says it refused to overwrite — the rows
+ *  whose local files were left alone because they are modified. `[]` for any
+ *  other document, so callers can run it against any ok result.
+ *
+ *  grim ≥ 0.13.0 reports this refusal as a NORMAL report (exit 65, `refused` on
+ *  the row) instead of the error document `install`/`add` still use: the old
+ *  shape threw away a report describing work that had already happened
+ *  irreversibly. So this is the ok-path twin of {@link isForceable}, and strict
+ *  for the same reason — a truthy non-boolean crossing the subprocess/JSON
+ *  boundary must never authorize an overwrite prompt.
+ *
+ *  Takes `unknown` deliberately: the two per-artifact hosts run their update
+ *  through `GrimResult<ActionReport>` (a pre-existing mistyping whose fix has a
+ *  much wider blast radius), and this needs no help from the type to read rows
+ *  off a document it fully validates itself. Pure; exported for tests.
+ *
+ *  ponytail: exit 65 on an update report is assumed to mean "a row was refused".
+ *  If grim ever exits 65 there for another reason this shows nothing, because
+ *  the explanation is on stderr and the ok path drops it. Upgrade path: carry
+ *  stderr on the ok variant of GrimResult — only worth it if that happens. */
+export function refusedNames(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) {
+    return [];
+  }
+  const items = (value as Record<string, unknown>)['items'];
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    if (row['refused'] === true && typeof row['name'] === 'string') {
+      names.push(row['name']);
+    }
+  }
+  return names;
 }
 
 /** Adds flags to an argv the builders below may have ended with a `--`
