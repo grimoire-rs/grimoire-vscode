@@ -1,6 +1,9 @@
 // Shared recovery for a SCOPE-WIDE grim refusal — `grim update` with no name,
 // and `grim install` (the Complete Install remedy). Both run against a whole
-// scope, and both stop on the first locally-modified artifact they meet.
+// scope. `install` stops on the first locally-modified artifact it meets;
+// grim >= 0.13.0's `update` does not stop at all — it reconciles everything else
+// and rolls the refused rows' pins forward, leaving only their files alone (see
+// the `cause` union below).
 //
 // Deliberately NOT the Overwrite dialog forceRetry.ts offers. Retrying either
 // call with `--force` would overwrite EVERY modified artifact in the scope while
@@ -27,48 +30,75 @@ type FailedResult = Extract<GrimResult<unknown>, { ok: false }>;
  * `grim update` and a scope-wide `grim install`. A literal union rather than a
  * free string so the two call sites cannot drift into different wording.
  *
+ * `cause` is which refusal shape got here, and it decides both the wording and
+ * where the names come from:
+ *
+ * - `{ message }` — a refused `grim install` (and a pre-0.13 `grim update`):
+ *   an error document, so the run really did STOP, and grim's own message is
+ *   quoted verbatim. Names come from the snapshot heuristic below.
+ * - `{ refused }` — grim ≥ 0.13.0's `grim update`, which does NOT stop: every
+ *   other artifact reconciled and the refused rows' pins rolled forward, only
+ *   their files were left alone. The rows name the artifacts themselves, so
+ *   these names are authoritative and the wording says what actually happened.
+ *
  * The snapshot is `cachedSnapshot()` first: it is what the last refresh saw, and
  * nothing watches materialized artifact files, so a file edited since then is
  * invisible here. That is why the unnamed form below exists — it is reached
- * precisely when grim's own refusal is right and our snapshot is behind.
+ * precisely when grim's own refusal is right and our snapshot is behind. The
+ * `refused` cause is immune to that; it still consults the snapshot, but only to
+ * find the repo an `Open <name>` needs.
  */
 export async function offerModifiedRefusal(
   scopes: ScopeService,
   scope: Scope,
   operation: 'update' | 'install',
-  message: string,
+  cause: { message: string } | { refused: string[] },
 ): Promise<void> {
   const snapshot = scopes.cachedSnapshot() ?? (await scopes.snapshot());
   const snap = snapshot[scope];
-  const modified = (snap?.status ?? []).filter((item) => item.state === 'modified');
+  const refused = 'refused' in cause ? cause.refused : null;
+  const rows = (snap?.status ?? []).filter((item) =>
+    refused ? refused.includes(item.name) : item.state === 'modified',
+  );
   const repos = new Map<string, string>();
-  for (const item of modified) {
+  for (const item of rows) {
     const declared = snap?.declared[declaredKey(item.kind, item.name)];
     const ref = declared ?? item.pinned;
     if (ref) {
       repos.set(item.name, refRepo(ref));
     }
   }
-  const only = repos.size === 1 ? [...repos.entries()][0] : undefined;
-  if (only) {
-    const [name, repo] = only;
+  // grim's own rows win over the snapshot: they name what it actually refused,
+  // while the snapshot is only ever as fresh as the last refresh.
+  const names = refused ?? [...repos.keys()];
+  const single = names.length === 1 ? names[0] : undefined;
+  const repo = single === undefined ? undefined : repos.get(single);
+  let message: string;
+  if ('refused' in cause) {
+    message =
+      `Grimoire: update (${scope}) kept your local changes to ${names.join(', ')} — those ` +
+      `files were not replaced. Everything else updated, and the lock pin moved on, so run ` +
+      `Update on it again and confirm Overwrite to take the new version.`;
+  } else if (repo !== undefined) {
+    message = `Grimoire: ${operation} stopped — ${cause.message}`;
+  } else {
+    const named = names.length > 1 ? ` Locally modified: ${names.join(', ')}.` : '';
+    message = `Grimoire: ${operation} (${scope}) stopped — ${cause.message}${named}`;
+  }
+  if (single !== undefined && repo !== undefined) {
     const choice = await vscode.window.showErrorMessage(
-      `Grimoire: ${operation} stopped — ${message}`,
-      `Open ${name}`,
+      message,
+      `Open ${single}`,
       'Show Output',
     );
-    if (choice === `Open ${name}`) {
+    if (choice === `Open ${single}`) {
       await vscode.commands.executeCommand('grimoire.openDetails', repo);
     } else if (choice === 'Show Output') {
       await vscode.commands.executeCommand('grimoire.showOutput');
     }
     return;
   }
-  const named = repos.size > 1 ? ` Locally modified: ${[...repos.keys()].join(', ')}.` : '';
-  const choice = await vscode.window.showErrorMessage(
-    `Grimoire: ${operation} (${scope}) stopped — ${message}${named}`,
-    'Show Output',
-  );
+  const choice = await vscode.window.showErrorMessage(message, 'Show Output');
   if (choice === 'Show Output') {
     await vscode.commands.executeCommand('grimoire.showOutput');
   }
@@ -111,7 +141,7 @@ export function offerInstallRefusal(
   // snapshot fallback inside can reject too. An unhandled rejection in the
   // extension host would leave nothing in the channel this dialog's own
   // "Show Output" button points at.
-  void offerModifiedRefusal(scopes, scope, 'install', result.message).catch((e) =>
+  void offerModifiedRefusal(scopes, scope, 'install', { message: result.message }).catch((e) =>
     output.appendLine(`install refusal notice failed: ${String(e)}`),
   );
   return true;

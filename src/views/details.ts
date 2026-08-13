@@ -59,7 +59,7 @@ import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';
 import { webviewHtml } from './html';
 import { scopeStatuses } from './sidebar';
 import { pickVersion } from './pickVersion';
-import { offerForcedRetry } from './forceRetry';
+import { offerForcedRetry, offerRefusedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 import { offerInstallRefusal } from './updateRefusal';
@@ -655,6 +655,13 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
           await this.postVM(repo, panel);
           return;
         }
+        // grim >= 0.13.0 reports a refused update as a NORMAL report (exit 65,
+        // `refused` on the row), so it never reaches the failure branch above.
+        // Inside the step loop, where this step's argv is still in hand; the
+        // modal opens over the active progress notification, exactly as
+        // offerForcedRetry's does. No early return — the onDidChange/postVM
+        // below are owed either way, since the refused row's pin moved.
+        await offerRefusedRetry(result.value, args, scope, this.scopes, this.output);
         last = result.value;
       }
       const notice = last ? uninstallNotice(last) : null;

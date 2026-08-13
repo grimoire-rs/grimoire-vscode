@@ -6,6 +6,7 @@ import {
   contextArgs,
   initArgs,
   isForceable,
+  refusedNames,
   updateArgs,
   type ActionReport,
   type ContextInfo,
@@ -704,7 +705,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
                 result.kind === 'not-found' ? 'grim executable not found' : result.message;
               output.appendLine(`error: grim update --${scope}: ${message}`);
               if (result.kind === 'error' && isForceable(result)) {
-                refusals.push(() => offerModifiedRefusal(scopes, scope, 'update', message));
+                refusals.push(() => offerModifiedRefusal(scopes, scope, 'update', { message }));
                 return;
               }
               notifyError(`Grimoire: grim update (${scope}): ${message}`);
@@ -714,6 +715,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
             // missing or not an array must not poison the summary (same guard
             // as CatalogService.search).
             const items = Array.isArray(result.value.items) ? result.value.items : [];
+            // grim >= 0.13.0 refuses a locally-modified row on a NORMAL report
+            // (exit 65, `refused` on the row) instead of the error document the
+            // branch above handles — so this run did NOT stop: every other row
+            // reconciled and the refused row's own pin rolled forward.
+            const refused = refusedNames(result.value);
             const counts: Record<UpdateEntry['action'], number> = {
               updated: 0,
               unchanged: 0,
@@ -730,7 +736,12 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
               if ((item.reaped_clients ?? []).length > 0) {
                 reaped.push(item.name);
               }
-              if ((item.kept_modified_clients ?? []).length > 0) {
+              // Suppressed for a refused row: the two can co-occur on one row
+              // (a locally-modified output whose client also left the set), and
+              // then both describe the same file. The refusal dialog below says
+              // strictly more — it names the remedy, and its `--force` note
+              // discloses that forcing also authorizes this reap.
+              if ((item.kept_modified_clients ?? []).length > 0 && !refused.includes(item.name)) {
                 keptModified.push(item.name);
               }
             }
@@ -738,6 +749,18 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
               `grim update (${scope}): ${counts.updated} updated, ${counts.unchanged} unchanged, ` +
                 `${counts.removed} removed, ${counts['kept-modified']} kept-modified`,
             );
+            if (refused.length > 0) {
+              // Not optional. `counts[item.action]++` above counts a refused row
+              // as `updated` — correct per contract, since the pin did move —
+              // and this is the counter-fact. It is also the ONLY thing that
+              // writes to the channel on this shape (the error branch above
+              // fires on `!ok`), and the dialog offers "Show Output".
+              output.appendLine(
+                `grim update (${scope}): refused to overwrite locally-modified ` +
+                  `${refused.join(', ')} — files left in place, lock pin moved`,
+              );
+              refusals.push(() => offerModifiedRefusal(scopes, scope, 'update', { refused }));
+            }
           };
           if (await scopes.projectConfigured()) {
             await handle(

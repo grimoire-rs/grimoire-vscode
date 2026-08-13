@@ -26,15 +26,18 @@ import {
   addArgs,
   installArgs,
   initArgs,
+  refusedNames,
   updateArgs,
   type ContextInfo,
   type DescribeResult,
   type GrimResult,
+  type ItemsEnvelope,
   type Scope,
+  type UpdateEntry,
 } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
 import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
-import { offerForcedRetry } from '../views/forceRetry';
+import { offerForcedRetry, offerRefusedRetry } from '../views/forceRetry';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 
 const isWindows = process.platform === 'win32';
@@ -129,6 +132,13 @@ if [ "$cmd" = "update" ] && [ -f "${dir}/update-name.json" ]; then
 fi
 if [ -f "${dir}/$cmd.json" ]; then
   cat "${dir}/$cmd.json"
+  # Optional exit-code companion (see cannedExit). Absent ⇒ exit 0, which is
+  # what every fixture predating it relies on: real grim pairs a report with a
+  # nonzero code (a refused update exits 65 while still printing its items),
+  # and without this the suite could only ever assert the JSON body.
+  if [ -f "${dir}/$cmd.exit" ]; then
+    exit "$(cat "${dir}/$cmd.exit")"
+  fi
 else
   echo '{"error":{"code":"usage","exit":64,"message":"unknown stub command"}}'
 fi
@@ -139,6 +149,16 @@ fi
 
 function canned(stub: Stub, command: string, doc: unknown): void {
   fs.writeFileSync(path.join(stub.dir, `${command}.json`), JSON.stringify(doc));
+}
+
+/** Makes the canned response for `command` exit with `code` instead of 0.
+ *  Returns the undo, because the file outlives the test exactly like a canned
+ *  JSON body does. Only meaningful alongside `canned` — the stub reads it after
+ *  printing `<command>.json`. */
+function cannedExit(stub: Stub, command: string, code: number): () => void {
+  const file = path.join(stub.dir, `${command}.exit`);
+  fs.writeFileSync(file, String(code));
+  return () => fs.rmSync(file, { force: true });
 }
 
 /** Drops a canned response so the command falls back to the stub script's own
@@ -1573,9 +1593,10 @@ suite('extension integration', () => {
   });
 
   test('a refused update names the modified artifact and offers to open it', async () => {
-    // grim 0.13 runs install's integrity gate on update: a locally modified
-    // artifact aborts the whole scope with exit 65 + forceable. The artifact is
-    // named from the snapshot, never scraped out of grim's message.
+    // The error-document shape: a locally modified artifact aborts the whole
+    // scope with exit 65 + forceable (`grim install`, and `grim update` before
+    // 0.13.0 moved its refusal onto a normal report). The artifact is named from
+    // the snapshot, never scraped out of grim's message.
     const scopes = {
       cachedSnapshot: () => ({
         global: {
@@ -1599,7 +1620,7 @@ suite('extension integration', () => {
         scopes,
         'global',
         'update',
-        'demo is locally modified; rerun with --force',
+        { message: 'demo is locally modified; rerun with --force' },
       );
     } finally {
       window.showErrorMessage = original;
@@ -1640,7 +1661,7 @@ suite('extension integration', () => {
         scopes,
         'project',
         'update',
-        'one is locally modified; rerun with --force',
+        { message: 'one is locally modified; rerun with --force' },
       );
     } finally {
       window.showErrorMessage = original;
@@ -2955,6 +2976,350 @@ suite('extension integration', () => {
       lines.slice(failedAt + 1).some((l) => l.startsWith('search')),
       `the failure still refreshed the other views: ${lines.join(' | ')}`,
     );
+  });
+
+  // --- refused-update wiring (grim >= 0.13.0's normal-report refusal) ---
+  //
+  // The refusal moved off the error document and onto the report: exit 65 with
+  // `{"items":[…]}` and `refused: true` on the row. parseReport reads that as a
+  // plain success, so before offerRefusedRetry both hosts showed the user
+  // NOTHING — the branches above are all on the `!ok` path.
+
+  /** grim >= 0.13.0's per-artifact refused update: a normal report, one row,
+   *  `action` still reporting the lock diff because the pin did roll forward. */
+  function refusedReport(name: string): unknown {
+    return {
+      items: [
+        {
+          kind: 'skill',
+          name,
+          old: 'sha256:old',
+          new: 'sha256:new',
+          action: 'updated',
+          reaped_clients: [],
+          kept_modified_clients: [],
+          refused: true,
+        },
+      ],
+    };
+  }
+
+  test('sidebar update wiring: a refused report offers Overwrite and retries with --force', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', refusedReport('demo'));
+    const restoreExit = cannedExit(stub, 'update-name', 65);
+    canned(stub, 'update-force', {
+      kind: 'skill',
+      name: 'demo',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
+    } finally {
+      dialogs.restore();
+      restoreExit();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+      fs.rmSync(path.join(stub.dir, 'update-force.json'), { force: true });
+    }
+    const updates = argvLines(stub).filter((l) => l.startsWith('update'));
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast — the report parsed as ok');
+    assert.ok(
+      updates.some((l) => l === 'update --force --format json -- demo --global'),
+      `the same argv is reissued with --force: ${updates.join(' | ')}`,
+    );
+    const call = dialogs.warningCalls[0];
+    assert.strictEqual(call?.options?.modal, true, 'the confirm is modal');
+    assert.deepStrictEqual(call?.items, ['Overwrite'], 'Overwrite is the only offered action');
+    const detail = call?.options?.detail ?? '';
+    assert.ok(detail.includes('demo'), `the detail names the artifact: ${detail}`);
+    assert.ok(
+      detail.includes('lock pin moved on'),
+      `the detail says the pin moved — the half of the split outcome the old wording denied: ${detail}`,
+    );
+    assert.ok(
+      detail.includes('pruned lock entries and stale client output'),
+      `--force on an update authorizes more than the overwrite, and says so: ${detail}`,
+    );
+  });
+
+  test('sidebar update wiring: declining a refused report runs no second call and still refreshes', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', refusedReport('demo'));
+    const restoreExit = cannedExit(stub, 'update-name', 65);
+    const dialogs = stubForceDialogs(undefined); // Cancel / dismiss
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.startsWith('search')));
+    } finally {
+      dialogs.restore();
+      restoreExit();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    const lines = argvLines(stub);
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the confirm was still offered');
+    assert.ok(!lines.some((l) => l.includes('--force')), 'declining issues no second grim call');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'declining shows no error toast');
+    // The refusal is PARTIAL: the pin rolled forward whatever the user answers,
+    // so the views must repaint even on a decline. This is why offerRefusedRetry
+    // takes no onDone — the host's own trailing refresh owns it.
+    const refusedAt = lines.findIndex((l) => updatesArtifact(l, 'demo'));
+    assert.ok(
+      lines.slice(refusedAt + 1).some((l) => l.startsWith('search')),
+      `a declined refusal still refreshes the pin that moved: ${lines.join(' | ')}`,
+    );
+  });
+
+  test('sidebar update wiring: a report with no refused row never prompts', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'update-name', {
+      items: [
+        {
+          kind: 'skill',
+          name: 'demo',
+          old: 'sha256:old',
+          new: 'sha256:new',
+          action: 'updated',
+          reaped_clients: [],
+          kept_modified_clients: [],
+          refused: false,
+        },
+      ],
+    });
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => updatesArtifact(l, 'demo')));
+    } finally {
+      dialogs.restore();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+    }
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'a clean update prompts nothing');
+    assert.ok(
+      !argvLines(stub).some((l) => l.includes('--force')),
+      'and never forces anything on its own',
+    );
+  });
+
+  test('details update wiring: a refused report offers Overwrite and retries with --force', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    // Isolated like its neighbours: real details actions on a shared repo.
+    isolateCache(api);
+    canned(stub, 'fetch', {
+      ref: 'ghcr.io/grimoire-rs/skills/grim-usage:latest',
+      digest: 'sha256:1',
+      kind: 'skill',
+      name: 'grim-usage',
+      vendor: 'canonical',
+      content: '# Grim Usage',
+      files: [],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'update-name', refusedReport('grim-usage'));
+    const restoreExit = cannedExit(stub, 'update-name', 65);
+    canned(stub, 'update-force', {
+      kind: 'skill',
+      name: 'grim-usage',
+      pinned: 'y@sha256:2',
+      status: 'updated',
+    });
+    const dialogs = stubForceDialogs('Overwrite');
+    const posted: { type: string }[] = [];
+    const panel = {
+      title: '',
+      iconPath: undefined,
+      webview: {
+        postMessage: (message: { type: string }) => {
+          posted.push(message);
+          return Promise.resolve(true);
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.details.onMessage('ghcr.io/grimoire-rs/skills/grim-usage', panel, {
+        type: 'update',
+        kind: 'skill',
+        name: 'grim-usage',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).some((l) => l.includes('--force')));
+    } finally {
+      dialogs.restore();
+      restoreExit();
+      fs.rmSync(path.join(stub.dir, 'update-name.json'), { force: true });
+      fs.rmSync(path.join(stub.dir, 'update-force.json'), { force: true });
+      uncan(stub, 'describe');
+    }
+    // Asserted in both hosts, not just one: they have drifted on identical
+    // input before (details.ts's post-failure refresh gate).
+    const updates = argvLines(stub).filter((l) => l.startsWith('update'));
+    assert.strictEqual(dialogs.warningCalls.length, 1, 'the Overwrite confirm was shown');
+    assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast — the report parsed as ok');
+    assert.ok(
+      updates.some((l) => l === 'update --force --format json -- grim-usage --global'),
+      `the same argv is reissued with --force: ${updates.join(' | ')}`,
+    );
+    const detail = dialogs.warningCalls[0]?.options?.detail ?? '';
+    assert.ok(detail.includes('grim-usage'), `the detail names the artifact: ${detail}`);
+    assert.ok(
+      detail.includes('pruned lock entries and stale client output'),
+      `and discloses what --force additionally authorizes on an update: ${detail}`,
+    );
+    assert.ok(
+      posted.some((m) => m.type === 'artifact'),
+      'the panel re-rendered (busy cleared) after the recovery',
+    );
+  });
+
+  test('a scope-wide refused update is never offered a one-click Overwrite', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs('Overwrite');
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    try {
+      // A BARE `grim update` — no positional. Forcing it would discard the
+      // user's edits to every other modified artifact in the scope while the
+      // dialog named one. Update All routes to offerModifiedRefusal instead.
+      handled = await offerRefusedRetry(
+        { items: [{ kind: 'skill', name: 'demo', action: 'updated', refused: true }] },
+        updateArgs(),
+        'global',
+        api.scopes,
+        recordingOutput([]),
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, false, 'declined, so the caller keeps its own handling');
+    assert.strictEqual(dialogs.warningCalls.length, 0, 'no scope-wide Overwrite confirm');
+    assert.strictEqual(argvLines(stub).length, 0, 'and no forced retry');
+  });
+
+  test('updateAll: a refused row is named from the report, not from the snapshot', async () => {
+    // The assertion that pins the names to grim's own rows: `grim status`
+    // reports NOTHING modified here, so the cachedSnapshot() heuristic — which
+    // is all the error-document path ever had — would name no artifact at all.
+    canned(stub, 'context', contextDoc({ config_exists: true }));
+    canned(stub, 'status', { items: [] });
+    canned(stub, 'update', {
+      items: [
+        {
+          kind: 'skill',
+          name: 'clean',
+          old: 'sha256:a',
+          new: 'sha256:b',
+          action: 'updated',
+          reaped_clients: [],
+          kept_modified_clients: [],
+          refused: false,
+        },
+        {
+          kind: 'rule',
+          name: 'edited',
+          old: 'sha256:c',
+          new: 'sha256:d',
+          action: 'updated',
+          reaped_clients: [],
+          // Co-occurring on the refused row: suppressed, so the user gets one
+          // notification for one modified file, not two.
+          kept_modified_clients: ['claude'],
+          refused: true,
+        },
+      ],
+    });
+    const restoreExit = cannedExit(stub, 'update', 65);
+    const window = vscode.window as unknown as {
+      showErrorMessage: unknown;
+      showInformationMessage: unknown;
+    };
+    const originalError = window.showErrorMessage;
+    const originalInfo = window.showInformationMessage;
+    const errors: string[] = [];
+    const infos: string[] = [];
+    window.showErrorMessage = async (message: string) => {
+      errors.push(message);
+      return undefined;
+    };
+    window.showInformationMessage = async (message: string) => {
+      infos.push(message);
+      return undefined;
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await vscode.commands.executeCommand('grimoire.updateAll');
+    } finally {
+      window.showErrorMessage = originalError;
+      window.showInformationMessage = originalInfo;
+      restoreExit();
+      canned(stub, 'context', contextDoc());
+      canned(stub, 'update', { items: [] });
+    }
+    // Exit 65 is not a failure here: the run completed, so both scopes still go.
+    const updates = argvLines(stub).filter(isFullUpdate);
+    assert.strictEqual(updates.length, 2, `both scopes still update: ${updates.join(' | ')}`);
+    assert.strictEqual(errors.length, 2, `one dialog per refusing scope: ${errors.join(' | ')}`);
+    assert.ok(
+      errors.every((m) => m.includes('edited')),
+      `each names the refused artifact grim reported: ${errors.join(' | ')}`,
+    );
+    assert.ok(
+      errors.every((m) => !m.includes('clean')),
+      `and never the rows that updated fine: ${errors.join(' | ')}`,
+    );
+    assert.ok(
+      errors.every((m) => !m.includes('stopped')),
+      `never "stopped" — under 0.13 the run continued and the pin moved: ${errors.join(' | ')}`,
+    );
+    assert.ok(
+      !infos.some((m) => m.includes('kept locally-modified client output')),
+      `the kept-modified toast is suppressed for a refused row: ${infos.join(' | ')}`,
+    );
+  });
+
+  test('a nonzero exit code alone never demotes a normal report', async () => {
+    // The one claim the <cmd>.exit companion exists for. Detection reads the
+    // payload, never the code — but runJson's execFile callback DOES see a real
+    // nonzero exit as an error, and it special-cases only ENOENT. Pinned end to
+    // end through a stub that actually exits 65, since every other "exit 65" in
+    // this suite is fiction parseReport re-derives from the JSON body.
+    const api = await activateExtension();
+    canned(stub, 'update', refusedReport('demo'));
+    const restoreExit = cannedExit(stub, 'update', 65);
+    try {
+      const result = await api.scopes.run<ItemsEnvelope<UpdateEntry>>(updateArgs(), 'global');
+      assert.ok(result.ok, 'a real exit 65 with a report body is still an ok result');
+      assert.deepStrictEqual(refusedNames(result.value), ['demo']);
+    } finally {
+      restoreExit();
+      canned(stub, 'update', { items: [] });
+    }
   });
 
   test('initProject invokes grim init without --global', async () => {

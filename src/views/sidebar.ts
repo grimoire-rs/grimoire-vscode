@@ -57,7 +57,7 @@ import type {
 } from '../webview/protocol';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
-import { offerForcedRetry } from './forceRetry';
+import { offerForcedRetry, offerRefusedRetry } from './forceRetry';
 import { offerFullUpdate } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 import { offerInstallRefusal } from './updateRefusal';
@@ -515,6 +515,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         reportGrimFailure(result, this.output, `grim ${args[0]}`);
       }
     } else {
+      // grim >= 0.13.0 reports a refused update as a NORMAL report (exit 65,
+      // `refused` on the row), so it lands here rather than in offerForcedRetry
+      // above — same Overwrite confirm, different wire shape. Falls through
+      // rather than returning: the refusal is partial (the pin moved), so the
+      // refreshAll below is owed whether or not the user confirms.
+      await offerRefusedRetry(result.value, args, scope, this.scopes, this.output);
       const notice = uninstallNotice(result.value);
       if (notice) {
         void vscode.window.showInformationMessage(`Grimoire: ${notice}`);

@@ -6,10 +6,17 @@
 // reason:"anchor-escape" is never forceable (a symlink escaping the anchor
 // root is a security refusal, not a drift refusal) and gets a non-modal
 // notice with no override control instead of a confirm dialog.
+//
+// TWO wire shapes reach the same confirm. `add`/`install` still refuse with an
+// error document (offerForcedRetry); grim ≥ 0.13.0's `update` refuses with a
+// normal report carrying `refused` on the row (offerRefusedRetry) — because
+// that refusal is partial and the report it used to discard described work that
+// had already happened. They are told apart by the payload, never by a version.
 import * as vscode from 'vscode';
 import {
   isForceable,
   positionalOf,
+  refusedNames,
   withFlags,
   type ActionReport,
   type GrimResult,
@@ -20,6 +27,48 @@ import type { ScopeService } from '../scopes';
 import { artifactName, refRepo } from '../webview/model';
 
 type FailedResult = Extract<GrimResult<unknown>, { ok: false }>;
+
+/** What `--force` authorizes on `update` beyond the overwrite itself: the
+ *  deletions the same run declined. Appended LAST to a dialog detail so grim's
+ *  own message stays contiguous with the sentence that introduces it. */
+const FORCE_UPDATE_NOTE =
+  '\n\nOn an update, --force also authorizes the deletions this run declined: ' +
+  'pruned lock entries and stale client output.';
+
+/** The Overwrite confirm both refusal shapes end in: a modal warning, and on
+ *  confirmation the same argv reissued with `--force` under a progress
+ *  notification. Returns true when the retry actually ran, false when declined
+ *  — the callers differ on what they owe afterwards.
+ *
+ *  Only the detail prose is a parameter: the two shapes describe different
+ *  outcomes (a pre-0.13 error document stopped the whole run; a 0.13 refused row
+ *  did not), and nothing else about the confirm differs. */
+async function confirmOverwrite(
+  name: string,
+  detail: string,
+  args: string[],
+  scope: Scope,
+  scopes: ScopeService,
+  output: vscode.OutputChannel,
+): Promise<boolean> {
+  const choice = await vscode.window.showWarningMessage(
+    `Grimoire: overwrite \`${name}\`?`,
+    { modal: true, detail },
+    'Overwrite',
+  );
+  if (choice !== 'Overwrite') {
+    return false;
+  }
+  await runWithStatusProgress(`Overwriting ${name}`, async () => {
+    // withFlags, not a tail append: the builders end in `-- <positional>`, so
+    // an appended --force would parse as a second reference/name.
+    const retry = await scopes.run<ActionReport>(withFlags(args, ['--force']), scope);
+    if (!retry.ok) {
+      reportGrimFailure(retry, output, `grim ${args[0]}`);
+    }
+  });
+  return true;
+}
 
 /**
  * When a failed add/update carries `forceable: true`, offer a retry with
@@ -77,25 +126,55 @@ export async function offerForcedRetry(
   if (isForceable(result) && (args[0] === 'add' || args[0] === 'update')) {
     const detail =
       `Reinstalling discards your local changes to \`${name}\`. This cannot be undone.\n\n` +
-      result.message;
-    const choice = await vscode.window.showWarningMessage(
-      `Grimoire: overwrite \`${name}\`?`,
-      { modal: true, detail },
-      'Overwrite',
-    );
-    if (choice !== 'Overwrite') {
-      return true;
+      result.message +
+      (args[0] === 'update' ? FORCE_UPDATE_NOTE : '');
+    if (await confirmOverwrite(name, detail, args, scope, scopes, output)) {
+      await onDone();
     }
-    await runWithStatusProgress(`Overwriting ${name}`, async () => {
-      // withFlags, not a tail append: the builders end in `-- <positional>`, so
-      // an appended --force would parse as a second reference/name.
-      const retry = await scopes.run<ActionReport>(withFlags(args, ['--force']), scope);
-      if (!retry.ok) {
-        reportGrimFailure(retry, output, `grim ${args[0]}`);
-      }
-    });
-    await onDone();
     return true;
   }
   return false;
+}
+
+/**
+ * The ok-result twin of {@link offerForcedRetry}: grim ≥ 0.13.0 reports a
+ * refused `grim update` as a NORMAL report (exit 65, `refused` on the row), so
+ * the refusal never reaches the failure path at all. Hosts call this
+ * unconditionally on any ok action report — it returns false when the report
+ * carries no refusal, and true once it has shown the confirm.
+ *
+ * Deliberately takes NO `onDone`. offerForcedRetry owes its own refresh because
+ * it returns early to skip `reportGrimFailure`; here the host's trailing refresh
+ * always runs, so a confirmed retry gets one refresh rather than two — and a
+ * DECLINED one still repaints the pin that rolled forward regardless.
+ *
+ * `args[0]` is gated to `update` even though only update reports carry
+ * `refused`: the confirm reissues the argv with `--force`, and that flag is not
+ * universal. A SCOPE-WIDE update (no positional) is declined outright for the
+ * reason updateRefusal.ts exists — forcing it would discard the user's edits to
+ * every other modified artifact in the scope, irreversibly, on a dialog that
+ * named one. Update All routes there instead.
+ */
+export async function offerRefusedRetry(
+  value: unknown,
+  args: string[],
+  scope: Scope,
+  scopes: ScopeService,
+  output: vscode.OutputChannel,
+): Promise<boolean> {
+  const refused = refusedNames(value);
+  if (refused.length === 0 || args[0] !== 'update' || positionalOf(args) === '') {
+    return false;
+  }
+  // Normally one row: these hosts update a single artifact. Joined rather than
+  // truncated, since the retry below forces every one of them.
+  const names = refused.join(', ');
+  const detail =
+    `grim kept your local changes to \`${names}\` and did not replace those files. ` +
+    `Everything else updated, and the lock pin moved on — so the artifact reads as up to ` +
+    `date while its files are still yours.\n\nOverwriting discards those local changes. ` +
+    `This cannot be undone.` +
+    FORCE_UPDATE_NOTE;
+  await confirmOverwrite(names, detail, args, scope, scopes, output);
+  return true;
 }
