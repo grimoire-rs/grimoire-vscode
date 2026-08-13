@@ -5,6 +5,56 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-13
+
+### Added
+
+- Edit registries and browse filters (grim 0.13.0+) *(settings)*
+- Compact rows, a registry tree, and grouping *(sidebar)*
+- Adopt grim's per-registry insecure field *(settings)*
+- Show a live version on index-backed browse rows *(sidebar)*
+- Show the installed version on the chip, beside the name *(sidebar)*
+- Check for artifact updates off every refresh, debounced
+- Sweep the rows in view, not a fixed top-24 *(sidebar)*
+- Surface materialization drift and offer to complete the install
+- Offer a way forward when Update All hits a modified artifact *(update)*
+- Read a refused update off the report rows *(grim)*
+- Offer Overwrite when grim refuses a locally-modified update *(views)*
+
+### Changed
+
+- Build the registry form's booleans from vscode-elements *(settings)*
+- Make every boolean in the panel one switch component *(settings)*
+- Drop the redundant nouns from command titles *(commands)*
+- Drop the Updates view, badge the marketplace view *(sidebar)*
+- Mark the default registry with a star, not the word *(sidebar)*
+- Use the codicons made for agents and MCP servers *(webview)*
+- One artifact-icon fallback for every surface *(webview)*
+- One record for every action that runs grim *(webview)*
+- Treat a separator-less argv as having no positional *(grim)*
+
+### Documentation
+
+- Name the grim version browse filters need
+- Point non-rig workspaces at grimoire.extraEnv for plain HTTP
+- Describe the viewport sweep and the incomplete-install flow
+- State what the mutating-actions drift test actually covers *(webview)*
+- Correct what outputs_pending and update_available mean *(grim)*
+
+### Fixed
+
+- Render one card per repo when two sources list it *(sidebar)*
+- Dismiss the scope menu when the panel loses focus *(details)*
+- Stop reading a stale lock as an available update *(sidebar)*
+- Keep cached content when a probe partly fails *(details)*
+- Show a deliberate placeholder for an image that cannot load *(webview)*
+- Report the viewport when scrolling settles, not during it *(sidebar)*
+- Paint what the cache holds, not what the probe returned *(details)*
+- Let a refused Complete Install notice go without blocking *(views)*
+- Stop a losing probe from overwriting cached content *(details)*
+- Age the post-action cache entry out instead of deleting it *(details)*
+- Log a refused-install notice that fails instead of dropping it *(views)*
+
 ## [0.2.7] - 2026-07-31
 
 ### Fixed
@@ -143,6 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.3.0]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.7..v0.3.0
 [0.2.7]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.6..v0.2.7
 [0.2.6]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.5..v0.2.6
 [0.2.5]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.4..v0.2.5
