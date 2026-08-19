@@ -1241,3 +1241,40 @@ vscode-button.sm {
   pointer-events: none;
   opacity: 0.55;
 }
+
+/* Rating rail panel. The three vote states differ by LABEL and aria-pressed
+   (see voteAffordance); colour only reinforces `voted`, and `unknown` is
+   deliberately identical in weight to `not-voted` — it must not look like a
+   claim in either direction. */
+.rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.rating-vote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 10px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.rating-vote:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.rating-vote.voted {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.rating-count {
+  font-variant-numeric: tabular-nums;
+}

@@ -9,12 +9,14 @@ import type {
   DetailsVM,
   InstallVM,
   GroupKey,
+  RatingVM,
   RegistryVM,
   RowState,
   Scope,
   ScopesVM,
   SidebarState,
   ViewOptions,
+  VoteState,
 } from './protocol';
 
 // Wire shapes (duplicated minimally to keep this module dependency-free of
@@ -34,6 +36,9 @@ export interface WireSearchItem {
   created: string | null;
   deprecated: string | null;
   replaced_by?: string | null;
+  /** grim's per-row rating. Optional for the same reason `source` is: a grim
+   *  without the field omits the key, and grim's own "unrated" is a null. */
+  rating?: { up: number; url: string } | null;
   status: string;
 }
 
@@ -448,9 +453,57 @@ export function buildCards(
       installs,
       ...(source ? { source } : {}),
       privateRegistry: isPrivateRegistry(registryHost(item.repo), authed, defaultRegistryHost),
+      rating: readRating(item.rating),
     });
   }
   return cards;
+}
+
+/**
+ * A wire rating, read defensively into a {@link RatingVM}. Null for every shape
+ * that is not a complete rating — absent key (older grim), explicit null
+ * (grim's "unrated"), a non-finite or negative count, an empty url. Unrated is
+ * a first-class outcome at each of those levels and never an error.
+ *
+ * `vote` starts at `'unknown'` and can start nowhere else: `grim search`
+ * carries no identity, so the aggregate count says nothing whatsoever about
+ * whether THIS viewer voted (C-008 rule 4: the aggregate may never overwrite
+ * the viewer's own record).
+ */
+export function readRating(raw: WireSearchItem['rating']): RatingVM | null {
+  if (!raw || typeof raw.url !== 'string' || raw.url === '') {
+    return null;
+  }
+  if (typeof raw.up !== 'number' || !Number.isFinite(raw.up) || raw.up < 0) {
+    return null;
+  }
+  return { up: raw.up, url: raw.url, vote: 'unknown' };
+}
+
+/**
+ * The viewer's vote state after a `grim rate` call, per S-007: the mutation
+ * response is authoritative and no second query is issued.
+ *
+ * `report` is null when the call FAILED — and a failure resolves to
+ * `'unknown'`, never `'not-voted'`. A vote that times out may well have landed
+ * on the forge; claiming "you have not voted" would be a guess dressed as a
+ * fact, and would invite a second vote that silently toggles the first back
+ * off. Unknown is the honest answer and the safe one.
+ *
+ * `action` is grim's open string, echoed from the request it just carried out.
+ * Anything this does not recognise reads as unknown rather than as a default.
+ */
+export function voteStateAfter(report: { action: string } | null): VoteState {
+  if (report === null) {
+    return 'unknown';
+  }
+  if (report.action === 'up' || report.action === 'added') {
+    return 'voted';
+  }
+  if (report.action === 'remove' || report.action === 'removed') {
+    return 'not-voted';
+  }
+  return 'unknown';
 }
 
 /** grim's per-row attribution, read defensively: the key is absent on an older
@@ -511,6 +564,9 @@ export function buildInstalledCards(
         installs: [...installs],
         ...(source ? { source } : {}),
         privateRegistry: isPrivateRegistry(registryHost(repo), authed, defaultRegistryHost),
+        // Same borrow as `source`: `grim status` publishes no rating, so an
+        // installed artifact absent from the browse catalog reads as unrated.
+        rating: readRating(item?.rating),
       });
     }
   }
@@ -1648,6 +1704,7 @@ export function buildSkeletonVM(
     license: null,
     keywords: null,
     logoUri: null,
+    rating: readRating(searchItem?.rating),
     busy: null,
     error: null,
     loading: true,
@@ -1767,6 +1824,9 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     license: describe?.license ?? frontmatter?.license ?? null,
     keywords: describe?.keywords ?? frontmatter?.keywords ?? null,
     logoUri: sources.logoUri,
+    // Only `grim search` publishes a rating; describe/fetch carry none, so the
+    // catalog row is the single source and an absent row means unrated.
+    rating: readRating(searchItem?.rating),
     busy: null,
     error: null,
   };

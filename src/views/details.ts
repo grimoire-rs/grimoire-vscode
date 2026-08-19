@@ -43,6 +43,7 @@ import {
   refRepo,
   refTag,
   resolveCompanionAssets,
+  voteStateAfter,
   type ScopeStatus,
 } from '../webview/model';
 import type {
@@ -51,7 +52,11 @@ import type {
   HostToDetails,
   RevalidateState,
   ScopesVM,
+  VoteState,
 } from '../webview/protocol';
+import { supportsRating } from '../installer';
+import { castVote, confirmVote, refineVoteState, type VoteDeps } from './vote';
+import type { SecretReader } from '../auth';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { esc, renderDetails } from '../webview/render';
 import { render } from '@lit-labs/ssr';
@@ -136,9 +141,38 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
      *  counts: opening a details panel caches both exactly like the background
      *  prefetch does, and only the prefetch used to report them. */
     private readonly onCardMetaCached: () => void = () => {},
+    /** SecretStorage read half, for the manual-PAT half of the vote credential
+     *  ladder. Defaults to "no stored token" so the manager stays usable
+     *  unwired — the safe direction: an unwired manager pipes nothing rather
+     *  than reaching for a credential it cannot prove belongs to the host. */
+    private readonly secrets: SecretReader = { get: async () => undefined },
   ) {
     this.cache = new DetailsCache(cacheDir);
   }
+
+  /**
+   * The viewer's own vote per repo — Invariant R-3's storage, and deliberately
+   * a sparse map of a THREE-state value rather than a set of "voted" repos.
+   * An absent key is `'unknown'`, not "not voted": a set would collapse the
+   * two, and every read would have to invent the difference back.
+   *
+   * Written only from a mutation grim reported as successful (C-008 rule 1) —
+   * a failure leaves the key untouched, so a vote that may or may not have
+   * landed keeps reading unknown. In-memory only: grim owns the durable record
+   * (`votes.json`), and it exposes no read for it, so a fresh window starts
+   * unknown exactly as S-008 describes.
+   *
+   * `up` rides along because the mutation response is authoritative for the
+   * count too: the index sidecar this VM's rating came from is regenerated on
+   * the index's own schedule, so a rebuilt VM would otherwise snap the count
+   * back to its pre-vote value the moment the panel repaints.
+   */
+  private readonly votes = new Map<string, { vote: VoteState; up: number | null }>();
+
+  /** Repos the silent `viewer_up` refinement has already been attempted for.
+   *  Separate from {@link votes} because a refinement that answered *unknown*
+   *  stores nothing there — without this it would re-run on every repaint. */
+  private readonly refined = new Set<string>();
 
   /** Test seam: isolate the snapshot cache in a per-test directory. */
   setCacheDir(dir: string): void {
@@ -405,6 +439,19 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       return;
     }
     vm.isPreview = this.preview?.panel === panel;
+    // Stamped here, at the single post choke point, so the skeleton and the
+    // full VM can never disagree about it. `?? 'unknown'` is the whole of
+    // R-3's default: an artifact this window has not voted on in this session
+    // has an UNKNOWN vote, because the user may well have voted elsewhere.
+    const voted = this.votes.get(vm.repo);
+    if (vm.rating) {
+      vm.rating = {
+        ...vm.rating,
+        vote: voted?.vote ?? 'unknown',
+        up: voted?.up ?? vm.rating.up,
+      };
+    }
+    vm.canVote = this.ratingSupported();
     void panel.webview.postMessage({ type: 'artifact', vm } satisfies HostToDetails);
   }
 
@@ -445,6 +492,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     switch (message.type) {
       case 'ready':
         await this.paint(repo, panel);
+        // After the paint, never before it: the panel shows its (neutral,
+        // unknown) rating immediately and refines in the background.
+        await this.refineVote(repo, panel);
         return;
       case 'openDetails':
         // Details→details navigation respects preview semantics (not a new
@@ -556,7 +606,92 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         this.open(repo);
         void panel.webview.postMessage({ type: 'promoted' } satisfies HostToDetails);
         return;
+      case 'vote':
+        // repo is repoOf(panel) — authoritative, same trust rule as 'install'.
+        // The webview supplies only the DIRECTION, and the resulting state is
+        // read back off grim's own report rather than assumed from it.
+        await this.vote(repo, panel, message.remove);
+        return;
     }
+  }
+
+  /** True when the resolved grim is new enough to have `grim rate`. Read off
+   *  the cached context probe — no extra spawn — and false when nothing is
+   *  cached yet, which hides the affordance until the first snapshot lands
+   *  rather than offering a button an older grim would reject with exit 64. */
+  private ratingSupported(): boolean {
+    const snapshot = this.scopes.cachedSnapshot();
+    const version = snapshot?.project?.context.version ?? snapshot?.global?.context.version;
+    return version !== undefined && supportsRating(version);
+  }
+
+  /**
+   * Ask grim, silently, whether this user already voted (C-023 / S-008) — the
+   * lazy refinement that lets a detail view improve on "unknown".
+   *
+   * Skipped entirely when the artifact is unrated, when grim is too old, or
+   * when this repo was already tried in this window. A result of `'unknown'`
+   * is recorded as *attempted* but not as state, so the display stays neutral
+   * and the query does not repeat on every repaint.
+   */
+  private async refineVote(repo: string, panel: vscode.WebviewPanel): Promise<void> {
+    if (this.refined.has(repo) || this.votes.has(repo) || !this.ratingSupported()) {
+      return;
+    }
+    // Unrated rows have no thread to ask about; skip before spawning grim.
+    if (!this.catalog.state().items.find((i) => i.repo === repo)?.rating) {
+      return;
+    }
+    this.refined.add(repo);
+    const vote = await refineVoteState(
+      { run: (args, scope, stdin) => this.scopes.run(args, scope, stdin), secrets: this.secrets },
+      repo,
+    );
+    if (vote === 'unknown') {
+      // Nothing learned. Leave the map empty so the display stays neutral —
+      // recording 'unknown' as a value would say the same thing, less clearly.
+      return;
+    }
+    this.votes.set(repo, { vote, up: null });
+    this.postArtifact(panel, await this.buildVM(repo));
+  }
+
+  /**
+   * Cast or retract the viewer's vote, then repaint from the mutation response
+   * alone — S-007: the response is authoritative and no second query follows.
+   *
+   * The failure branch is the one that matters. It records NOTHING, so the
+   * repo's vote state stays whatever it was (unknown, for a first vote). A
+   * vote that failed after the request left may well have landed on the forge;
+   * writing "not voted" here would be a guess presented as a fact, and would
+   * invite a second click that silently toggles the first vote back off.
+   */
+  private async vote(repo: string, panel: vscode.WebviewPanel, remove: boolean): Promise<void> {
+    const deps: VoteDeps = {
+      run: (args, scope, stdin) => this.scopes.run(args, scope, stdin),
+      secrets: this.secrets,
+      confirm: confirmVote,
+    };
+    const busy = remove ? 'Retracting vote…' : 'Voting…';
+    void panel.webview.postMessage({ type: 'busy', action: busy } satisfies HostToDetails);
+    const outcome = await this.suspendWhile(() =>
+      runWithStatusProgress(busy.replace(/…$/, ''), () => castVote(deps, repo, remove)),
+    );
+    if (outcome.ok) {
+      this.refined.add(repo);
+      this.votes.set(repo, {
+        vote: voteStateAfter(outcome.report),
+        up: outcome.report.up,
+      });
+    } else if (outcome.message !== '') {
+      // An empty message is the user declining the disclosure — nothing
+      // happened and nothing needs saying. Everything else is a real failure,
+      // and NOTHING is recorded for it: the state stays exactly as it was.
+      void vscode.window.showWarningMessage(outcome.message);
+    }
+    // Repaint either way — this is also what clears the busy state.
+    await this.onDidChange();
+    await this.postVM(repo, panel);
   }
 
   /** Runs one or more grim commands in sequence (e.g. init then add), stopping

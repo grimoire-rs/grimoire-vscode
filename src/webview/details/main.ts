@@ -322,6 +322,11 @@ root.addEventListener('click', (event) => {
     case 'promote':
       vscode.postMessage({ type: 'promote' });
       break;
+    case 'vote':
+      // Direction only — the host derives the artifact from repoOf(panel) and
+      // asks grim itself which host the vote resolves to.
+      vscode.postMessage({ type: 'vote', remove: target.dataset['remove'] === 'true' });
+      break;
   }
   // Any menu entry that acted (copy, pick-version, install…) dismisses the menu.
   closeScopeMenus();

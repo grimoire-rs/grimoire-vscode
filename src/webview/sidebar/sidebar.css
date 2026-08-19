@@ -1156,3 +1156,19 @@ vscode-progress-bar {
 .d5 {
   padding-left: 72px;
 }
+
+/* Community rating on a browse card: the aggregate count, no affordance. The
+   sidebar has no forge identity, so there is no vote state to show here — the
+   voting surface is the details rail. */
+.rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.rating-badge .codicon {
+  font-size: 10px;
+}

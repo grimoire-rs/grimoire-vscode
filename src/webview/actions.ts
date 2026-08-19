@@ -32,6 +32,9 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   // Re-materializes a whole scope's lock (`grim install`) — as mutating as any
   // of the above, and the omission this record exists to prevent.
   'complete-install': true,
+  // Casts or retracts a public forge vote through `grim rate` — a network
+  // mutation under the user's own account, guarded like every other.
+  vote: true,
 
   // Pure UI. Listed so the drift test can tell classified from forgotten.
   menu: false,

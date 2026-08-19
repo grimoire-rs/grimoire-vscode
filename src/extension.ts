@@ -319,6 +319,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // version) — prefetch OR a panel open — pokes the (debounced) sidebar repost. `prefetcher` is declared below and
     // read at call time — forward-ref safe.
     () => prefetcher.notifyCardMeta(),
+    // Read half only: the vote credential ladder reads a manually stored PAT,
+    // and never writes one.
+    context.secrets,
   );
 
   // Background prefetch of top browse results into the details cache. onLogosLanded

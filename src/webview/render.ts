@@ -19,9 +19,11 @@ import type {
   CardVM,
   DetailsVM,
   InstallVM,
+  RatingVM,
   RevalidateState,
   Scope,
   SidebarState,
+  VoteState,
 } from './protocol';
 import {
   CardFilter,
@@ -122,6 +124,74 @@ function valueOr(value: string | null, render: (v: string) => unknown = (v) => v
   return value === null || value === ''
     ? html`<span class="null-value">Not provided</span>`
     : render(value);
+}
+
+/**
+ * Invariant R-3 at the pixel: what each of the three vote states LOOKS like.
+ *
+ * The distinction that matters is `unknown` vs `not-voted`, and it is carried
+ * by the label and by `aria-pressed`, not by colour:
+ *
+ * | state | pressed | says |
+ * |---|---|---|
+ * | `voted` | `true` | "You upvoted this — click to retract" |
+ * | `not-voted` | `false` | "You have not upvoted this" |
+ * | `unknown` | *omitted* | "Upvote this artifact" — claims nothing |
+ *
+ * `unknown` omits `aria-pressed` rather than sending `false`, because `false`
+ * is a screen-reader announcing "not pressed" — the exact "you have not voted"
+ * claim C-019 forbids. There is no fourth branch and no boolean anywhere in
+ * here: a `!voted` would have to invent one of these three answers.
+ */
+function voteAffordance(vote: VoteState, up: number): TemplateResult {
+  const voted = vote === 'voted';
+  const label = voted
+    ? 'You upvoted this — click to retract'
+    : vote === 'not-voted'
+      ? 'You have not upvoted this'
+      : 'Upvote this artifact';
+  return html`<button
+    class="rating-vote${voted ? ' voted' : ''}${vote === 'unknown' ? ' unknown' : ''}"
+    data-action="vote"
+    data-remove="${voted ? 'true' : 'false'}"
+    aria-pressed="${ifDefined(vote === 'unknown' ? undefined : String(voted))}"
+    title="${label}"
+    aria-label="${label}"
+  ><span class="codicon codicon-arrow-up"></span><span class="rating-count">${up}</span></button>`;
+}
+
+/** The browse card / compact row rating: the aggregate count and nothing else.
+ *  Neutral by construction — the sidebar has no forge identity, so there is no
+ *  vote state to claim, exactly as C-019 requires of the prerendered site. */
+function ratingBadge(rating: RatingVM | null | undefined): TemplateResult | typeof nothing {
+  if (!rating) {
+    return nothing;
+  }
+  return html`<span class="rating-badge" title="${rating.up} ${rating.up === 1 ? 'upvote' : 'upvotes'}"><span class="codicon codicon-arrow-up"></span>${rating.up}</span>`;
+}
+
+/** The RATING rail panel. Omitted entirely on an unrated row — there is no
+ *  thread to link and nothing to vote on, and an empty panel is not a zero
+ *  (this repo's "empty panels are omitted" rule and S-002 agree). */
+function renderRatingPanel(vm: DetailsVM): TemplateResult | typeof nothing {
+  const rating = vm.rating;
+  if (!rating) {
+    return nothing;
+  }
+  // The link is grim's `url`, verbatim. The extension constructs no forge URL,
+  // so an index that publishes a different forge simply works.
+  const thread = html`<button class="link-button" data-action="open" data-url="${rating.url}">Open discussion</button>`;
+  return html`
+<div class="rail-panel">
+  <div class="rail-title">RATING</div>
+  ${railRow(
+    'Upvotes',
+    vm.canVote
+      ? voteAffordance(rating.vote, rating.up)
+      : html`<span class="rating-badge"><span class="codicon codicon-arrow-up"></span>${rating.up}</span>`,
+  )}
+  ${railRow('Thread', thread)}
+</div>`;
 }
 
 function scopeLabel(scope: 'project' | 'global', projectName: string | null): string {
@@ -280,6 +350,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     body = html`${title}${description}
     <div class="card-meta">
       <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
+      ${ratingBadge(card.rating)}
       <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card)}</span>
     </div>`;
   }
@@ -1427,6 +1498,7 @@ ${renderDeprecationBanner(vm)}
   <div class="right-rail">
     ${renderInstallationPanel(vm)}
     ${renderContentsPanel(vm)}
+    ${renderRatingPanel(vm)}
     ${renderPackagePanel(vm)}
     ${renderResourcesPanel(vm)}
     ${renderTagsPanel(vm)}
