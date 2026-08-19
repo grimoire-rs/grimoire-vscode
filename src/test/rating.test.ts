@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import {
   authTargetFor,
   defaultRatingHost,
@@ -764,10 +765,41 @@ suite('vote handshake (C-022)', function () {
   });
 
   test('retracting needs no disclosure — it posts nothing new', async () => {
-    // confirmVote's other branch opens a MODAL and waits for a click, which no
-    // headless run can produce; castVote's handling of a *declined* disclosure
-    // is pinned by 'the disclosure is asked before authentication' above.
     assert.strictEqual(await confirmVote('github', 'github.com', true), true);
+  });
+
+  test('voting discloses in a MODAL, and anything but the button is a no', async () => {
+    // C-018's last line of defence: the extension always passes `--yes`, so
+    // grim's own prompt never fires and this dialog is the only thing between
+    // a click and a public post. It must be modal, and only the Vote button
+    // may pass.
+    const window = vscode.window as unknown as { showWarningMessage: unknown };
+    const original = window.showWarningMessage;
+    const asked: Array<[string, vscode.MessageOptions]> = [];
+    try {
+      // VS Code resolves undefined when the user dismisses a modal.
+      window.showWarningMessage = async (message: string, options: vscode.MessageOptions) => {
+        asked.push([message, options]);
+        return undefined;
+      };
+      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), false);
+      assert.strictEqual(asked.length, 1);
+      const [message, options] = asked[0] ?? ['', {}];
+      assert.ok(options.modal, 'a toast the user can miss is not consent');
+      assert.match(message, /posts publicly under your forge account/);
+      // The disclosure names the provider and the host the vote actually goes
+      // to — not a default, and not the row's registry.
+      assert.match(options.detail ?? '', /github thread at ghes\.corp\.example/);
+
+      // Any other answer, including a stray label, is a refusal.
+      window.showWarningMessage = async () => 'Cancel';
+      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), false);
+
+      window.showWarningMessage = async () => 'Vote';
+      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), true);
+    } finally {
+      window.showWarningMessage = original;
+    }
   });
 });
 
