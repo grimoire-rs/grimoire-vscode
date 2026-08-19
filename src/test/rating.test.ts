@@ -27,7 +27,7 @@ import {
 } from '../webview/model';
 import type { DetailsVM, VoteState } from '../webview/protocol';
 import { renderCard, renderDetails } from '../webview/render';
-import { castVote, refineVoteState, type VoteDeps } from '../views/vote';
+import { castVote, confirmVote, refineVoteState, type VoteDeps } from '../views/vote';
 import { card, detailsVM } from './fixtures/vms';
 import { litString } from './litString';
 
@@ -673,6 +673,101 @@ suite('vote handshake (C-022)', function () {
     assert.match(outcome.message, /forge unreachable/);
     // The caller maps every failure through voteStateAfter(null).
     assert.strictEqual(voteStateAfter(null), 'unknown');
+  });
+
+  // --- The command's own refusal branches. Each pins the sentence the user is
+  // --- shown AND that no vote was cast: one argv line (the handshake, or none
+  // --- at all) plus no `.stdin` file means grim was never asked to write, and
+  // --- never handed a credential.
+
+  test('a dry run that fails names the refusal and votes nothing', async () => {
+    const stub = writeRateStub(
+      `printf '%s' '{"error":{"code":"offline","exit":81,"message":"offline: rating needs the network"}}'\n` +
+        `exit 81\n`,
+    );
+    stubs.push(stub);
+    const d = deps(stub);
+    const outcome = await castVote(d, 'ghcr.io/x/y', false);
+    assert.ok(!outcome.ok);
+    assert.match(outcome.message, /^Could not resolve a rating for ghcr\.io\/x\/y: /);
+    assert.match(outcome.message, /offline: rating needs the network/);
+    assert.strictEqual(d.confirms, 0, 'a vote that could not resolve still asked the user');
+    assert.strictEqual(fs.readFileSync(stub.argvLog, 'utf8').trim().split('\n').length, 1);
+    assert.ok(!fs.existsSync(`${stub.executable}.stdin`));
+  });
+
+  test('a grim that is not installed says so, and asks the user nothing', async () => {
+    const stub = handshakeStub('github.com', 'github');
+    const d = deps({ ...stub, executable: path.join(stub.dir, 'no-such-grim') });
+    const outcome = await castVote(d, 'ghcr.io/x/y', false);
+    assert.ok(!outcome.ok);
+    assert.strictEqual(outcome.message, 'grim executable not found');
+    assert.strictEqual(d.confirms, 0, 'a missing grim still dragged the user through a disclosure');
+    assert.ok(!fs.existsSync(stub.argvLog), 'something ran');
+  });
+
+  test('a malformed report never becomes a vote', async () => {
+    // (a) Not JSON at all — grim died before reaching its own contract.
+    const garbage = writeRateStub(`printf '%s' 'Segmentation fault'\n`);
+    stubs.push(garbage);
+    const first = await castVote(deps(garbage), 'ghcr.io/x/y', false);
+    assert.ok(!first.ok);
+    assert.match(first.message, /^Could not resolve a rating for ghcr\.io\/x\/y: /);
+    assert.ok(!fs.existsSync(`${garbage.executable}.stdin`));
+
+    // (b) JSON, but the handshake fields are ABSENT rather than null — the
+    // shape a grim predating them would emit. Absent must read exactly like
+    // null does: readable, not writable, and no credential goes anywhere.
+    const partial = writeRateStub(`printf '%s' '{"ref":"ghcr.io/x/y","action":"up","up":3}'\n`);
+    stubs.push(partial);
+    const second = await castVote(deps(partial), 'ghcr.io/x/y', false);
+    assert.ok(!second.ok);
+    assert.match(second.message, /No rating thread/);
+    assert.ok(!fs.existsSync(`${partial.executable}.stdin`));
+  });
+
+  test('a host whose provider we cannot authenticate against is readable, not writable', async () => {
+    // grim resolved a real host, but no provider of ours claims it — so there
+    // is no session to ask and no secret key to look under. C-018's "pipe
+    // nothing" covers the provider miss as much as the host miss.
+    const stub = handshakeStub('bitbucket.example', 'bitbucket');
+    const d = deps(stub);
+    const outcome = await castVote(d, 'ghcr.io/x/y', false);
+    assert.ok(!outcome.ok);
+    assert.strictEqual(
+      outcome.message,
+      'No credential for bitbucket.example — Grimoire cannot vote there.',
+    );
+    assert.strictEqual(d.confirms, 0, 'the user was asked to confirm an impossible vote');
+    assert.strictEqual(fs.readFileSync(stub.argvLog, 'utf8').trim().split('\n').length, 1);
+    assert.ok(!fs.existsSync(`${stub.executable}.stdin`));
+  });
+
+  test('a grim that vanishes between the handshake and the vote says so', async () => {
+    // The handshake answers, then deletes itself: the MUTATION call is the one
+    // that hits ENOENT. It must read as a failure, never as a cast vote.
+    const stub = writeRateStub(
+      `printf '%s' '{"ref":"ghcr.io/x/y","action":"up","up":3,"url":"u",` +
+        `"provider":"github","host":"ghes.corp.example"}'\n` +
+        `rm -f "$0"\n`,
+    );
+    stubs.push(stub);
+    const outcome = await castVote(
+      deps(stub, { secrets: fakeSecrets({ [voteSecretKey('ghes.corp.example')]: TOKEN }) }),
+      'ghcr.io/x/y',
+      false,
+    );
+    assert.ok(!outcome.ok);
+    assert.strictEqual(outcome.message, 'grim executable not found');
+    // And how the caller reads that failure: unknown, never "not voted".
+    assert.strictEqual(voteStateAfter(null), 'unknown');
+  });
+
+  test('retracting needs no disclosure — it posts nothing new', async () => {
+    // confirmVote's other branch opens a MODAL and waits for a click, which no
+    // headless run can produce; castVote's handling of a *declined* disclosure
+    // is pinned by 'the disclosure is asked before authentication' above.
+    assert.strictEqual(await confirmVote('github', 'github.com', true), true);
   });
 });
 
