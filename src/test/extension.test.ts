@@ -2978,6 +2978,91 @@ suite('extension integration', () => {
     );
   });
 
+  // --- C-018 / R-3: the click-to-vote wiring. castVote is pinned in isolation
+  // --- by rating.test.ts; the panel that CALLS it was pinned nowhere, so a
+  // --- message-name typo or a dropped await passed the whole suite.
+
+  test('details vote wiring: the panel votes with the right argv and renders the ANSWER', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/rated';
+    const token = 'gho_INTEGRATION_must_never_be_logged';
+    canned(stub, 'search', {
+      items: [{ ...searchItem(repo), rating: { up: 21, url: 'https://forge.example/d/1' } }],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    // The forge DISAGREES with the request: the click was an upvote, the answer
+    // is "removed" with a count nothing here could have guessed. GitLab's
+    // awardEmojiToggle really does toggle, so this is the shipping case, not a
+    // contrived one — and a stub that always agrees cannot tell "read the
+    // answer" apart from "assume it worked". One canned doc serves both calls;
+    // castVote reads only provider/host off the handshake.
+    canned(stub, 'rate', {
+      ref: repo,
+      action: 'removed',
+      up: 12,
+      url: 'https://forge.example/d/1',
+      provider: 'github',
+      host: 'api.github.com',
+      viewer_up: null,
+    });
+
+    const auth = vscode.authentication as unknown as { getAccounts: unknown; getSession: unknown };
+    const window = vscode.window as unknown as { showWarningMessage: unknown };
+    const originalAccounts = auth.getAccounts;
+    const originalSession = auth.getSession;
+    const originalWarn = window.showWarningMessage;
+    let disclosures = 0;
+    try {
+      const account = { id: 'a', label: 'octocat' };
+      auth.getAccounts = async () => [account];
+      auth.getSession = async () => ({ id: 's', accessToken: token, account, scopes: [] });
+      window.showWarningMessage = async () => {
+        disclosures += 1;
+        return 'Vote';
+      };
+      await api.providers.sidebar.refresh(); // loads the rated row into the catalog
+      fs.rmSync(stub.argvLog, { force: true });
+      const { panel, posts } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'vote', remove: false });
+
+      // 1. Nothing is posted publicly before the user is asked (C-018).
+      assert.strictEqual(disclosures, 1, 'the disclosure did not fire exactly once');
+
+      // 2. The argv a vote actually needs: an uncredentialed handshake, then a
+      //    mutation declaring the host that handshake named.
+      const rates = argvLines(stub).filter((l) => l.startsWith('rate'));
+      assert.strictEqual(rates.length, 2, `expected handshake + mutation: ${rates.join(' | ')}`);
+      assert.ok(rates[0]?.includes('--dry-run'), `the handshake runs first: ${rates[0]}`);
+      assert.ok(!rates[0]?.includes('--token-stdin'), 'the handshake asked for a credential');
+      assert.ok(!rates[1]?.includes('--dry-run'), `the second call mutates: ${rates[1]}`);
+      assert.ok(rates[1]?.includes('--up'), `a vote, not a retraction: ${rates[1]}`);
+      // The extension owns the prompt, so grim's own must never fire.
+      assert.ok(rates[1]?.includes('--yes'), `--yes missing: ${rates[1]}`);
+      assert.ok(rates[1]?.includes('--token-stdin'), 'the credential did not go over stdin');
+      assert.ok(
+        rates[1]?.includes('--token-host api.github.com'),
+        `the piped credential declared no host: ${rates[1]}`,
+      );
+      assert.ok(!fs.readFileSync(stub.argvLog, 'utf8').includes(token), 'the token reached argv');
+
+      // 3. R-3: the panel renders what the forge SAID, not what was clicked. A
+      //    wiring that echoed the request would read 'voted' and 22 here.
+      const rated = posts.filter((vm) => vm.repo === repo && vm.rating);
+      const last = rated[rated.length - 1];
+      assert.ok(last, 'the panel never re-rendered after the vote');
+      assert.strictEqual(last.rating?.vote, 'not-voted', 'the panel echoed the click');
+      assert.strictEqual(last.rating?.up, 12, 'the panel invented a count');
+    } finally {
+      auth.getAccounts = originalAccounts;
+      auth.getSession = originalSession;
+      window.showWarningMessage = originalWarn;
+      canned(stub, 'search', { items: [] });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
   // --- refused-update wiring (grim >= 0.13.0's normal-report refusal) ---
   //
   // The refusal moved off the error document and onto the report: exit 65 with
