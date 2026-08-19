@@ -31,6 +31,12 @@ export const MINIMUM_GRIM_VERSION = '0.11.0';
  *  floor, so every answer is live: see {@link supportsRegistryEditing}. */
 export const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
 
+/** First grim carrying `grim rate` — the whole ratings write path. Gates the
+ *  vote affordance ONLY: an older grim keeps every other feature working, so
+ *  this sits above the floor rather than moving {@link MINIMUM_GRIM_VERSION}.
+ *  See {@link supportsRating}. */
+export const RATING_GRIM_VERSION = '0.14.0';
+
 /** True when the resolved grim can be handed browse-filter patterns and a
  *  plain-HTTP opt-in, and asked to edit a registry in place. An older one
  *  rejects those flags and the whole `set` verb as unknown (clap, exit 64), so
@@ -39,6 +45,15 @@ export const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
  *  same reasoning as {@link grimTooOld}. Pure; exported for tests. */
 export function supportsRegistryEditing(version: string): boolean {
   return !isNewerVersion(REGISTRY_EDIT_GRIM_VERSION, version);
+}
+
+/** True when the resolved grim can cast a vote (`grim rate`). An older one
+ *  rejects the whole subcommand as unknown (clap, exit 64), so the UI hides
+ *  the vote affordance rather than offering a control whose every use fails.
+ *  Unparseable versions read as unsupported, same reasoning as
+ *  {@link grimTooOld}. Pure; exported for tests. */
+export function supportsRating(version: string): boolean {
+  return !isNewerVersion(RATING_GRIM_VERSION, version);
 }
 
 /** True when a resolved grim is older than {@link MINIMUM_GRIM_VERSION}.

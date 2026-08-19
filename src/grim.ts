@@ -28,6 +28,16 @@ export interface SearchSource {
   locator: string;
 }
 
+/** The community rating `grim search` carries on a row, when the browse source
+ *  published one. ABSENT/null means *unrated* — never a zero-vote record, and
+ *  never a claim about the viewer's own vote (grim's search JSON has no
+ *  identity). `url` is OPAQUE: the extension opens it as-is and constructs no
+ *  forge URL of its own. */
+export interface SearchRating {
+  up: number;
+  url: string;
+}
+
 export interface SearchItem {
   kind: string | null;
   repo: string;
@@ -41,6 +51,9 @@ export interface SearchItem {
   created: string | null;
   deprecated: string | null;
   replaced_by?: string | null;
+  /** Optional AND nullable: a grim that predates the field omits the key, and a
+   *  present-but-null value is grim's "unrated". Both read as unrated. */
+  rating?: SearchRating | null;
   status: string;
 }
 
@@ -330,6 +343,33 @@ export interface ConfigWriteResult {
   dry_run: boolean;
 }
 
+/** `grim rate <ref> --format json`: one single-object report. Every field is
+ *  always present; nullable means null (`up`/`url` are null when the forge
+ *  reported no counter or no thread link). `action` is grim's word for what it
+ *  did ("added" / "removed"); `url` is OPAQUE — the extension opens it as-is
+ *  and never constructs a forge URL of its own. */
+export interface RateReport {
+  ref: string;
+  action: string;
+  up: number | null;
+  url: string | null;
+  provider: string | null;
+  /** The host the vote was (or, under `--dry-run`, would be) sent to, after
+   *  grim's provider default and any user-config override. This is the ONLY
+   *  place the extension may learn that host: an index carries none, and
+   *  guessing `api.github.com` would pipe a github.com token at a GHES
+   *  instance. `null` when no host resolves — grim cannot vote here. */
+  host: string | null;
+  /** Whether the forge reports THIS credential's account as having already
+   *  upvoted — answered only by `--dry-run --token-stdin` (C-023).
+   *
+   *  `null` means *not asked, or not knowable*: no credential piped, no host
+   *  resolved, or the query failed. It never means "not voted". Rendering a
+   *  failed read as `false` is the precise lie R-3 exists to prevent, so this
+   *  maps to `'unknown'` and renders neutral. */
+  viewer_up?: boolean | null;
+}
+
 // --- Results
 
 export type GrimResult<T> =
@@ -361,6 +401,11 @@ export interface RunOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs?: number;
+  /** Written to the child's stdin, which is then closed. The ONLY way a
+   *  credential reaches grim: argv lands in world-readable /proc/<pid>/cmdline
+   *  and env in /proc/<pid>/environ, stdin in neither. Omit for every other
+   *  call — grim's reporting commands read no stdin. */
+  stdin?: string;
 }
 
 interface ErrorDoc {
@@ -491,9 +536,7 @@ export function refusedNames(value: unknown): string[] {
  *  knows the rule, shared by runJson's `--format json` and the force retry. */
 export function withFlags(args: string[], flags: string[]): string[] {
   const sep = args.indexOf('--');
-  return sep === -1
-    ? [...args, ...flags]
-    : [...args.slice(0, sep), ...flags, ...args.slice(sep)];
+  return sep === -1 ? [...args, ...flags] : [...args.slice(0, sep), ...flags, ...args.slice(sep)];
 }
 
 /** The FIRST positional an action's argv names — the reference for `add`, the
@@ -550,6 +593,16 @@ export function runJson<T>(
         resolve(parseReport<T>(stdout, exitCode, stderr));
       },
     );
+    if (options.stdin !== undefined) {
+      // grim can refuse and exit BEFORE draining stdin (`rate` exits 64 on a
+      // multi-line token, 80 on an empty one), and writing into a pipe whose
+      // read end is gone throws an UNCAUGHT EPIPE without this listener —
+      // nodejs/node#40085, still open, and not Windows-specific. The exit code
+      // is the real signal, so the write error is dropped: the call still
+      // resolves through parseReport as a failed vote, never as a crash.
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(options.stdin);
+    }
   });
 }
 
@@ -937,4 +990,42 @@ export function registryRmArgs(alias: string): string[] {
 
 export function registryUseArgs(alias: string): string[] {
   return ['config', 'registry', 'use', '--', alias];
+}
+
+/** `grim rate` — the vote write. `--yes` is UNCONDITIONAL: the extension
+ *  carries its own "this posts publicly" disclosure and is a non-interactive
+ *  caller, which grim otherwise refuses with exit 64. `--token-stdin` rides
+ *  along only when a credential is actually being piped; without one grim runs
+ *  its own credential ladder instead of reading an empty stdin (exit 80).
+ *  `reference` is a catalog ref and may start with "-"; same `--` treatment as
+ *  every other positional here. */
+export function rateArgs(
+  reference: string,
+  options: {
+    remove?: boolean;
+    tokenStdin?: boolean;
+    /** Resolve the row, provider and host and change nothing. Needs no
+     *  credential and makes no forge request, so it works offline — this is
+     *  the handshake that tells the extension WHICH host to authenticate
+     *  against, before any credential exists to leak. */
+    dryRun?: boolean;
+    /** Declares which host the piped credential belongs to. grim compares it
+     *  to the host it is about to contact and exits 80 naming both on a
+     *  mismatch, BEFORE the token reaches any header — the backstop that holds
+     *  even when our own host selection is wrong. Valid only alongside
+     *  `--token-stdin`; grim exits 64 for it alone. */
+    tokenHost?: string;
+  } = {},
+): string[] {
+  const args = ['rate', options.remove ? '--remove' : '--up', '--yes'];
+  if (options.dryRun) {
+    args.push('--dry-run');
+  }
+  if (options.tokenStdin) {
+    args.push('--token-stdin');
+    if (options.tokenHost !== undefined) {
+      args.push('--token-host', options.tokenHost);
+    }
+  }
+  return [...args, '--', reference];
 }

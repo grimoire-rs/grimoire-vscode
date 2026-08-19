@@ -67,6 +67,36 @@ export interface CardSource {
   locator: string;
 }
 
+/**
+ * Invariant R-3, as a type. The viewer's own vote has THREE states and is
+ * never a boolean: an absent or unreadable record is `'unknown'`, which
+ * renders neutral and must never render as "not voted".
+ *
+ * A boolean here would have exactly one wrong answer available for "we do not
+ * know", and `!voted` would silently pick it. Mirrors grim's own tri-state
+ * (`votes.json`, C-008): written only after a successful mutation, aged out of
+ * its TTL window back to unknown, and unknown again whenever the record cannot
+ * be read.
+ */
+export type VoteState = 'voted' | 'not-voted' | 'unknown';
+
+/**
+ * A row's community rating. `null`/absent on a row means *unrated* — no
+ * rating thread exists, nothing is votable, and that is not a zero.
+ */
+export interface RatingVM {
+  /** Aggregate upvote count from the index sidecar. Everyone's votes, never
+   *  a statement about this viewer's. */
+  up: number;
+  /** Opaque forge thread link, carried through from the catalog row. The
+   *  extension opens it and never parses or constructs a forge URL. */
+  url: string;
+  /** {@link VoteState} — `'unknown'` everywhere until a mutation says
+   *  otherwise. Browse cards are always `'unknown'`: the sidebar has no forge
+   *  identity, exactly like the prerendered static site (C-019). */
+  vote: VoteState;
+}
+
 export interface CardVM {
   repo: string;
   name: string;
@@ -92,6 +122,9 @@ export interface CardVM {
   /** data: URI of the artifact logo when the details cache has one (prefetched
    *  or previously opened); shown in place of the codicon tile. */
   logoUri?: string | null;
+  /** Community rating from the browse row. Absent on a grim that predates the
+   *  field and null on an unrated row — both render nothing. */
+  rating?: RatingVM | null;
 }
 
 /** One configured registry, as the scope Browse actually searched reports it
@@ -338,6 +371,12 @@ export interface DetailsVM {
   keywords: string[] | null;
   /** data: URI for the artifact logo, when the package ships one. */
   logoUri: string | null;
+  /** Community rating; null when the row is unrated (no thread to vote on). */
+  rating: RatingVM | null;
+  /** Host-stamped: the resolved grim is at least RATING_GRIM_VERSION, so the
+   *  vote affordance may render. Absent/false hides the button and leaves the
+   *  count — an older grim keeps every other feature (C-018). */
+  canVote?: boolean;
   busy: string | null;
   error: string | null;
   /** Skeleton view model posted instantly on open before the full grim
@@ -384,7 +423,11 @@ export type DetailsToHost =
   /** Click on the failed revalidate indicator — host shows the stored message. */
   | { type: 'revalidateError' }
   /** Pin button / body double-click: promote the preview tab to permanent. */
-  | { type: 'promote' };
+  | { type: 'promote' }
+  /** Cast or retract the viewer's upvote. Carries no ref and no host: the host
+   *  derives the artifact from repoOf(panel) and asks grim itself which host
+   *  the vote resolves to, same posture as `install`. */
+  | { type: 'vote'; remove: boolean };
 
 /** Background stale-while-revalidate status shown top-right (warm reopens only). */
 export type RevalidateState = 'checking' | 'done' | 'failed';

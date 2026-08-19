@@ -97,6 +97,7 @@ export function detailsVM(overrides: Partial<DetailsVM> = {}): DetailsVM {
     license: 'Apache-2.0',
     keywords: ['cli', 'oci'],
     logoUri: null,
+    rating: null,
     busy: null,
     error: null,
     ...overrides,

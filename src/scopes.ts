@@ -554,9 +554,17 @@ export class ScopeService {
     this.output.appendLine(`grim executable: ${this.resolveExecutable()}`);
   }
 
-  run<T>(args: string[], scope: Scope): Promise<GrimResult<T>> {
+  /** `stdin` is written to the child and the pipe closed — the credential path
+   *  for `grim rate --token-stdin`, and the reason a vote does not spawn grim
+   *  behind this method's back: executable resolution, extraEnv, cwd and the
+   *  stale-binary diagnosis below all belong here. The log line prints ARGV
+   *  only, so a piped token never reaches the output channel. */
+  run<T>(args: string[], scope: Scope, stdin?: string): Promise<GrimResult<T>> {
     const config = readConfig();
     const options: RunOptions = { env: config.extraEnv };
+    if (stdin !== undefined) {
+      options.stdin = stdin;
+    }
     const folder = this.projectFolder();
     if (scope === 'project' && folder) {
       options.cwd = folder;
