@@ -174,6 +174,30 @@ it): launch with `GRIM_HOME` pointing at a path that does not exist, or stop the
 registries with `docker compose -f test/manual/docker-compose.yml down` and hit
 Refresh.
 
+## Curated annotations and support channels
+
+The rig's `support-desk` skill is the annotation showcase: it publishes every
+curated field (`authors`, `vendor`, `url`, `documentation`, `compatibility`) plus
+all four support channels, with `contact` as a bare email address. Its details
+panel is the one that paints a full RESOURCES panel, a PACKAGE **Compatibility**
+row and a SUPPORT panel. `hello-world` in the same rig is the empty case — a
+derived `vendor` and nothing else, so no SUPPORT panel at all.
+
+Support channels ride the description companion, not the version manifest, so
+editing one moves the companion digest while every artifact digest stays put.
+The details cache compares both, so reopening the panel picks the new link up on
+revalidate — `../grimoire/test/manual/README.md` walks that demo.
+
+The same pair backs the live contract test, which self-skips unless pointed at a
+resolvable reference:
+
+```sh
+cd ../grimoire && test/manual/scripts/bootstrap.sh
+cd -
+GRIM_LIVE_ANNOTATED_REF=localhost:5050/grimoire/skills/support-desk \
+  GRIM_INSECURE_REGISTRIES=localhost:5050,localhost:5060 xvfb-run -a npm test
+```
+
 ## Notes
 
 - The rig's registries are plain HTTP; `GRIM_INSECURE_REGISTRIES` in the launch
