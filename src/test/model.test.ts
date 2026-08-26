@@ -35,7 +35,10 @@ import {
   hasUpdate,
   INTERACTIVE_SELECTOR,
   isInteractiveTarget,
+  isOpenableUrl,
   isValidRepo,
+  contactUrl,
+  readSupport,
   normalizeKind,
   parseAddRegistryLink,
   parseBundleMembers,
@@ -818,6 +821,170 @@ suite('details view model', () => {
     assert.strictEqual(vm.license, 'MIT');
     assert.strictEqual(vm.tags, null); // no describe -> no tag list
     assert.strictEqual(vm.published, null);
+  });
+
+  // The payloads below are VERBATIM captures from a real grim (0.13.0, duo) run
+  // against the grimoire manual rig, not hand-written guesses:
+  //   grim describe localhost:5050/grimoire/skills/support-desk --format json
+  //   grim describe localhost:5050/grimoire/skills/hello-world  --format json
+  // support-desk is the rig's annotation showcase (every curated field plus all
+  // four support channels, contact as a BARE ADDRESS); hello-world carries only
+  // a derived vendor, so both branches are pinned against real data.
+  const supportDeskDescribe = {
+    ref: 'localhost:5050/grimoire/skills/support-desk:latest',
+    digest: 'sha256:aa11',
+    kind: 'skill',
+    name: 'support-desk',
+    title: 'support-desk',
+    description: 'Annotation showcase.',
+    summary: null,
+    version: '1.0.0',
+    license: 'Apache-2.0',
+    repository: 'https://github.com/grimoire-rs/grimoire',
+    revision: 'acfcb09433be9d434dbfbcca1e14088468500f54',
+    created: '2026-08-27T00:10:20+02:00',
+    keywords: ['support'],
+    deprecated: null,
+    replaced_by: null,
+    tags: ['1.0.0', 'latest'],
+    authors: 'Grimoire Platform Team',
+    vendor: 'Grimoire Manual Rig',
+    url: 'https://grimoire.rs',
+    documentation: 'https://grimoire.rs/publishing.html#metadata-descriptive',
+    compatibility: 'claude>=2',
+    support: {
+      issues: 'https://github.com/grimoire-rs/grimoire/issues',
+      chat: 'https://teams.microsoft.com/l/channel/manual-rig',
+      contact: 'ai-platform@example.invalid',
+      security: 'https://example.invalid/security',
+    },
+  };
+
+  const helloWorldDescribe = {
+    ref: 'localhost:5050/grimoire/skills/hello-world:latest',
+    digest: 'sha256:bb22',
+    kind: 'skill',
+    name: 'hello-world',
+    title: 'hello-world',
+    description: 'Smoke test.',
+    summary: null,
+    version: '1.0.0',
+    license: null,
+    repository: null,
+    revision: 'acfcb09433be9d434dbfbcca1e14088468500f54',
+    created: '2026-08-27T00:10:20+02:00',
+    keywords: null,
+    deprecated: null,
+    replaced_by: null,
+    tags: ['1.0.0', 'latest'],
+    authors: null,
+    vendor: 'grimoire',
+    url: null,
+    documentation: null,
+    compatibility: null,
+    support: { issues: null, chat: null, contact: null, security: null },
+  };
+
+  test('carries grim\'s curated annotations onto the VM', () => {
+    const vm = buildDetailsVM({
+      repo: 'localhost:5050/grimoire/skills/support-desk',
+      searchItem: null,
+      describe: supportDeskDescribe,
+      fetch: null,
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.authors, 'Grimoire Platform Team');
+    assert.strictEqual(vm.vendor, 'Grimoire Manual Rig');
+    // grim's `url` is the project page; `repository` stays the source forge.
+    assert.strictEqual(vm.homepage, 'https://grimoire.rs');
+    assert.strictEqual(vm.sourceRepository, 'https://github.com/grimoire-rs/grimoire');
+    assert.strictEqual(vm.documentation, 'https://grimoire.rs/publishing.html#metadata-descriptive');
+    assert.strictEqual(vm.compatibility, 'claude>=2');
+    assert.deepStrictEqual(vm.support, {
+      issues: 'https://github.com/grimoire-rs/grimoire/issues',
+      chat: 'https://teams.microsoft.com/l/channel/manual-rig',
+      contact: 'ai-platform@example.invalid',
+      security: 'https://example.invalid/security',
+    });
+  });
+
+  test('a real payload with no annotations reads null, never undefined', () => {
+    const vm = buildDetailsVM({
+      repo: 'localhost:5050/grimoire/skills/hello-world',
+      searchItem: null,
+      describe: helloWorldDescribe,
+      fetch: null,
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.vendor, 'grimoire', 'grim derives a vendor even here');
+    for (const field of ['authors', 'homepage', 'documentation', 'compatibility'] as const) {
+      assert.strictEqual(vm[field], null, `${field} must be null, not undefined`);
+    }
+    assert.deepStrictEqual(vm.support, {
+      issues: null,
+      chat: null,
+      contact: null,
+      security: null,
+    });
+  });
+
+  test('a grim predating the annotations omits the keys entirely — still null', () => {
+    // The whole compatibility story for this surface: no version gate, no
+    // polyfill marker, `?? null` at the read site. An older grim's payload has
+    // no `authors`/`support` key at all, which must not differ from a null one.
+    const vm = buildDetailsVM({
+      repo: 'ghcr.io/x/skills/y',
+      searchItem: null,
+      describe: {
+        ref: 'ghcr.io/x/skills/y:latest',
+        digest: 'sha256:1',
+        kind: 'skill',
+        name: 'y',
+        title: null,
+        description: null,
+        summary: null,
+        version: null,
+        license: null,
+        repository: null,
+        revision: null,
+        created: null,
+        keywords: null,
+        deprecated: null,
+        replaced_by: null,
+        tags: [],
+      },
+      fetch: null,
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.authors, null);
+    assert.strictEqual(vm.vendor, null);
+    assert.strictEqual(vm.homepage, null);
+    assert.strictEqual(vm.documentation, null);
+    assert.strictEqual(vm.compatibility, null);
+    assert.deepStrictEqual(vm.support, {
+      issues: null,
+      chat: null,
+      contact: null,
+      security: null,
+    });
+  });
+
+  test('the skeleton VM carries the same empty shape, never undefined', () => {
+    const vm = buildSkeletonVM('ghcr.io/x/skills/y', null, scopesVM);
+    assert.strictEqual(vm.authors, null);
+    assert.strictEqual(vm.compatibility, null);
+    assert.deepStrictEqual(vm.support, {
+      issues: null,
+      chat: null,
+      contact: null,
+      security: null,
+    });
   });
 
   test('bundle parses members instead of markdown', () => {
@@ -2219,5 +2386,91 @@ suite('view options', () => {
     const items = buildCards([searchItem()], [installedScope('global')]);
     const state = sidebarState({ mode: 'installed', items });
     assert.strictEqual(installedCards(state, DEFAULT_FILTER).length, 1);
+  });
+});
+
+suite('support channels', () => {
+  test('readSupport normalizes an absent object into four nulls', () => {
+    assert.deepStrictEqual(readSupport(undefined), {
+      issues: null,
+      chat: null,
+      contact: null,
+      security: null,
+    });
+  });
+
+  test('readSupport passes real channel values straight through', () => {
+    assert.deepStrictEqual(
+      readSupport({
+        issues: 'https://github.com/grimoire-rs/grimoire/issues',
+        chat: null,
+        contact: 'ai-platform@example.invalid',
+        security: null,
+      }),
+      {
+        issues: 'https://github.com/grimoire-rs/grimoire/issues',
+        chat: null,
+        contact: 'ai-platform@example.invalid',
+        security: null,
+      },
+    );
+  });
+
+  test('contactUrl wraps a bare address in mailto:', () => {
+    // The rig's real value — grim publishes what the maintainer authored, and
+    // an address is the common shape.
+    assert.strictEqual(
+      contactUrl('ai-platform@example.invalid'),
+      'mailto:ai-platform@example.invalid',
+    );
+    assert.strictEqual(contactUrl('  ai-platform@example.invalid  '), 'mailto:ai-platform@example.invalid');
+  });
+
+  test('contactUrl keeps an already-schemed value verbatim', () => {
+    assert.strictEqual(contactUrl('https://acme.example/support'), 'https://acme.example/support');
+    assert.strictEqual(contactUrl('mailto:team@acme.example'), 'mailto:team@acme.example');
+  });
+
+  test('contactUrl refuses to invent a scheme for arbitrary text', () => {
+    // The handover's explicit rule: no scheme AND no address shape -> plain
+    // text, never a guessed mailto:.
+    for (const value of [
+      'Ask in #platform',
+      'the platform team',
+      '',
+      '   ',
+      'a@b',
+      'two@addresses@here.example',
+      'spaced address@acme.example',
+    ]) {
+      assert.strictEqual(contactUrl(value), null, `must not link ${JSON.stringify(value)}`);
+    }
+  });
+
+  test('isOpenableUrl admits web links and address-shaped mailto only', () => {
+    assert.ok(isOpenableUrl('https://acme.example'));
+    assert.ok(isOpenableUrl('http://acme.example'));
+    assert.ok(isOpenableUrl('mailto:team@acme.example'));
+    assert.ok(!isOpenableUrl('mailto:not an address'));
+    assert.ok(!isOpenableUrl('mailto:'));
+  });
+
+  test('isOpenableUrl refuses script and file schemes at the host boundary', () => {
+    // The webview posts these; the host is the gate. A mailto: carrying header
+    // injection is refused here even though contactUrl would never have made it.
+    for (const url of [
+      'javascript:alert(1)',
+      'data:text/html,<script>alert(1)</script>',
+      'file:///etc/passwd',
+      'vscode://extension/evil',
+      'mailto:a@b.example%0ABcc:victim@example.com',
+      // `?` opens the mailto header list — `?bcc=`/`?body=` are a prefilled
+      // draft the viewer did not write, so an address carrying one is refused.
+      'mailto:a@b.example?subject=x',
+      'mailto:a@b.example?bcc=victim',
+      'mailto:a@b.example#frag',
+    ]) {
+      assert.ok(!isOpenableUrl(url), `must refuse ${url}`);
+    }
   });
 });

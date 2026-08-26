@@ -15,6 +15,7 @@ import {
   type ContextInfo,
   type DigestResult,
   type ItemsEnvelope,
+  type DescribeResult,
   type RegistryFieldEntry,
   type StatusItem,
 } from '../grim';
@@ -35,6 +36,13 @@ const GRIM_VERSION = HAVE_GRIM
   ? (/(\d+\.\d+\.\d+)/.exec(VERSION_PROBE.stdout ?? '')?.[1] ?? null)
   : null;
 const NETWORK = process.env['GRIM_LIVE_NETWORK'] === '1';
+// A reference resolvable by the grim under test, carrying grim's curated
+// annotations — the grimoire manual rig's `support-desk` showcase. Unset (the
+// default, and CI) skips the annotation gate; the rig is a local docker
+// registry, not something a test may assume.
+//   cd ../grimoire && test/manual/scripts/bootstrap.sh
+//   GRIM_LIVE_ANNOTATED_REF=localhost:5050/grimoire/skills/support-desk npm test
+const ANNOTATED_REF = process.env['GRIM_LIVE_ANNOTATED_REF'] ?? null;
 
 suite('grim live (real binary)', function () {
   this.timeout(30000);
@@ -161,6 +169,45 @@ suite('grim live (real binary)', function () {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  // THE contract gate for grimoire#106's read side: the curated annotation keys
+  // and the `support` object are what the details rail now renders, and this is
+  // the only check that reads them off a REAL binary rather than a fixture.
+  // Deliberately NOT a version gate — every field is additive and nullable, so
+  // an older grim omitting them is correct behaviour, not a failure. What this
+  // pins is that a grim which HAS them answers in the shape grim.ts declares.
+  (ANNOTATED_REF ? test : test.skip)(
+    'describe carries the curated annotations and the support object',
+    async () => {
+      const result = await runJson<DescribeResult>(GRIM, describeArgs(ANNOTATED_REF ?? ''), {
+        timeoutMs: 20000,
+      });
+      assert.ok(result.ok, result.ok ? '' : `describe not ok: ${JSON.stringify(result)}`);
+      if (!result.ok) {
+        return;
+      }
+      const d = result.value;
+      for (const field of ['authors', 'vendor', 'url', 'documentation'] as const) {
+        assert.strictEqual(typeof d[field], 'string', `${field} is a populated string`);
+      }
+      // Provenance is derived by default now — no --git needed at publish time.
+      assert.strictEqual(typeof d.created, 'string', 'created is derived by default');
+      assert.strictEqual(typeof d.revision, 'string', 'revision is derived by default');
+      // Skills-only, and the showcase is a skill.
+      assert.strictEqual(typeof d.compatibility, 'string');
+      const support = d.support;
+      assert.ok(support, 'support object present');
+      // grim serializes all four keys, null for a channel the publisher left
+      // unset — so the shape is fixed even where the values are not.
+      for (const channel of ['issues', 'chat', 'contact', 'security'] as const) {
+        const value = support?.[channel];
+        assert.ok(
+          value === null || typeof value === 'string',
+          `support.${channel} is a string or null, got ${typeof value}`,
+        );
+      }
+    },
+  );
 
   // describe resolves through the registry, so it can touch the network — gated.
   // Asserts the envelope parser yields a clean discriminated result whether grim

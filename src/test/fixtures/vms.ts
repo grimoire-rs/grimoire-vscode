@@ -95,6 +95,12 @@ export function detailsVM(overrides: Partial<DetailsVM> = {}): DetailsVM {
     digest: 'sha256:c6ed',
     sourceRepository: 'https://github.com/grimoire-rs/grimoire',
     license: 'Apache-2.0',
+    authors: null,
+    vendor: null,
+    homepage: null,
+    documentation: null,
+    compatibility: null,
+    support: { issues: null, chat: null, contact: null, security: null },
     keywords: ['cli', 'oci'],
     logoUri: null,
     rating: null,
@@ -522,6 +528,45 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
         changelogMarkdown: '# 1.0.0',
         tags: ['latest', '1.5.0', '1.4.0', '1.3.0', '1.2.0', '1.1.0', '1.0.0'],
         installs: [projectInstall],
+      }),
+    ),
+  );
+  // grim's curated annotations, as the manual rig's `support-desk` publishes
+  // them: every RESOURCES row, the skills-only PACKAGE compatibility row and a
+  // full SUPPORT panel whose contact is a bare address.
+  add(
+    'details-annotations-full',
+    r.renderDetails(
+      detailsVM({
+        authors: 'Grimoire Platform Team',
+        vendor: 'Grimoire Manual Rig',
+        homepage: 'https://grimoire.rs',
+        documentation: 'https://grimoire.rs/publishing.html#metadata-descriptive',
+        compatibility: 'claude>=2',
+        support: {
+          issues: 'https://github.com/grimoire-rs/grimoire/issues',
+          chat: 'https://teams.microsoft.com/l/channel/manual-rig',
+          contact: 'ai-platform@example.invalid',
+          security: 'https://example.invalid/security',
+        },
+      }),
+    ),
+  );
+  // The other half of the matrix: only a support channel, and a contact that is
+  // neither a URL nor an address — RESOURCES stays on its own fields, SUPPORT
+  // renders one link row and one inert text row.
+  add(
+    'details-annotations-support-only',
+    r.renderDetails(
+      detailsVM({
+        sourceRepository: null,
+        license: null,
+        support: {
+          issues: 'https://acme.example/issues',
+          chat: null,
+          contact: 'Ask in #platform',
+          security: null,
+        },
       }),
     ),
   );

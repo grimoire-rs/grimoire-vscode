@@ -2395,6 +2395,163 @@ suite('details rendering', () => {
     assert.ok(html.includes('json-key'), 'keys are tokenized');
     assert.ok(!html.includes('id="md-contents"'), 'mcp bypasses markdown-it for CONTENTS');
   });
+
+  // --- grim's curated annotations (grimoire#106) ---
+
+  /** The rig's annotation showcase, as it reaches the VM. */
+  const annotated = {
+    authors: 'Grimoire Platform Team',
+    vendor: 'Grimoire Manual Rig',
+    homepage: 'https://grimoire.rs',
+    documentation: 'https://grimoire.rs/publishing.html#metadata-descriptive',
+    compatibility: 'claude>=2',
+    support: {
+      issues: 'https://github.com/grimoire-rs/grimoire/issues',
+      chat: 'https://teams.microsoft.com/l/channel/manual-rig',
+      contact: 'ai-platform@example.invalid',
+      security: 'https://example.invalid/security',
+    },
+  };
+
+  test('RESOURCES carries homepage, documentation, authors and vendor', async () => {
+    const html = await litHtml(renderDetails(detailsVM(annotated)));
+    assert.ok(html.includes('data-url="https://grimoire.rs"'), 'homepage is a link row');
+    assert.ok(
+      html.includes('data-url="https://grimoire.rs/publishing.html#metadata-descriptive"'),
+      'documentation is a link row',
+    );
+    assert.ok(html.includes('codicon-book'), 'documentation gets the book codicon');
+    assert.ok(html.includes('Grimoire Platform Team'), 'authors render');
+    assert.ok(html.includes('codicon-organization'), 'authors get the organization codicon');
+    assert.ok(html.includes('Grimoire Manual Rig'), 'vendor renders');
+    // The source forge stays its own row — grim's `url` never replaces it.
+    assert.ok(html.includes('Source repository'));
+  });
+
+  test('an artifact carrying ONLY documentation still gets a RESOURCES panel', async () => {
+    // The widened early-out. Before it, `!sourceRepository && !license` returned
+    // nothing and the documentation link was silently dropped.
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          sourceRepository: null,
+          license: null,
+          documentation: 'https://acme.example/docs',
+        }),
+      ),
+    );
+    assert.ok(html.includes('RESOURCES'), 'panel renders');
+    assert.ok(html.includes('data-url="https://acme.example/docs"'));
+  });
+
+  test('RESOURCES is still omitted when every field is null', async () => {
+    const html = await litHtml(
+      renderDetails(detailsVM({ sourceRepository: null, license: null })),
+    );
+    assert.ok(!html.includes('RESOURCES'), 'empty panels are omitted');
+  });
+
+  test('SUPPORT renders one row per channel, contact as a mailto link', async () => {
+    const html = await litHtml(renderDetails(detailsVM(annotated)));
+    assert.ok(html.includes('SUPPORT'), 'panel renders');
+    assert.ok(html.includes('data-url="https://github.com/grimoire-rs/grimoire/issues"'));
+    assert.ok(html.includes('data-url="https://teams.microsoft.com/l/channel/manual-rig"'));
+    assert.ok(
+      html.includes('data-url="mailto:ai-platform@example.invalid"'),
+      'a bare address becomes a mailto link',
+    );
+    assert.ok(html.includes('data-url="https://example.invalid/security"'));
+    // Every link leaves through the one sanctioned host action.
+    assert.ok(!/<a [^>]*href="https?:/.test(html), 'no direct href out of the webview');
+  });
+
+  test('SUPPORT is omitted when every channel is null', async () => {
+    const html = await litHtml(renderDetails(detailsVM()));
+    assert.ok(!html.includes('SUPPORT'), 'most packages carry none — no empty panel');
+  });
+
+  test('a partial SUPPORT renders only the channels that are set', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          support: {
+            issues: 'https://acme.example/issues',
+            chat: null,
+            contact: null,
+            security: null,
+          },
+        }),
+      ),
+    );
+    assert.ok(html.includes('Issue tracker'));
+    assert.ok(!html.includes('Chat'));
+    assert.ok(!html.includes('Report a vulnerability'));
+  });
+
+  test('a contact page URL is labelled, not printed into the rail', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          support: {
+            issues: null,
+            chat: null,
+            contact: 'https://acme.example/very/long/support/portal/path',
+            security: null,
+          },
+        }),
+      ),
+    );
+    assert.ok(html.includes('>Contact</span>'), 'a URL contact gets a name');
+    assert.ok(
+      html.includes('data-url="https://acme.example/very/long/support/portal/path"'),
+      'and still links to the value grim published',
+    );
+  });
+
+  test('a non-address, non-URL contact renders as text, never a guessed link', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          support: { issues: null, chat: null, contact: 'Ask in #platform', security: null },
+        }),
+      ),
+    );
+    assert.ok(html.includes('Ask in #platform'), 'it is shown');
+    assert.ok(!html.includes('mailto:'), 'but no scheme is invented for it');
+    assert.ok(!html.includes('data-action="open" data-url="Ask'), 'and it is not clickable');
+  });
+
+  test('compatibility renders on a skill that declares one', async () => {
+    const html = await litHtml(renderDetails(detailsVM({ compatibility: 'claude>=2' })));
+    assert.ok(html.includes('Compatibility'));
+    assert.ok(html.includes('claude&gt;=2'), 'the value is escaped');
+  });
+
+  test('compatibility row is absent when grim reports none', async () => {
+    // Skills-only annotation: an mcp or a bundle is null by construction, and a
+    // permanent "Not provided" row there would be noise, not information.
+    const html = await litHtml(renderDetails(detailsVM({ kind: 'mcp', compatibility: null })));
+    assert.ok(!html.includes('Compatibility'));
+  });
+
+  test('hostile annotation values stay inert in the rail', async () => {
+    const hostile = '"><img src=x onerror=alert(1)>';
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          authors: hostile,
+          vendor: hostile,
+          homepage: hostile,
+          documentation: hostile,
+          compatibility: hostile,
+          support: { issues: hostile, chat: hostile, contact: hostile, security: hostile },
+        }),
+      ),
+    );
+    assert.ok(!html.includes('<img src=x'), 'no live img anywhere in the rail');
+    assert.ok(!html.includes('"><img'), 'attribute position stays escaped');
+    assert.ok(html.includes('&lt;img src=x'), 'it is there, escaped');
+  });
 });
 
 suite('json highlighting (item 6)', () => {
