@@ -199,6 +199,32 @@ export interface DescribeResult {
   // Absent (a grim predating the v2 surface) or false → no companion; the details
   // view shows in-tree content only. No compat shim (pre-1.0 policy).
   has_description?: boolean;
+  // Curated annotation fields, additive on the frozen interface exactly like
+  // `has_description` above: an older grim omits the key and `?? null` is the
+  // entire compatibility story — no MINIMUM_GRIM_VERSION bump, no polyfill
+  // marker. `authors`/`vendor`/`url`/`documentation` ride the version manifest;
+  // `compatibility` is a skills-only annotation and is null for every other kind.
+  authors?: string | null;
+  vendor?: string | null;
+  url?: string | null;
+  documentation?: string | null;
+  compatibility?: string | null;
+  // Repository-level support channels, read off the DESCRIPTION COMPANION's
+  // manifest rather than the version's — so a moved chat link updates every
+  // already-published version with no digest change on any artifact. grim always
+  // serializes all four keys (null when unset), so only the object itself is
+  // optional here, for a grim predating the surface.
+  support?: SupportChannels;
+}
+
+/** `DescribeResult.support` — the companion manifest's channel links. Naming
+ *  follows CycloneDX's externalReferences vocabulary, which is what grim
+ *  publishes. */
+export interface SupportChannels {
+  issues: string | null;
+  chat: string | null;
+  contact: string | null;
+  security: string | null;
 }
 
 export interface ActionReport {
