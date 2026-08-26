@@ -1049,6 +1049,13 @@ vscode-button.sm {
   cursor: default;
 }
 
+/* Curated annotations put publisher-authored values in this column (authors,
+   vendor, a contact address) — unbounded strings in a narrow rail. Wrap them
+   rather than let one long value push the rail wide. */
+.resource-label {
+  overflow-wrap: anywhere;
+}
+
 .resource-null {
   display: inline-flex;
   align-items: center;

@@ -15,6 +15,7 @@ import type {
   Scope,
   ScopesVM,
   SidebarState,
+  SupportVM,
   ViewOptions,
   VoteState,
 } from './protocol';
@@ -470,6 +471,67 @@ export function buildCards(
  * whether THIS viewer voted (C-008 rule 4: the aggregate may never overwrite
  * the viewer's own record).
  */
+/** Anything carrying an explicit URI scheme. Deliberately broad: this only
+ *  decides whether a value is a URL at all — {@link isOpenableUrl} is the gate
+ *  that decides which schemes the host will actually open. */
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/** An address shape strict enough to wrap in `mailto:` without inventing one
+ *  for arbitrary text: no whitespace, exactly one `@`, a dotted right side, and
+ *  none of the characters that turn a `mailto:` into more than an address —
+ *  `?` opens the header list (`?bcc=`, `?body=`), `#` a fragment, `%` percent
+ *  encoding that can smuggle a newline into a header. A real address carries
+ *  none of them, so excluding them costs nothing and closes the injection. */
+const EMAIL = /^[^\s@?#%&]+@[^\s@?#%&]+\.[^\s@?#%&]+$/;
+
+/**
+ * `support.contact` may be a bare email address rather than a URL — grim
+ * publishes whatever the maintainer authored. Only two shapes become a link:
+ * one that already carries a scheme, used verbatim, and one that looks like an
+ * address, wrapped in `mailto:`. Anything else returns null and renders as
+ * plain text; a scheme is never invented for an arbitrary string.
+ */
+export function contactUrl(contact: string): string | null {
+  const value = contact.trim();
+  if (HAS_SCHEME.test(value)) {
+    return value;
+  }
+  return EMAIL.test(value) ? `mailto:${value}` : null;
+}
+
+/**
+ * The host's allowlist for the webview's `open` action. Web links plus the one
+ * scheme the SUPPORT panel needs — and `mailto:` only for a value that is
+ * actually an address, so a webview posting `mailto:` + arbitrary text (header
+ * injection into a prefilled draft, say) is refused at the host boundary rather
+ * than trusted because {@link contactUrl} was supposed to have checked it.
+ */
+export function isOpenableUrl(url: string): boolean {
+  return /^https?:/.test(url) || (url.startsWith('mailto:') && EMAIL.test(url.slice(7)));
+}
+
+/** grim's `describe.support` on the wire. Mirrored here rather than imported
+ *  so this module stays free of grim.ts, same as {@link WireSearchItem}. */
+export interface WireSupport {
+  issues: string | null;
+  chat: string | null;
+  contact: string | null;
+  security: string | null;
+}
+
+/** Normalizes grim's `describe.support` for the VM. A grim predating the
+ *  surface omits the object outright and a current one nulls the channels the
+ *  publisher left unset, so both collapse to the same four nulls — which is
+ *  exactly what omits the SUPPORT panel. */
+export function readSupport(raw: WireSupport | undefined): SupportVM {
+  return {
+    issues: raw?.issues ?? null,
+    chat: raw?.chat ?? null,
+    contact: raw?.contact ?? null,
+    security: raw?.security ?? null,
+  };
+}
+
 export function readRating(raw: WireSearchItem['rating']): RatingVM | null {
   if (!raw || typeof raw.url !== 'string' || raw.url === '') {
     return null;
@@ -1643,6 +1705,14 @@ export interface DetailsSources {
     deprecated: string | null;
     replaced_by: string | null;
     tags: string[];
+    // Additive on grim's frozen interface — optional here for the same reason
+    // they are optional in grim.ts's DescribeResult: an older grim omits them.
+    authors?: string | null;
+    vendor?: string | null;
+    url?: string | null;
+    documentation?: string | null;
+    compatibility?: string | null;
+    support?: WireSupport;
   } | null;
   fetch: {
     ref: string;
@@ -1702,6 +1772,12 @@ export function buildSkeletonVM(
     digest: null,
     sourceRepository: null,
     license: null,
+    authors: null,
+    vendor: null,
+    homepage: null,
+    documentation: null,
+    compatibility: null,
+    support: readSupport(undefined),
     keywords: null,
     logoUri: null,
     rating: readRating(searchItem?.rating),
@@ -1822,6 +1898,14 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     sourceRepository:
       describe?.repository ?? searchItem?.repository ?? frontmatter?.repository ?? null,
     license: describe?.license ?? frontmatter?.license ?? null,
+    // No frontmatter counterpart exists for any of these: grim derives them or
+    // reads them off the manifest, so describe is the only source.
+    authors: describe?.authors ?? null,
+    vendor: describe?.vendor ?? null,
+    homepage: describe?.url ?? null,
+    documentation: describe?.documentation ?? null,
+    compatibility: describe?.compatibility ?? null,
+    support: readSupport(describe?.support),
     keywords: describe?.keywords ?? frontmatter?.keywords ?? null,
     logoUri: sources.logoUri,
     // Only `grim search` publishes a rating; describe/fetch carry none, so the

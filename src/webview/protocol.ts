@@ -332,6 +332,16 @@ export interface BundleMemberVM {
   description: string | null;
 }
 
+/** The four support channels grim publishes on the description companion.
+ *  Always the full shape on the VM — the host normalizes an older grim's
+ *  missing object into four nulls, so the webview never sees the optionality. */
+export interface SupportVM {
+  issues: string | null;
+  chat: string | null;
+  contact: string | null;
+  security: string | null;
+}
+
 export interface DetailsVM {
   repo: string;
   ref: string;
@@ -367,6 +377,22 @@ export interface DetailsVM {
   /** Resources panel. */
   sourceRepository: string | null;
   license: string | null;
+  /** Curated annotations (grim's describe `authors`/`vendor`); static rows. */
+  authors: string | null;
+  vendor: string | null;
+  /** grim's describe `url` — the project's own page, distinct from the source
+   *  forge in {@link sourceRepository}. Renamed on the VM the same way
+   *  `repository` became `sourceRepository`. */
+  homepage: string | null;
+  documentation: string | null;
+  /** Package panel: grim's skills-only compatibility annotation. Null for every
+   *  other kind by construction, so the row renders only when set. */
+  compatibility: string | null;
+  /** Support panel. Every channel null on most packages, which omits the panel
+   *  entirely. Carried on the description companion, so a channel can change
+   *  with no digest change on any artifact version — the details cache already
+   *  compares the companion digest, so nothing special is needed to see it. */
+  support: SupportVM;
   /** Tags panel (keywords). */
   keywords: string[] | null;
   /** data: URI for the artifact logo, when the package ships one. */

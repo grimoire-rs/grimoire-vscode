@@ -14,6 +14,7 @@ import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { repeat } from 'lit-html/directives/repeat.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createMarkdown } from './markdown';
+import { contactUrl } from './model';
 import type {
   BundleMemberVM,
   CardVM,
@@ -1045,11 +1046,37 @@ function renderPackagePanel(vm: DetailsVM): TemplateResult {
     'Revision',
     valueOr(vm.revision, (v) => html`<span class="mono">${v.slice(0, 7)}</span>`),
   )}
+  ${
+    // Skills-only annotation, null for every other kind by construction — so a
+    // permanent "Not provided" row on an mcp or a bundle would be noise, not
+    // information. The row appears only when grim reports a value.
+    vm.compatibility ? railRow('Compatibility', html`<span class="mono">${vm.compatibility}</span>`) : nothing
+  }
 </div>`;
 }
 
+/** One RESOURCES/SUPPORT link row. Every URL leaves through the host's
+ *  `open` action, which is the only sanctioned way out of the webview. */
+function resourceLinkRow(icon: string, label: string, url: string): TemplateResult {
+  return html`<div class="rail-link-row"><a href="#" class="resource-link" data-action="open" data-url="${url}"><span class="codicon codicon-${icon}"></span><span class="resource-label">${label}</span></a></div>`;
+}
+
+/** One RESOURCES static (non-link) row — the shape `License:` already uses. */
+function resourceStaticRow(icon: string, label: string): TemplateResult {
+  return html`<div class="rail-link-row"><span class="resource-link static"><span class="codicon codicon-${icon}"></span><span class="resource-label">${label}</span></span></div>`;
+}
+
 function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
-  if (!vm.sourceRepository && !vm.license) {
+  // Widened with the curated annotations: an artifact carrying only
+  // `documentation` (or only `authors`) must still get a panel.
+  if (
+    !vm.sourceRepository &&
+    !vm.license &&
+    !vm.homepage &&
+    !vm.documentation &&
+    !vm.authors &&
+    !vm.vendor
+  ) {
     return nothing;
   }
   const rows: TemplateResult[] = [];
@@ -1057,6 +1084,18 @@ function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
     rows.push(
       html`<div class="rail-link-row"><a href="#" class="resource-link" data-action="open" data-url="${vm.sourceRepository}"><span class="codicon codicon-github"></span><span class="resource-label">Source repository</span></a></div>`,
     );
+  }
+  if (vm.homepage) {
+    rows.push(resourceLinkRow('globe', 'Homepage', vm.homepage));
+  }
+  if (vm.documentation) {
+    rows.push(resourceLinkRow('book', 'Documentation', vm.documentation));
+  }
+  if (vm.authors) {
+    rows.push(resourceStaticRow('organization', vm.authors));
+  }
+  if (vm.vendor) {
+    rows.push(resourceStaticRow('briefcase', vm.vendor));
   }
   // Text is wrapped in its own span (.resource-label) so hover-underline CSS
   // can target just the label — the icon and label are flex siblings inside
@@ -1070,6 +1109,41 @@ function renderResourcesPanel(vm: DetailsVM): TemplateResult | typeof nothing {
     }</div>`,
   );
   return html`<div class="rail-panel"><div class="rail-title">RESOURCES</div>${rows}</div>`;
+}
+
+/** The SUPPORT rail panel: the maintainer's channels, up to four link rows.
+ *  Omitted entirely when every channel is null, which is most packages today —
+ *  same "empty panels are omitted" rule the RATING panel follows.
+ *
+ *  These ride the DESCRIPTION COMPANION, not the version manifest, so a moved
+ *  link updates every published version with no digest change on any artifact.
+ *  Nothing here needs cache work: the details cache's SWR short-circuit already
+ *  compares the companion digest as well as the artifact digest, and a support
+ *  edit re-points the companion tag. */
+function renderSupportPanel(vm: DetailsVM): TemplateResult | typeof nothing {
+  const { issues, chat, contact, security } = vm.support;
+  if (!issues && !chat && !contact && !security) {
+    return nothing;
+  }
+  const rows: TemplateResult[] = [];
+  if (issues) {
+    rows.push(resourceLinkRow('issues', 'Issue tracker', issues));
+  }
+  if (chat) {
+    rows.push(resourceLinkRow('comment-discussion', 'Chat', chat));
+  }
+  if (contact) {
+    const url = contactUrl(contact);
+    // An address IS the useful label; a contact page URL is not, so that one
+    // gets a name instead of a rail-wide link. A value that is neither renders
+    // as inert text.
+    const label = url === null || url.startsWith('mailto:') ? contact : 'Contact';
+    rows.push(url ? resourceLinkRow('mail', label, url) : resourceStaticRow('mail', label));
+  }
+  if (security) {
+    rows.push(resourceLinkRow('shield', 'Report a vulnerability', security));
+  }
+  return html`<div class="rail-panel"><div class="rail-title">SUPPORT</div>${rows}</div>`;
 }
 
 /** Keyword chips are buttons: clicking one seeds the Browse search with that
@@ -1501,6 +1575,7 @@ ${renderDeprecationBanner(vm)}
     ${renderRatingPanel(vm)}
     ${renderPackagePanel(vm)}
     ${renderResourcesPanel(vm)}
+    ${renderSupportPanel(vm)}
     ${renderTagsPanel(vm)}
   </div>
 </div>`;

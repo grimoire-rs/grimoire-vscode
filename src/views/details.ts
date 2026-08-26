@@ -38,6 +38,7 @@ import {
   computeUpdateAvailable,
   declaredKey,
   findAssetPath,
+  isOpenableUrl,
   normalizeKind,
   parseViaBundles,
   refRepo,
@@ -571,7 +572,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         return;
       }
       case 'openExternal':
-        if (/^https?:/.test(message.url)) {
+        // Web links plus `mailto:` for the SUPPORT panel's contact channel —
+        // re-checked here rather than trusted from the webview.
+        if (isOpenableUrl(message.url)) {
           void vscode.env.openExternal(vscode.Uri.parse(message.url));
         }
         return;
