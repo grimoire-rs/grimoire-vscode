@@ -13,8 +13,16 @@ import type { DescribeResult, FetchResult } from './grim';
 
 /** Bump to invalidate every on-disk entry (schema or content-semantics change).
  *  Unversioned/mismatched entries — e.g. describes cached before the legacy path
- *  was deleted — self-purge on load instead of lingering as confusing state. */
-export const CACHE_VERSION = 1;
+ *  was deleted — self-purge on load instead of lingering as confusing state.
+ *
+ *  v2: entries hold a whole `DescribeResult`, so one written before grim's
+ *  curated annotations existed carries no `authors`/`vendor`/`url`/
+ *  `documentation`/`compatibility`/`support` keys. Those read as null, and
+ *  because the digests still match, the SWR short-circuit would keep re-stamping
+ *  that entry fresh — the RESOURCES rows and the SUPPORT panel would stay
+ *  invisible indefinitely on an artifact that publishes them. Dropping the
+ *  directory once costs one describe per artifact and is the sanctioned fix. */
+export const CACHE_VERSION = 2;
 
 export interface DetailsCacheEntry {
   version: number;
