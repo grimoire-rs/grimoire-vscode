@@ -5,6 +5,27 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-28
+
+### Added
+
+- Resolve a vote credential and pipe it to grim on stdin *(rate)*
+- Show a three-state rating and vote from the details panel *(rate)*
+- Read the curated annotations and support channels off describe *(grim)*
+- Show curated annotations and a support channel panel *(details)*
+
+### Documentation
+
+- Name the annotation showcase in the manual-rig guide *(testing)*
+
+### Fixed
+
+- Drop details entries written before the curated annotations *(cache)*
+
+### Merge
+
+- DF-H — pin the vote command's refusal branches (F-8); DF-G unreproduced (F-7)
+
 ## [0.3.0] - 2026-08-13
 
 ### Added
@@ -193,6 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.3.1]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.0..v0.3.1
 [0.3.0]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.7..v0.3.0
 [0.2.7]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.6..v0.2.7
 [0.2.6]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.2.5..v0.2.6
