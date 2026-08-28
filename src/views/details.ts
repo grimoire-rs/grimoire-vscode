@@ -488,6 +488,27 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     this.postArtifact(panel, vm);
   }
 
+  /**
+   * The /vote deep link's entry point: upvote the artifact the caller has just
+   * opened. Cast only — a link can never retract (see extension.ts).
+   *
+   * Takes the panel from {@link open}'s own map rather than a parameter, for
+   * the same reason `onMessage` uses `repoOf(panel)`: the panel a vote repaints
+   * is resolved here, never supplied by the thing that asked for the vote. No
+   * panel means `open()` bailed on a disposed one — nothing to vote from.
+   *
+   * Runs before the webview has posted `ready`, deliberately: the busy post it
+   * may miss is cosmetic, and the eventual first paint reads the host-side
+   * `votes` map this has already written.
+   */
+  async voteFromLink(repo: string): Promise<void> {
+    const panel = this.panels.get(repo);
+    if (!panel) {
+      return;
+    }
+    await this.vote(repo, panel, false);
+  }
+
   /** Public for tests: the webview message entry point. */
   async onMessage(repo: string, panel: vscode.WebviewPanel, message: DetailsToHost): Promise<void> {
     switch (message.type) {
@@ -618,11 +639,12 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
   }
 
-  /** True when the resolved grim is new enough to have `grim rate`. Read off
+  /** Public: also the /vote deep link's gate. True when the resolved grim is
+   *  new enough to have `grim rate`. Read off
    *  the cached context probe — no extra spawn — and false when nothing is
    *  cached yet, which hides the affordance until the first snapshot lands
    *  rather than offering a button an older grim would reject with exit 64. */
-  private ratingSupported(): boolean {
+  ratingSupported(): boolean {
     const snapshot = this.scopes.cachedSnapshot();
     const version = snapshot?.project?.context.version ?? snapshot?.global?.context.version;
     return version !== undefined && supportsRating(version);

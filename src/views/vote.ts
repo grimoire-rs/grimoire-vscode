@@ -39,8 +39,10 @@ export interface VoteDeps {
   /** The extension's own disclosure (C-018): the extension always passes
    *  `--yes`, so grim's interactive prompt never fires and THIS is the only
    *  thing standing between a click and a public post. Resolves false when
-   *  the user declines. */
-  confirm: (provider: string, host: string, remove: boolean) => Promise<boolean>;
+   *  the user declines. Takes the reference because the click is not always a
+   *  click — the /vote deep link reaches here from an attacker-supplied URI,
+   *  and consent to post about an unnamed artifact is not consent. */
+  confirm: (reference: string, provider: string, host: string, remove: boolean) => Promise<boolean>;
 }
 
 /** grim's word for "this row has no rating" / "I cannot vote here". */
@@ -88,7 +90,7 @@ export async function castVote(
 
   // Disclosure BEFORE authentication: a user who declines must not first be
   // dragged through a sign-in prompt for a vote they are about to cancel.
-  if (!(await deps.confirm(provider, target.host, remove))) {
+  if (!(await deps.confirm(reference, provider, target.host, remove))) {
     return { ok: false, message: '' };
   }
 
@@ -122,7 +124,12 @@ export async function castVote(
 /** The disclosure C-018 owes the user, as a modal. Modal on purpose: this
  *  posts publicly under their own forge account, and a toast they can miss is
  *  not consent. */
-export function confirmVote(provider: string, host: string, remove: boolean): Promise<boolean> {
+export function confirmVote(
+  reference: string,
+  provider: string,
+  host: string,
+  remove: boolean,
+): Promise<boolean> {
   if (remove) {
     // Retracting posts nothing new; it undoes the user's own earlier vote.
     return Promise.resolve(true);
@@ -132,7 +139,12 @@ export function confirmVote(provider: string, host: string, remove: boolean): Pr
       'This posts publicly under your forge account.',
       {
         modal: true,
-        detail: `Your upvote will be visible to anyone who can see the ${provider} thread at ${host}.`,
+        // The reference is in the modal, not just the panel behind it: a /vote
+        // link can name any artifact, and the panel it opened may not even have
+        // painted yet when this appears.
+        detail:
+          `Upvote ${reference}?\n\n` +
+          `Your upvote will be visible to anyone who can see the ${provider} thread at ${host}.`,
       },
       'Vote',
     ),

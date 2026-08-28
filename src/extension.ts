@@ -16,6 +16,7 @@ import {
   type UpdateEntry,
 } from './grim';
 import {
+  RATING_GRIM_VERSION,
   REGISTRY_EDIT_GRIM_VERSION,
   RELEASE_PAGE,
   SKIP_VERSION,
@@ -387,6 +388,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   // one-click "add this index". That one writes, and the URI is attacker-supplied
   // (any page can navigate to it), so it is gated on a modal naming the exact URL
   // and alias — the link alone never authorizes a write.
+  // …/vote?repo=<repo> lets an index page offer a one-click upvote. Same posture:
+  // it opens the artifact and then runs the ordinary vote path, whose disclosure
+  // modal — not the link — is what authorizes the public post.
   const handleUri = async (uri: vscode.Uri): Promise<void> => {
     if (uri.path === '/add-registry') {
       // A rejection is LOG-ONLY: a hostile page must learn nothing from the
@@ -426,6 +430,30 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
         include: link.include,
         exclude: link.exclude,
       });
+      return;
+    }
+    if (uri.path === '/vote') {
+      // CAST ONLY. `remove` is deliberately not read off the query: confirmVote
+      // waives its modal for a retraction (undoing your own vote posts nothing
+      // new), so a retracting link would mutate the forge with no consent gate
+      // at all — the one thing standing between any web page and a public post.
+      const repo = parseShareLink(uri.query);
+      if (!repo || !isValidRepo(repo)) {
+        return;
+      }
+      // Gate before the panel opens: an older grim rejects `rate` outright
+      // (exit 64), and "Could not resolve a rating for …" would blame the
+      // artifact for what is a stale binary.
+      if (!details.ratingSupported()) {
+        notifyError(
+          `Grimoire: voting needs grim ${RATING_GRIM_VERSION} or newer — ` +
+            `update grim (${RELEASE_PAGE}).`,
+        );
+        return;
+      }
+      await focusBrowseSearch(artifactName(repo));
+      details.open(repo);
+      await details.voteFromLink(repo);
       return;
     }
     if (uri.path !== '/open') {

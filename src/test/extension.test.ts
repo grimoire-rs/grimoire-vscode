@@ -36,7 +36,11 @@ import {
   type UpdateEntry,
 } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
-import { MINIMUM_GRIM_VERSION, REGISTRY_EDIT_GRIM_VERSION } from '../installer';
+import {
+  MINIMUM_GRIM_VERSION,
+  RATING_GRIM_VERSION,
+  REGISTRY_EDIT_GRIM_VERSION,
+} from '../installer';
 import { offerForcedRetry, offerRefusedRetry } from '../views/forceRetry';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 
@@ -5659,6 +5663,216 @@ suite('extension integration', () => {
     // A link carrying NO patterns is unaffected on this same grim — see
     // 'add-registry deep link writes only after a modal naming the index and
     // alias', which runs against the default (pre-0.13) context fixture.
+  });
+
+  // --- /vote deep link (a PUBLIC POST reachable from any web page) ---
+
+  function voteUri(query: string): vscode.Uri {
+    return vscode.Uri.parse(`vscode://grimoire-rs.grimoire-vscode/vote?${query}`);
+  }
+
+  const VOTE_REPO = 'ghcr.io/grimoire-rs/skills/linked';
+
+  /** Signs the window in and answers the vote disclosure with `answer`,
+   *  recording every prompt — a rejected link has to prove nobody was asked. */
+  function stubVoteEnvironment(answer: string | undefined): {
+    restore: () => void;
+    prompts: { message: string; detail: string }[];
+    errors: string[];
+  } {
+    const auth = vscode.authentication as unknown as { getAccounts: unknown; getSession: unknown };
+    const window = vscode.window as unknown as {
+      showWarningMessage: unknown;
+      showErrorMessage: unknown;
+    };
+    const originals = {
+      accounts: auth.getAccounts,
+      session: auth.getSession,
+      warn: window.showWarningMessage,
+      error: window.showErrorMessage,
+    };
+    const prompts: { message: string; detail: string }[] = [];
+    const errors: string[] = [];
+    const account = { id: 'a', label: 'octocat' };
+    auth.getAccounts = async () => [account];
+    auth.getSession = async () => ({
+      id: 's',
+      accessToken: 'gho_LINK_must_never_be_logged',
+      account,
+      scopes: [],
+    });
+    window.showWarningMessage = async (message: string, options?: { detail?: string }) => {
+      prompts.push({ message, detail: options?.detail ?? '' });
+      return answer;
+    };
+    window.showErrorMessage = async (message: string) => {
+      errors.push(message);
+      return undefined;
+    };
+    canned(stub, 'rate', {
+      ref: VOTE_REPO,
+      action: 'up',
+      up: 22,
+      url: 'https://forge.example/d/7',
+      provider: 'github',
+      host: 'api.github.com',
+      viewer_up: true,
+    });
+    return {
+      restore: () => {
+        auth.getAccounts = originals.accounts;
+        auth.getSession = originals.session;
+        window.showWarningMessage = originals.warn;
+        window.showErrorMessage = originals.error;
+        uncan(stub, 'rate');
+      },
+      prompts,
+      errors,
+    };
+  }
+
+  test('vote deep link opens the artifact and votes after the disclosure', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const restoreVersion = await withGrimVersion(api, RATING_GRIM_VERSION);
+    const env = stubVoteEnvironment('Vote');
+    fs.rmSync(stub.argvLog, { force: true });
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(voteUri(`repo=${encodeURIComponent(VOTE_REPO)}`));
+      lines = argvLines(stub); // read before the restoring refresh spawns its own
+    } finally {
+      env.restore();
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    // The panel is what makes the link legible: the user sees what they voted on.
+    assert.ok(api.providers.details.openRepos.includes(VOTE_REPO), 'no details panel opened');
+    // Nothing is posted publicly before the user is asked (C-018), and the
+    // disclosure names the artifact the LINK chose — not one the user picked.
+    assert.strictEqual(env.prompts.length, 1, 'the disclosure did not fire exactly once');
+    assert.ok(
+      env.prompts[0]?.detail.includes(VOTE_REPO),
+      `the modal named no artifact: ${env.prompts[0]?.detail}`,
+    );
+    const rates = lines.filter((l) => l.startsWith('rate'));
+    assert.strictEqual(rates.length, 2, `expected handshake + mutation: ${rates.join(' | ')}`);
+    assert.ok(rates[0]?.includes('--dry-run'), `the handshake runs first: ${rates[0]}`);
+    assert.ok(!rates[1]?.includes('--dry-run'), `the second call mutates: ${rates[1]}`);
+    assert.ok(rates[1]?.includes('--up'), `a vote, not a retraction: ${rates[1]}`);
+    assert.ok(rates[1]?.includes('--token-stdin'), 'the credential did not go over stdin');
+    assert.ok(
+      rates[1]?.includes('--token-host api.github.com'),
+      `the piped credential declared no host: ${rates[1]}`,
+    );
+  });
+
+  test('declining the vote disclosure posts nothing', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const restoreVersion = await withGrimVersion(api, RATING_GRIM_VERSION);
+    const env = stubVoteEnvironment(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(voteUri(`repo=${encodeURIComponent(VOTE_REPO)}`));
+      lines = argvLines(stub);
+    } finally {
+      env.restore();
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    assert.strictEqual(env.prompts.length, 1, 'the user was never asked');
+    // The uncredentialed handshake is allowed (it mutates nothing); the
+    // mutation is not.
+    const rates = lines.filter((l) => l.startsWith('rate'));
+    assert.deepStrictEqual(
+      rates.filter((l) => !l.includes('--dry-run')),
+      [],
+      `a declined link still mutated: ${rates.join(' | ')}`,
+    );
+  });
+
+  test('a vote link never retracts, whatever the query asks for', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const restoreVersion = await withGrimVersion(api, RATING_GRIM_VERSION);
+    const env = stubVoteEnvironment('Vote');
+    fs.rmSync(stub.argvLog, { force: true });
+    let lines: string[] | undefined;
+    try {
+      // `remove=1` is the retraction a link must not be able to ask for:
+      // confirmVote waives its modal for retractions, so honouring this would
+      // mutate the forge with no consent gate at all.
+      await api.handleUri(voteUri(`repo=${encodeURIComponent(VOTE_REPO)}&remove=1`));
+      lines = argvLines(stub);
+    } finally {
+      env.restore();
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    const mutation = lines.filter((l) => l.startsWith('rate') && !l.includes('--dry-run'));
+    assert.strictEqual(mutation.length, 1, `expected one mutation: ${mutation.join(' | ')}`);
+    assert.ok(mutation[0]?.includes('--up'), `not an upvote: ${mutation[0]}`);
+    assert.ok(!mutation[0]?.includes('--remove'), `the link retracted: ${mutation[0]}`);
+  });
+
+  test('a malformed vote link asks nothing and spawns nothing', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const restoreVersion = await withGrimVersion(api, RATING_GRIM_VERSION);
+    const env = stubVoteEnvironment('Vote');
+    const before = api.providers.details.openRepos.length;
+    fs.rmSync(stub.argvLog, { force: true });
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(voteUri('repo=junk'));
+      await api.handleUri(voteUri('repo='));
+      await api.handleUri(voteUri(''));
+      lines = argvLines(stub);
+    } finally {
+      env.restore();
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    assert.deepStrictEqual(env.prompts, [], 'a junk link reached the disclosure');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('rate')),
+      [],
+      'a junk link spawned grim rate',
+    );
+    assert.strictEqual(api.providers.details.openRepos.length, before, 'a junk link opened a panel');
+  });
+
+  test('a vote link is refused BEFORE the panel on a grim without `rate`', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    // The default fixture reports the version floor, which predates `grim rate`;
+    // re-assert it so an earlier test's context cannot decide this one's outcome.
+    const restoreVersion = await withGrimVersion(api, MINIMUM_GRIM_VERSION);
+    const env = stubVoteEnvironment('Vote');
+    const before = api.providers.details.openRepos.length;
+    fs.rmSync(stub.argvLog, { force: true });
+    let lines: string[] | undefined;
+    try {
+      await api.handleUri(voteUri(`repo=${encodeURIComponent(VOTE_REPO)}`));
+      lines = argvLines(stub);
+    } finally {
+      env.restore();
+      await restoreVersion();
+    }
+    assert.ok(lines);
+    assert.deepStrictEqual(env.prompts, [], 'confirmed a vote that cannot succeed');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('rate')),
+      [],
+      'spawned a rate an older grim rejects with exit 64',
+    );
+    assert.strictEqual(api.providers.details.openRepos.length, before, 'opened a panel anyway');
+    assert.ok(
+      env.errors.some((e) => e.includes(RATING_GRIM_VERSION)),
+      `the refusal names the version needed: ${env.errors.join(' | ')}`,
+    );
   });
 
   test('details rail tag click seeds the Browse search with the tag (item 2)', async function () {

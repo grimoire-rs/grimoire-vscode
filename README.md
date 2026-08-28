@@ -61,6 +61,12 @@ AI artifacts your tools rely on.
   scope's lock.
 - **Share a link** — copy a `vscode://` deep link to any artifact; opening it
   reveals that artifact's details.
+- **Upvote from the web** — an index site can link
+  `vscode://grimoire-rs.grimoire-vscode/vote?repo=<url-encoded repo>`. It opens
+  the artifact and asks to upvote it; the vote is a public post on the index's
+  forge thread under your own account, so it only happens after you confirm the
+  dialog naming the artifact. Needs `grim` 0.14.0 or newer. A link can only
+  cast a vote — retracting one stays a button in the details panel.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to
   download the latest release from GitHub (checksum-verified).
 - **Stay up to date** — once a day Grimoire checks GitHub for a newer `grim`

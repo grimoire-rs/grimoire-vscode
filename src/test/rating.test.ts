@@ -764,8 +764,10 @@ suite('vote handshake (C-022)', function () {
     assert.strictEqual(voteStateAfter(null), 'unknown');
   });
 
+  const REF = 'ghcr.io/grimoire-rs/skills/grim-usage';
+
   test('retracting needs no disclosure — it posts nothing new', async () => {
-    assert.strictEqual(await confirmVote('github', 'github.com', true), true);
+    assert.strictEqual(await confirmVote(REF, 'github', 'github.com', true), true);
   });
 
   test('voting discloses in a MODAL, and anything but the button is a no', async () => {
@@ -782,7 +784,7 @@ suite('vote handshake (C-022)', function () {
         asked.push([message, options]);
         return undefined;
       };
-      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), false);
+      assert.strictEqual(await confirmVote(REF, 'github', 'ghes.corp.example', false), false);
       assert.strictEqual(asked.length, 1);
       const [message, options] = asked[0] ?? ['', {}];
       assert.ok(options.modal, 'a toast the user can miss is not consent');
@@ -790,13 +792,16 @@ suite('vote handshake (C-022)', function () {
       // The disclosure names the provider and the host the vote actually goes
       // to — not a default, and not the row's registry.
       assert.match(options.detail ?? '', /github thread at ghes\.corp\.example/);
+      // …and the artifact. A /vote deep link is attacker-supplied, so a
+      // disclosure that names no artifact is not informed consent.
+      assert.ok(options.detail?.includes(REF), `the modal named no artifact: ${options.detail}`);
 
       // Any other answer, including a stray label, is a refusal.
       window.showWarningMessage = async () => 'Cancel';
-      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), false);
+      assert.strictEqual(await confirmVote(REF, 'github', 'ghes.corp.example', false), false);
 
       window.showWarningMessage = async () => 'Vote';
-      assert.strictEqual(await confirmVote('github', 'ghes.corp.example', false), true);
+      assert.strictEqual(await confirmVote(REF, 'github', 'ghes.corp.example', false), true);
     } finally {
       window.showWarningMessage = original;
     }
