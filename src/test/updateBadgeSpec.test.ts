@@ -134,6 +134,9 @@ function makeSidebar(options: {
       return lastSnapshot;
     },
     resolvedExecutable: () => ({ path: 'grim', origin: 'PATH' as const }),
+    cachedSnapshot: (): Snapshot | undefined => undefined,
+    projectFolder: (): string | undefined => undefined,
+    projectSearchableProbe: async (): Promise<boolean> => false,
   } as unknown as ScopeService;
   const catalog = {
     search: async (): Promise<CatalogState> => {

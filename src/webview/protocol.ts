@@ -184,6 +184,14 @@ export interface SidebarState {
   syncedAt: number | null;
   now: number;
   error?: string;
+  /** Set on a round RESTORED from storage — the previous window's results,
+   *  painted before grim has answered so the view is never blank. Everything on
+   *  screen is last session's, install state included, so the browse
+   *  affordances are suppressed exactly as under {@link installStateUnknown}
+   *  and a progress bar says a refresh is running. Cleared by the first real
+   *  post behind it. NOT a trust failure: the Installed/Updates tabs keep their
+   *  lists and their count, which is why this is its own field. */
+  stale?: boolean;
   /** Set when the catalog loaded but `grim status` did not, so install state is
    *  UNKNOWN — not empty. Carries the reason (a too-old binary, a failed status
    *  call). Browse still renders its catalog cards, but every install/update

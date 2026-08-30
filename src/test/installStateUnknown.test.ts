@@ -168,6 +168,11 @@ function makeSidebar(
       return last;
     },
     resolvedExecutable: (): { path: string; origin: GrimOrigin } => ({ path: 'grim', origin }),
+    // No window has run yet and no folder is open: the refresh probes for the
+    // search scope and gets global, exactly as a cold window with no workspace.
+    cachedSnapshot: (): Snapshot | undefined => undefined,
+    projectFolder: (): string | undefined => undefined,
+    projectSearchableProbe: async (): Promise<boolean> => false,
   } as unknown as ScopeService;
   const catalog = {
     search: async (): Promise<CatalogState> => ({ items: [searchItem()], syncedAt: Date.now() }),

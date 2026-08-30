@@ -65,6 +65,17 @@ import { offerInstallRefusal } from './updateRefusal';
 /** globalState key for the view preference (density / list-vs-tree / grouping). */
 const VIEW_PREFS_KEY = 'grimoire.sidebar.view';
 
+/** globalState key for the last painted round — the cold-window half of the
+ *  boot replay (see the `ready` handler). One entry, overwritten: the folder it
+ *  was searched in rides inside it, so a different workspace simply misses. */
+const LAST_RESULTS_KEY = 'grimoire.sidebar.lastResults';
+
+/** Browse cards persisted. A restored round lives for the second or two the
+ *  refresh behind it takes, so the tail nobody can scroll to in that window is
+ *  not worth the globalState bytes. `installed` is uncapped — it is bounded by
+ *  what the user actually has installed. */
+const MAX_PERSISTED_CARDS = 200;
+
 /** Rows seeded into the prefetch the moment results land, before the webview
  *  reports its viewport. Roughly a tall window of compact rows — the real work
  *  list is the `visible` report, which supersedes this within a frame or two. */
@@ -76,6 +87,56 @@ const SEED_SWEEP = 24;
  *  a pathological list could not turn it into that many grim spawns, not to
  *  reinstate the fixed top-K the viewport sweep replaced. */
 const MAX_VISIBLE_REPOS = 500;
+
+/** One successfully painted round. Re-posted verbatim by the boot replay and
+ *  the logo repost — neither runs grim again — and the shape the persisted
+ *  {@link LAST_RESULTS_KEY} blob restores into. */
+interface ReadyResult {
+  cards: CardVM[];
+  installed: CardVM[];
+  snap: Snapshot;
+  syncedAt: number | null;
+}
+
+/** A {@link ReadyResult} on disk, plus what postState needs to redraw it and
+ *  the two keys that decide whether it may be restored at all. */
+interface PersistedResults extends ReadyResult {
+  /** Workspace folder the round was searched in — another one browses a
+   *  different registry set, and these cards would be a lie there. */
+  folder: string | null;
+  /** Search query at save time. Only the empty one is ever written. */
+  query: string;
+  registries: RegistryVM[];
+  defaultRegistry: string | null;
+}
+
+/** Shape guard for the stored blob: it is our own write, but a write from an
+ *  EARLIER version of this extension, and the restore path indexes straight
+ *  into it. A mismatch just paints nothing, exactly as an empty store does. */
+function isPersistedResults(value: unknown): value is PersistedResults {
+  const blob = value as Partial<PersistedResults> | null | undefined;
+  return (
+    typeof blob === 'object' &&
+    blob !== null &&
+    Array.isArray(blob.cards) &&
+    Array.isArray(blob.installed) &&
+    Array.isArray(blob.registries) &&
+    typeof blob.query === 'string' &&
+    typeof blob.snap === 'object' &&
+    blob.snap !== null
+  );
+}
+
+/** Cards without their logos. The logo is a data: URI of the whole image, which
+ *  has no business in globalState — applyCardMeta puts it back from the details
+ *  cache (which owns those bytes already) when the round is restored. */
+function stripLogos(cards: CardVM[]): CardVM[] {
+  return cards.map((card) => {
+    const copy = { ...card };
+    delete copy.logoUri;
+    return copy;
+  });
+}
 
 export interface SidebarDelegate {
   openDetails(repo: string, mode: 'preview' | 'permanent'): void;
@@ -141,9 +202,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  tree can name them by their configured alias. */
   private lastRegistries: RegistryVM[] = [];
   // Last ready result, kept so a prefetch-driven logo repost can re-render without
-  // the loading flash (and without a fresh grim round-trip).
-  private lastReady:
-    { cards: CardVM[]; installed: CardVM[]; snap: Snapshot; syncedAt: number | null } | undefined;
+  // the loading flash (and without a fresh grim round-trip). Also what a
+  // re-resolved webview replays on boot instead of a skeleton (see the `ready`
+  // handler): VS Code disposes a hidden view, and the round that painted it is
+  // still perfectly good.
+  private lastReady: ReadyResult | undefined;
   // Last-known install-state trust, updated the moment a snapshot lands and
   // stamped onto EVERY post by postState. Kept on the provider rather than
   // passed per post because the two posts that most need it don't have a
@@ -278,6 +341,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const storedView = this.memento.get<ViewOptions>(VIEW_PREFS_KEY);
         if (storedView) {
           this.post({ type: 'viewPrefs', view: storedView });
+        }
+        // A freshly booted webview has painted nothing, so the refresh below
+        // would open on a skeleton for as long as grim takes — and after a long
+        // gap that is a full catalog re-pull from the registries. Replay the
+        // round this window already has (VS Code disposes a HIDDEN view; the
+        // results it painted are still perfectly good), and
+        // keepPaintedOnLoading holds it through the refresh that follows. With
+        // no round in memory this is a cold window: the previous one's is on
+        // disk, and restoring it is the same idea across a restart.
+        if (this.lastReady) {
+          this.postReady(this.lastReady);
+        } else {
+          await this.restoreLastResults();
         }
         // Drain before the refresh — these are the posts that raced the boot.
         const pending = [...this.pendingPosts.values()];
@@ -555,7 +631,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   ): Promise<void> {
     // `check` (network-verified update/deprecation data) threads to
     // `grim status --check`; the search options below stay as-is.
-    const snap = await this.scopes.snapshot(options);
+    //
+    // The search does NOT depend on the snapshot — only on the project
+    // `grim context` probe inside it, which is what picks project-vs-global
+    // scope (projectSearchable). So the two run together: after a long gap
+    // grim's own catalog cache has expired and the search goes to the
+    // registries, and queueing that behind the status calls is exactly when
+    // the sidebar stays blank longest. The cached snapshot answers the scope
+    // question for free; only the first refresh of a window pays a probe, and
+    // `grim context` is a local config walk, not a network call.
+    const cachedSnap = this.scopes.cachedSnapshot();
+    const searchable = cachedSnap
+      ? projectSearchable(cachedSnap)
+      : await this.scopes.projectSearchableProbe();
+    const [snap, searched] = await Promise.all([
+      this.scopes.snapshot(options),
+      this.catalog.search(this.query, { ...options, projectConfigured: searchable }),
+    ]);
     if (gen !== this.refreshGen) {
       return; // a newer refresh started while snapshotting — it owns the state
     }
@@ -589,10 +681,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       : undefined;
     // One catalog search feeds both card sets: browse cards straight from the
     // results, installed cards from the snapshot enriched by the same items.
-    const catalogState = await this.catalog.search(this.query, {
-      ...options,
-      projectConfigured: projectSearchable(snap),
-    });
+    //
+    // The scope the search above guessed only misses when a grimoire.toml
+    // appeared or disappeared since the cached snapshot — and then those
+    // results are the wrong registry set's, so pay for a second search rather
+    // than browsing it.
+    const catalogState =
+      projectSearchable(snap) === searchable
+        ? searched
+        : await this.catalog.search(this.query, {
+            ...options,
+            projectConfigured: projectSearchable(snap),
+          });
     if (gen !== this.refreshGen) {
       return; // superseded during the search
     }
@@ -660,6 +760,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // unavailable.
     if (firstUnknown === undefined) {
       this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
+      // Fire-and-forget: a globalState write that fails is a slower next boot,
+      // never a broken refresh. Gated on the same firstUnknown check as
+      // lastReady — a round built from an unknown install state must not be
+      // what the next window paints.
+      void this.persistResults(this.lastReady).catch((error) =>
+        this.output.appendLine(`sidebar results persist failed: ${String(error)}`),
+      );
       // Off the scopes, not off `installed` — the same one derivation activation
       // publishes from (see webview/model.ts updateCount). The two used to be
       // separate expressions that agreed only because catalog items happen not
@@ -772,6 +879,64 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     applyCardMeta(cards, await this.delegate.cachedCardMeta(cards.map((c) => c.repo)));
   }
 
+  /** Stores the round just painted so the NEXT window can paint it before grim
+   *  answers. Only the unfiltered browse round is written: a keystroke round is
+   *  neither what a boot restores nor worth a disk write per character. The
+   *  write is skipped when the blob is byte-identical to the stored one, the
+   *  same discipline rememberChecks uses (scopes.ts) — which here catches the
+   *  repeat rounds, a search that failed and reposted the same items: a round
+   *  that really searched carries a fresh `syncedAt` and does write. */
+  private async persistResults(ready: ReadyResult): Promise<void> {
+    if (this.query !== '') {
+      return;
+    }
+    const blob: PersistedResults = {
+      folder: this.scopes.projectFolder() ?? null,
+      query: this.query,
+      cards: stripLogos(ready.cards.slice(0, MAX_PERSISTED_CARDS)),
+      installed: stripLogos(ready.installed),
+      snap: ready.snap,
+      syncedAt: ready.syncedAt,
+      registries: this.lastRegistries,
+      defaultRegistry: this.lastDefaultRegistry ?? null,
+    };
+    const stored = this.memento.get<unknown>(LAST_RESULTS_KEY);
+    if (stored !== undefined && JSON.stringify(stored) === JSON.stringify(blob)) {
+      return;
+    }
+    await this.memento.update(LAST_RESULTS_KEY, blob);
+  }
+
+  /** Paints the PREVIOUS window's round before grim answers — the cold-window
+   *  half of the boot replay. Restored only for the same workspace folder and
+   *  the same (empty) query it was saved under: another folder browses another
+   *  registry set. The install state in it is last session's, so the post is
+   *  marked `stale` — the webview keeps the action affordances suppressed and
+   *  shows a progress bar until the refresh behind it lands. */
+  private async restoreLastResults(): Promise<void> {
+    const stored = this.memento.get<unknown>(LAST_RESULTS_KEY);
+    if (!isPersistedResults(stored)) {
+      return;
+    }
+    if (stored.folder !== (this.scopes.projectFolder() ?? null) || stored.query !== this.query) {
+      return;
+    }
+    // The details cache is independent of this blob and never older than it:
+    // the logos were stripped before storing, and a version that landed after
+    // the save is the newer answer.
+    await this.enrichCards(stored.cards);
+    await this.enrichCards(stored.installed);
+    if (this.refreshing > 0 || this.lastReady) {
+      return; // a real round landed during the reads — it owns the state
+    }
+    this.lastRegistries = stored.registries;
+    this.lastDefaultRegistry = stored.defaultRegistry ?? undefined;
+    // Deliberately NOT assigned to lastReady: this round was never verified in
+    // this session, and lastReady is the healthy-round marker a logo repost
+    // re-posts WITHOUT the stale flag.
+    this.postReady(stored, { stale: true });
+  }
+
   /** Re-enriches the last ready result's cards and reposts WITHOUT the loading
    *  flash — pops in logos and versions as prefetches land (debounced by the
    *  prefetcher). */
@@ -796,12 +961,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (this.lastReady !== ready) {
       return; // a newer ready post already enriched from the same cache
     }
+    this.postReady(ready);
+  }
+
+  /** Re-posts an already-computed round as `ready` — no grim call, no loading
+   *  flash. `stale` marks a round restored from disk, whose install state has
+   *  not been verified in this session yet (see postState's `stale`). */
+  private postReady(ready: ReadyResult, options: { stale?: boolean } = {}): void {
     this.postState({
       phase: 'ready',
       items: ready.cards,
       installed: ready.installed,
       syncedAt: ready.syncedAt,
       snapshot: ready.snap,
+      ...(options.stale === true ? { stale: true } : {}),
     });
   }
 
@@ -812,6 +985,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     error?: string;
     syncedAt?: number | null;
     snapshot?: Snapshot;
+    stale?: boolean;
   }): void {
     const snap = partial.snapshot;
     const projectName = snap?.projectFolder
@@ -836,6 +1010,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       defaultRegistry: this.lastDefaultRegistry ?? null,
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
+      ...(partial.stale === true ? { stale: true } : {}),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
       // repost alike. One source, so no post can silently drop it.

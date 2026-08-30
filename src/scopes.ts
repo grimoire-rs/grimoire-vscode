@@ -527,6 +527,27 @@ export class ScopeService {
   }
 
   /**
+   * {@link projectSearchable}'s verdict, resolved by a STANDALONE `grim context`
+   * probe — for a caller that needs the search scope before a full
+   * {@link snapshot} exists (the sidebar starts its catalog search in parallel
+   * with the snapshot's status calls). The expression is the same one
+   * `snapshot` applies to set `projectProbeFailed`, so the two cannot drift:
+   * a failed probe that is not the ordinary "no grimoire.toml" keeps browse on
+   * project scope, where the failure surfaces as a search error.
+   *
+   * Deliberately NOT `projectConfigured` — that reads a failed probe as
+   * unconfigured, which is right for "may I install here?" and wrong here: it
+   * would silently browse global's registry set instead.
+   */
+  async projectSearchableProbe(): Promise<boolean> {
+    if (!this.projectFolder()) {
+      return false;
+    }
+    const ctx = await this.run<ContextInfo>(contextArgs(), 'project');
+    return ctx.ok ? ctx.value.config_exists : !isProjectNotDiscovered(ctx);
+  }
+
+  /**
    * True when the project genuinely has no grimoire.toml — either the probe
    * succeeds with `config_exists: false`, or (the common case in practice;
    * see `isProjectNotDiscovered`) it fails with grim's `NotDiscovered`

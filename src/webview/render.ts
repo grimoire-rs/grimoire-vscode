@@ -606,6 +606,12 @@ export function renderRefreshingFooter(defaultRegistry: string | null): Template
  *  stays this compact banner rather than displacing real results — button
  *  copy/emphasis still matches 3c ("Initialize Project Config", primary). */
 export function renderSidebarNotice(state: SidebarState): TemplateResult | typeof nothing {
+  // A restored round paints cards that look exactly like fresh ones, so this
+  // thin bar is the only thing saying grim is still answering behind them. It
+  // rides the notice region because that is the one render root above the tabs
+  // — the same element the loading skeleton uses (renderLoading).
+  const refreshing =
+    state.stale === true ? html`<vscode-progress-bar></vscode-progress-bar>` : nothing;
   // Install state unknown outranks the init offer: browsing still works, but
   // nothing on screen can be trusted to say what is installed, and the offer to
   // create a grimoire.toml would be answering the wrong question.
@@ -626,7 +632,7 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
         : nothing;
     // grim's raw message and our sentence are two separate statements — one
     // text node ran them together ("…'--check' found Install state is…").
-    return html`
+    return html`${refreshing}
 <div class="init-notification">
   <span class="codicon codicon-warning init-icon"></span>
   <div class="init-body">
@@ -637,9 +643,9 @@ export function renderSidebarNotice(state: SidebarState): TemplateResult | typeo
 </div>`;
   }
   if (!state.scopes.projectOpen || state.scopes.projectConfigured) {
-    return nothing;
+    return refreshing;
   }
-  return html`
+  return html`${refreshing}
 <div class="init-notification">
   <span class="codicon codicon-info init-icon"></span>
   <div class="init-body">
@@ -659,7 +665,13 @@ function tabRow(
   view: ViewOptions,
   group?: CardGroup,
 ): TemplateResult {
-  const installStateUnknown = state.installStateUnknown !== undefined;
+  // A stale (storage-restored) round suppresses the same affordances an unknown
+  // install state does: its `installs` are last session's, and an Install
+  // button on an artifact that is in fact installed is the mis-click this
+  // prevents. The Updates/Installed variants below keep theirs — Update and
+  // Manage stay correct for an artifact that IS installed, and a stale round,
+  // unlike an unknown one, still has real install data behind them.
+  const installStateUnknown = state.installStateUnknown !== undefined || state.stale === true;
   if (view.density === 'compact') {
     return renderCompactRow(card, { installStateUnknown });
   }
@@ -740,7 +752,7 @@ function treeNodes(
       if (n.card) {
         return renderCompactRow(n.card, {
           depth,
-          installStateUnknown: state.installStateUnknown !== undefined,
+          installStateUnknown: state.installStateUnknown !== undefined || state.stale === true,
         });
       }
       const open = expanded.has(n.id);
