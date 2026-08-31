@@ -46,6 +46,7 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   'open-details': false,
   'toggle-node': false,
   'toggle-kind': false,
+  'toggle-sort-dir': false,
   'toggle-tags': false,
   'set-tab': false,
   refresh: false,

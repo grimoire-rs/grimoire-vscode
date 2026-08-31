@@ -20,7 +20,9 @@ import type {
 import {
   CardFilter,
   DEFAULT_FILTER,
+  DEFAULT_INSTALLED_FILTER,
   DEFAULT_VIEW,
+  NATURAL,
   buildTree,
   collectNodeIds,
   cycleGroup,
@@ -36,6 +38,7 @@ import {
   viewForTab,
   type GroupContext,
   type SidebarTab,
+  type SortMode,
   type ViewOptions,
 } from '../model';
 import {
@@ -119,7 +122,7 @@ let activeTab: SidebarTab =
   saved?.tab === 'updates' || saved?.tab === 'installed' ? saved.tab : 'browse';
 const filters: { browse: CardFilter; installed: CardFilter } = {
   browse: { ...DEFAULT_FILTER, ...(saved?.filter ?? {}) },
-  installed: { ...DEFAULT_FILTER, ...(saved?.installedFilter ?? {}) },
+  installed: { ...DEFAULT_INSTALLED_FILTER, ...(saved?.installedFilter ?? {}) },
 };
 let installedQuery = saved?.installedQuery ?? '';
 // View modes are per-webview UI state, persisted the same way the tab and the
@@ -319,7 +322,7 @@ function syncSearchValue(view: SidebarState | null = null): void {
   const input = document.getElementById('search') as HTMLInputElement | null;
   const focused = document.activeElement?.id === 'search';
   const toRender = focused && input ? { ...toSync, query: input.value } : toSync;
-  litRender(renderSidebarSearch(toRender), searchEl);
+  litRender(renderSidebarSearch(toRender, activeFilter()), searchEl);
 }
 
 function post(message: SidebarToHost): void {
@@ -681,6 +684,13 @@ root.addEventListener('click', (event) => {
       render();
       break;
     }
+    case 'toggle-sort-dir': {
+      const current = activeFilter();
+      setActiveFilter({ ...current, dir: current.dir === 'asc' ? 'desc' : 'asc' });
+      persist();
+      render();
+      break;
+    }
     case 'set-tab':
       activeTab = (target.dataset['tab'] as SidebarTab | undefined) ?? 'browse';
       // Each tab has its own grouping key and its own node ids, so a tab that
@@ -787,6 +797,36 @@ customElements.whenDefined('vscode-scrollable').then(() =>
     }
   }),
 );
+
+// Whether the sort field's pending change came from a POINTER. Chromium matches
+// :focus-visible on a select after a mouse pick, so the focus ring outlives the
+// click and reads as a control stuck open; a keyboard pick is the one case the
+// ring exists for, and it keeps it. The flag is the only way to tell the two
+// apart from inside `change`.
+let sortPickedByPointer = false;
+root.addEventListener('pointerdown', (event) => {
+  sortPickedByPointer = (event.target as HTMLElement | null)?.id === 'sort-field';
+});
+
+root.addEventListener('change', (event) => {
+  const target = event.target as HTMLElement;
+  if (target.id !== 'sort-field') {
+    return;
+  }
+  // Picking a field takes THAT field's own direction: carrying the previous one
+  // over lands the reader on "oldest first" because they asked for Z-A a moment
+  // ago. Same rule as the index site's control.
+  const sort = (target as HTMLSelectElement).value as SortMode;
+  setActiveFilter({ ...activeFilter(), sort, dir: NATURAL[sort] });
+  persist();
+  render();
+  if (sortPickedByPointer) {
+    // lit re-renders into the SAME select element, so focus (and the ring)
+    // survives the repaint — dropping it has to happen here, after it.
+    (document.getElementById('sort-field') as HTMLSelectElement | null)?.blur();
+  }
+  sortPickedByPointer = false;
+});
 
 root.addEventListener('input', (event) => {
   const target = event.target as HTMLElement;

@@ -28,6 +28,7 @@ import type {
 } from './protocol';
 import {
   CardFilter,
+  DEFAULT_FILTER,
   DEFAULT_VIEW,
   KIND_ICONS,
   avatarTint,
@@ -53,6 +54,7 @@ import {
   scopeRowMenuEntries,
   viaBundleTitle,
   type CardGroup,
+  type SortMode,
   type MenuEntry,
   type TreeNode,
   type ViewOptions,
@@ -811,7 +813,56 @@ function installedEmpty(text: string): TemplateResult {
  *  filters) and never the textfield the user is typing into. main.ts drives
  *  them separately; this composed form stays for the render tests and any
  *  full-render fallback. */
-export function renderSidebarSearch(state: SidebarState): TemplateResult | typeof nothing {
+/** Sort fields, in the order the index site lists them. `relevance` leads on
+ *  Browse because it is grim's own answer to a typed query; Installed drops it,
+ *  since `grim status` ranks nothing for it to mean. */
+const SORT_OPTIONS: ReadonlyArray<{ id: SortMode; label: string }> = [
+  { id: 'relevance', label: 'relevance' },
+  { id: 'name', label: 'name' },
+  { id: 'updated', label: 'updated' },
+  { id: 'rating', label: 'rating' },
+];
+
+/** Lucide's arrow-up-narrow-wide / arrow-down-wide-narrow, inlined: the index
+ *  site's own glyphs, and the codicon set has no bars-and-arrow equivalent. The
+ *  bars DRAW the order (short-to-tall under an up arrow) instead of labelling a
+ *  flag, so the icon stays right whichever field is selected. */
+const SORT_ASC_ICON = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/><path d="M11 12h4"/><path d="M11 16h7"/><path d="M11 20h10"/></svg>`;
+const SORT_DESC_ICON = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="M11 4h10"/><path d="M11 8h7"/><path d="M11 12h4"/></svg>`;
+
+/**
+ * The index site's sort control, ported: a direction cap and the field sharing
+ * one edge, sitting in the search row at the field's own height (the row
+ * stretches, so neither half states a height).
+ *
+ * Selection is bound twice, and both are load-bearing. `?selected` carries the
+ * FIRST paint: lit commits the select's `.value` before the child part that
+ * renders the options, so at that moment there is nothing to select and only
+ * the attribute on a freshly-created option decides. `.value` carries every
+ * LATER one: an option's `selected` attribute stops steering the selection once
+ * that option has been picked, and a tab switch (Browse and Installed keep
+ * separate filters, and Installed drops the relevance entry) has to move it
+ * programmatically.
+ */
+function sortControl(filter: CardFilter, mode: SidebarState['mode']): TemplateResult {
+  const asc = filter.dir === 'asc';
+  const label = asc ? 'Ascending — click for descending' : 'Descending — click for ascending';
+  const options = SORT_OPTIONS.filter(
+    (option) => option.id !== 'relevance' || mode === 'browse',
+  );
+  return html`<div class="sort-group" role="group" aria-label="Sort by">
+    <button class="sort-dir" data-action="toggle-sort-dir" title="${label}" aria-label="${label}">${asc ? SORT_ASC_ICON : SORT_DESC_ICON}</button>
+    <select class="sort-field" id="sort-field" aria-label="Sort by" title="Sort by" .value="${filter.sort}">${options.map(
+      (option) =>
+        html`<option value="${option.id}" ?selected="${option.id === filter.sort}">${option.label}</option>`,
+    )}</select>
+  </div>`;
+}
+
+export function renderSidebarSearch(
+  state: SidebarState,
+  filter: CardFilter = DEFAULT_FILTER,
+): TemplateResult | typeof nothing {
   // The Updates view has no search box (short, single-purpose list). The view
   // controls are not in the webview at all: density, tree, grouping and
   // expand/collapse-all are the VIEW's chrome, so they live in its title bar
@@ -828,7 +879,7 @@ export function renderSidebarSearch(state: SidebarState): TemplateResult | typeo
   const clearHidden = state.query ? '' : ' hidden';
   return html`<div class="search-row"><vscode-textfield id="search" placeholder="${
     state.mode === 'browse' ? 'Search artifacts…' : 'Search installed…'
-  }" value="${state.query}"><vscode-icon slot="content-after" id="search-clear" class="clear-icon${clearHidden}" name="close" action-icon label="Clear search" title="Clear search" data-action="clear-search"></vscode-icon></vscode-textfield></div>`;
+  }" value="${state.query}"><vscode-icon slot="content-after" id="search-clear" class="clear-icon${clearHidden}" name="close" action-icon label="Clear search" title="Clear search" data-action="clear-search"></vscode-icon></vscode-textfield>${sortControl(filter, state.mode)}</div>`;
 }
 
 export function renderSidebarFilters(

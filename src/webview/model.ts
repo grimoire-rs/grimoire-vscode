@@ -455,6 +455,7 @@ export function buildCards(
       ...(source ? { source } : {}),
       privateRegistry: isPrivateRegistry(registryHost(item.repo), authed, defaultRegistryHost),
       rating: readRating(item.rating),
+      updated: item.created,
     });
   }
   return cards;
@@ -629,6 +630,9 @@ export function buildInstalledCards(
         // Same borrow as `source`: `grim status` publishes no rating, so an
         // installed artifact absent from the browse catalog reads as unrated.
         rating: readRating(item?.rating),
+        // Same borrow again — status carries no publish date either, and an
+        // artifact the catalog does not know sorts into the undated bucket.
+        updated: item?.created ?? null,
       });
     }
   }
@@ -664,11 +668,105 @@ export function firstUnknownScope(scopes: ScopeStatus[]): ScopeStatus | undefine
 export interface CardFilter {
   /** Selected kinds; EMPTY MEANS ALL (the "All" chip). */
   kinds: string[];
+  /** Ordering for Browse and Installed — see {@link SortMode}. */
+  sort: SortMode;
+  dir: SortDir;
 }
 
 export const DEFAULT_FILTER: CardFilter = {
   kinds: [],
+  sort: 'relevance',
+  dir: 'asc',
 };
+
+/** Installed's seed. Its rows come from `grim status`, which ranks nothing, so
+ *  `'relevance'` there would name an order that does not exist — name-first is
+ *  the predictable answer, and the control does not offer relevance on that
+ *  tab at all. */
+export const DEFAULT_INSTALLED_FILTER: CardFilter = {
+  ...DEFAULT_FILTER,
+  sort: 'name',
+  dir: 'asc',
+};
+
+/**
+ * Which ordering the sort control applies.
+ *
+ * `'relevance'` is grim's OWN order — its fuzzy ranking for a queried browse,
+ * registry-declaration order for an unqueried one — and it is Browse's default
+ * for exactly that reason: sorting a typed query by name buries the best match.
+ * It is offered on BROWSE ONLY; `grim status` ranks nothing, so Installed lists
+ * name-first instead (see the sidebar's own filter seed). The other three
+ * mirror grim's `--sort` (`browse_sort.rs`) and the index site's control,
+ * bucket rules included.
+ */
+export type SortMode = 'relevance' | 'name' | 'updated' | 'rating';
+export type SortDir = 'asc' | 'desc';
+
+/** Each field's own direction — the one a reader means when they pick it.
+ *  Choosing a field takes that field's natural direction: carrying the previous
+ *  one over lands them on "oldest first" because they asked for Z-A a moment
+ *  ago. */
+export const NATURAL: Record<SortMode, SortDir> = {
+  relevance: 'asc',
+  name: 'asc',
+  updated: 'desc',
+  rating: 'desc',
+};
+
+/** Bigger first, with `null` as its own bucket UNDER every number: missing is
+ *  not a low value. Folding it into one — unrated as 0 upvotes, undated as
+ *  epoch 0 — orders those rows against real data by accident and ties them all
+ *  with each other. grim's `browse_sort.rs` and the index site both do this. */
+function descending(a: number | null, b: number | null): number {
+  if (a === null || b === null) {
+    return Number(a === null) - Number(b === null);
+  }
+  return b - a;
+}
+
+/** `created` as epoch ms; null when absent, empty, or not a date at all. */
+function updatedAt(card: CardVM): number | null {
+  const ms = card.updated ? new Date(card.updated).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+const byName = (a: CardVM, b: CardVM): number =>
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' }) || a.repo.localeCompare(b.repo);
+const byUpdated = (a: CardVM, b: CardVM): number => descending(updatedAt(a), updatedAt(b));
+const byRating = (a: CardVM, b: CardVM): number =>
+  descending(a.rating?.up ?? null, b.rating?.up ?? null);
+
+/** Each mode as a chain of keys, most significant first. Every chain ends on a
+ *  key that is unique per row (the ref, through {@link byName}), so no two
+ *  cards compare equal — an order that is not total reshuffles on every
+ *  repaint. */
+const CHAINS: Record<SortMode, ReadonlyArray<(a: CardVM, b: CardVM) => number>> = {
+  relevance: [],
+  name: [byName],
+  updated: [byUpdated, byName],
+  rating: [byRating, byUpdated, byName],
+};
+
+/** Orders cards for the sort control. `'relevance'` keeps grim's order as it
+ *  arrived (reversing it is still meaningful — least relevant first). Reversed
+ *  means reversed all the way down, the tiebreak included, which leaves the
+ *  order just as total as it was. Pure; returns a new array. */
+export function sortCards(cards: CardVM[], sort: SortMode, dir: SortDir): CardVM[] {
+  if (sort === 'relevance') {
+    return dir === NATURAL.relevance ? cards : [...cards].reverse();
+  }
+  const flip = dir === NATURAL[sort] ? 1 : -1;
+  return [...cards].sort((a, b) => {
+    for (const key of CHAINS[sort]) {
+      const d = key(a, b);
+      if (d !== 0) {
+        return flip * d;
+      }
+    }
+    return 0;
+  });
+}
 
 /** Default install scope: project when a configured workspace is open (installs
  *  there need a grimoire.toml), else global. Pure. */
@@ -690,13 +788,17 @@ export function toggleKinds(current: string[], clicked: string): string[] {
   return next.length >= KINDS.length ? [] : next;
 }
 
+/** The kind filter, then the sort control's ordering — the ONE derivation both
+ *  tabs and every id-computing caller share, so what is rendered and what the
+ *  observer/grouping code walks can never disagree about order. */
 export function filterCards(cards: CardVM[], filter: CardFilter): CardVM[] {
-  return cards.filter((card) => {
+  const kept = cards.filter((card) => {
     if (filter.kinds.length > 0 && !(card.kind !== null && filter.kinds.includes(card.kind))) {
       return false;
     }
     return true;
   });
+  return sortCards(kept, filter.sort, filter.dir);
 }
 
 /** Name-substring filter for the Installed/Updates search box (case-insensitive,
@@ -1017,7 +1119,9 @@ export interface TreeNode {
  *  - **Root elision**: with exactly one registry in the result set, the root
  *    row carries no information, so its children become the roots.
  *
- *  Groups sort before leaves, each alphabetically. Pure. */
+ *  Groups sort before leaves: groups alphabetically, LEAVES in the order the
+ *  sort control put them in — a tree that re-alphabetized its artifacts made
+ *  the control look broken everywhere but the flat list. Pure. */
 export function buildTree(cards: CardVM[], context: GroupContext = {}): TreeNode[] {
   const registries = context.registries ?? [];
   const roots = groupCards(cards, 'registry', context).map((group) => {
@@ -1088,7 +1192,10 @@ function namespaceChildren(parentId: string, placed: PlacedCard[], depth: number
       count: inSegment.length,
     };
   });
-  return [...sortByLabel(groupNodes), ...sortByLabel(leaves)];
+  // Leaves arrive in the order filterCards left them (the sort control's), and
+  // keep it. Groups have no card of their own to rank, so they stay
+  // alphabetical whatever the strategy is.
+  return [...sortByLabel(groupNodes), ...leaves];
 }
 
 function sortByLabel(nodes: TreeNode[]): TreeNode[] {

@@ -125,6 +125,10 @@ export interface CardVM {
   /** Community rating from the browse row. Absent on a grim that predates the
    *  field and null on an unrated row — both render nothing. */
   rating?: RatingVM | null;
+  /** Publish date (`grim search`'s `created`), for the `updated` sort only —
+   *  nothing renders it. Null when the row carries none, which sorts into the
+   *  undated bucket rather than to 1970. */
+  updated?: string | null;
 }
 
 /** One configured registry, as the scope Browse actually searched reports it

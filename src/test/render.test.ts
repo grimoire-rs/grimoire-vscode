@@ -4,6 +4,7 @@ import {
   buildTree,
   collectNodeIds,
   DEFAULT_FILTER,
+  DEFAULT_INSTALLED_FILTER,
   DEFAULT_VIEW,
   viewForTab,
   type ScopeStatus,
@@ -1010,7 +1011,7 @@ suite('sidebar rendering', () => {
     // for any tab but Installed) and Browse's chips persist across reloads, so
     // filtering here showed "1" on the pill over "Everything is up to date."
     const view = viewForTab(sidebarState({ installedItems: [outdatedCard()] }), 'updates', '');
-    const results = await litHtml(renderSidebarResults(view, { kinds: ['rule'] }));
+    const results = await litHtml(renderSidebarResults(view, { ...DEFAULT_FILTER, kinds: ['rule'] }));
     assert.ok(results.includes('card-delta'), 'the outdated skill survives a rule-only chip');
     assert.ok(!results.includes('Everything is up to date.'), 'not the empty state');
     assert.ok(
@@ -1103,6 +1104,35 @@ suite('sidebar split rendering (item 3)', () => {
     assert.ok(html.includes('vscode-textfield id="search"'));
     assert.ok(!html.includes('kind-chips'));
     assert.ok(!html.includes('class="card'));
+  });
+
+  test('the sort control rides the search row, selection following the filter', async () => {
+    const asc = await litHtml(
+      renderSidebarSearch(sidebarState(), { ...DEFAULT_FILTER, sort: 'rating', dir: 'asc' }),
+    );
+    assert.ok(asc.includes('class="sort-group"'), 'the pair sits in the search row');
+    assert.ok(
+      asc.includes('<option selected value="rating">'),
+      'the picked field is the selected option',
+    );
+    assert.ok(asc.includes('value="relevance"'), 'Browse offers grim\'s own ranking');
+    assert.ok(asc.includes('m3 8 4-4 4 4'), 'ascending draws the up arrow over rising bars');
+    const desc = await litHtml(
+      renderSidebarSearch(sidebarState(), { ...DEFAULT_FILTER, sort: 'rating', dir: 'desc' }),
+    );
+    assert.ok(desc.includes('m3 16 4 4 4-4'), 'descending flips the glyph, not just a label');
+    assert.ok(
+      desc.includes('aria-label="Descending — click for ascending"'),
+      'and says which way it is sorted, not only which way the click goes',
+    );
+  });
+
+  test('Installed drops the relevance option — grim status ranks nothing', async () => {
+    const installed = await litHtml(
+      renderSidebarSearch(sidebarState({ mode: 'installed' }), DEFAULT_INSTALLED_FILTER),
+    );
+    assert.ok(!installed.includes('value="relevance"'), 'no order it could name');
+    assert.ok(installed.includes('<option selected value="name">'), 'name-first instead');
   });
 
   test('search row placeholder tracks the mode; withheld in no-grim and Updates', async () => {

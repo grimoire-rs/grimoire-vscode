@@ -181,12 +181,83 @@ body {
   background: color-mix(in srgb, var(--kind-tint) 14%, transparent);
 }
 
+/* Search field and the sort control on one line. `align-items: stretch` is what
+   makes the pair the same height as the textfield without either half stating
+   one — the field is the tall item and the group takes its height. */
 .search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
   padding: 8px 12px 4px;
 }
 
 vscode-textfield#search {
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
+}
+
+/* One object with two halves — a direction cap and the field — sharing an
+   edge. The index site's control, on VS Code's own input tokens. */
+.sort-group {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+
+.sort-dir,
+.sort-field {
+  position: relative;
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sort-dir {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  border-radius: 2px 0 0 2px;
+}
+
+.sort-dir svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Pulled onto its neighbour's border so the seam is one line, not two. */
+.sort-field {
+  padding: 0 2px;
+  border-radius: 0 2px 2px 0;
+  margin-left: -1px;
+}
+
+.sort-dir:hover,
+.sort-field:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* Whichever half is hovered or focused owns the shared edge. */
+.sort-dir:hover,
+.sort-field:hover,
+.sort-dir:focus-visible,
+.sort-field:focus-visible {
+  z-index: 1;
+}
+
+/* Chromium keeps :focus-visible on a select after a MOUSE pick, so the ring
+   sits there for as long as the reader looks at the result — it has to read as
+   this widget's own chrome, not as a stuck browser default. An inset 1px on the
+   workbench's focus token hugs the control the way the rest of the sidebar
+   does. Focus itself stays: blurring on change would rip the control out from
+   under a keyboard user mid-selection. */
+.sort-dir:focus-visible,
+.sort-field:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 
 /* ponytail: !important overrides the textfield's ::slotted(content-after)

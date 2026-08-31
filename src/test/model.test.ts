@@ -21,6 +21,7 @@ import {
   concreteVersion,
   cycleGroup,
   DEFAULT_FILTER,
+  NATURAL,
   DEFAULT_VIEW,
   effectiveInstall,
   filterCards,
@@ -67,6 +68,8 @@ import {
   updateCount,
   viewForTab,
   type MenuEntry,
+  sortCards,
+  type CardFilter,
   type MenuItem,
   type ScopeStatus,
   type WireSearchItem,
@@ -666,6 +669,99 @@ suite('filters', () => {
     // filter would only ever hide rows the user asked grim to show.
     assert.ok(cards.some((c) => c.deprecated));
     assert.strictEqual(filterCards(cards, DEFAULT_FILTER).length, cards.length);
+  });
+
+  // One card each, deliberately DAMP: the sort under test is about the buckets
+  // (unrated, undated) as much as the order, and a shared fixture hides them.
+  const sortCard = (
+    name: string,
+    updated: string | null,
+    up: number | null,
+  ): CardVM => ({
+    repo: `ghcr.io/acme/skills/${name}`,
+    name,
+    kind: 'skill',
+    description: null,
+    registryHost: 'ghcr.io',
+    latestVersion: '1.0.0',
+    state: 'not-installed',
+    deprecated: null,
+    replacedBy: null,
+    installs: [],
+    updated,
+    ...(up === null ? {} : { rating: { up, url: 'https://example.test/1', vote: 'unknown' as const } }),
+  });
+
+  test("relevance keeps grim's own order, and reverses it whole", () => {
+    const rows = [sortCard('c', null, null), sortCard('a', null, null), sortCard('b', null, null)];
+    assert.deepStrictEqual(
+      sortCards(rows, 'relevance', 'asc').map((c) => c.name),
+      ['c', 'a', 'b'],
+      'relevance / registry order survives untouched',
+    );
+    assert.deepStrictEqual(
+      sortCards(rows, 'relevance', 'desc').map((c) => c.name),
+      ['b', 'a', 'c'],
+    );
+  });
+
+  test('name sorts case-insensitively, both ways', () => {
+    const rows = [sortCard('Zebra', null, null), sortCard('apple', null, null)];
+    assert.deepStrictEqual(
+      sortCards(rows, 'name', 'asc').map((c) => c.name),
+      ['apple', 'Zebra'],
+    );
+    assert.deepStrictEqual(
+      sortCards(rows, 'name', 'desc').map((c) => c.name),
+      ['Zebra', 'apple'],
+    );
+  });
+
+  test('undated rows are their own bucket, never epoch 0', () => {
+    const rows = [
+      sortCard('undated', null, null),
+      sortCard('old', '2020-01-01T00:00:00Z', null),
+      sortCard('new', '2026-01-01T00:00:00Z', null),
+      sortCard('garbage', 'not-a-date', null),
+    ];
+    assert.deepStrictEqual(
+      sortCards(rows, 'updated', 'desc').map((c) => c.name),
+      ['new', 'old', 'garbage', 'undated'],
+      'newest first; both dateless rows land after every dated one, name-tied',
+    );
+  });
+
+  test('unrated rows are their own bucket, never zero upvotes', () => {
+    const rows = [
+      sortCard('unrated', '2026-01-01T00:00:00Z', null),
+      sortCard('zero', '2026-01-01T00:00:00Z', 0),
+      sortCard('popular', '2020-01-01T00:00:00Z', 9),
+    ];
+    assert.deepStrictEqual(
+      sortCards(rows, 'rating', 'desc').map((c) => c.name),
+      ['popular', 'zero', 'unrated'],
+      'a 0-upvote row still outranks an unrated one',
+    );
+  });
+
+  test('every mode is total — no pair compares equal', () => {
+    // Two rows identical in every ranked key: the ref tiebreak has to decide,
+    // or the order reshuffles on repaint.
+    const rows = [sortCard('same', '2026-01-01T00:00:00Z', 3), sortCard('same', '2026-01-01T00:00:00Z', 3)];
+    rows[1]!.repo = 'ghcr.io/other/skills/same';
+    for (const mode of ['name', 'updated', 'rating'] as const) {
+      const forward = sortCards(rows, mode, NATURAL[mode]).map((c) => c.repo);
+      const back = sortCards(rows, mode, NATURAL[mode] === 'asc' ? 'desc' : 'asc').map((c) => c.repo);
+      assert.deepStrictEqual(back, [...forward].reverse(), `${mode} reverses whole`);
+    }
+  });
+
+  test('filterCards filters, then orders by the same filter', () => {
+    const ordered = filterCards(cards, { ...DEFAULT_FILTER, sort: 'name', dir: 'asc' });
+    assert.deepStrictEqual(
+      ordered.map((c) => c.name),
+      [...ordered.map((c) => c.name)].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   test('registriesOf is sorted and unique', () => {
@@ -2259,6 +2355,8 @@ suite('buildTree', () => {
 
   test('roots are the configured registries; their oci prefix is stripped below', () => {
     const nodes = buildTree(treeCards(), { registries: RIG });
+    // Leaves are in the fixture's own order — the tree no longer re-sorts them
+    // (see the sort-control test below); groups are alphabetical.
     assert.deepStrictEqual(labels(nodes), [
       'primary',
       '  playbooks/ci/release',
@@ -2266,12 +2364,30 @@ suite('buildTree', () => {
       '  rules',
       '    quality-core',
       '  skills',
-      '    ai-config',
       '    grim-usage',
+      '    ai-config',
       'acme',
       '  mcp',
       '    postgres-mcp',
     ]);
+  });
+
+  test('leaves follow the sort control; groups stay alphabetical', () => {
+    const skills = (filter: CardFilter): string[] => {
+      const nodes = buildTree(filterCards(treeCards(), filter), { registries: RIG });
+      const roots = nodes.map((n) => n.label);
+      assert.deepStrictEqual(roots, ['primary', 'acme'], 'group order is the strategy-free one');
+      return nodes[0]?.children.find((n) => n.label === 'skills')?.children.map((n) => n.label) ?? [];
+    };
+    assert.deepStrictEqual(skills({ ...DEFAULT_FILTER, sort: 'name', dir: 'asc' }), [
+      'ai-config',
+      'grim-usage',
+    ]);
+    assert.deepStrictEqual(
+      skills({ ...DEFAULT_FILTER, sort: 'name', dir: 'desc' }),
+      ['grim-usage', 'ai-config'],
+      'a reversed strategy reaches the leaves too — the tree used to swallow it',
+    );
   });
 
   test('the namespace directly above a package is never absorbed', () => {
