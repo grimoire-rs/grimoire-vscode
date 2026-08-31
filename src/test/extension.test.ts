@@ -1004,8 +1004,60 @@ suite('extension integration', () => {
       assert.strictEqual(last.phase, 'ready', 'there is still something to browse');
       assert.strictEqual(last.catalogIncomplete, true, 'the view is told the list is partial');
       const footer = await litString(renderSidebarFooter(last));
-      assert.ok(footer.includes('Incomplete results'), 'the footer chip renders');
+      assert.ok(footer.includes('Incomplete results'), 'its own line under the timestamp');
       assert.ok(footer.includes('data-action="show-output"'), 'and points at the output channel');
+      // The loading post that opens the NEXT round carries it too. Without that
+      // the mark blinks out and back on every watcher-driven refresh, which is
+      // what it looked like when this rode a single post instead of the
+      // last-known verdict every post is stamped with.
+      const seen = states.length;
+      const refreshing = api.providers.sidebar.refresh();
+      const loading = states.slice(seen).find((state) => state.phase === 'loading');
+      assert.strictEqual(loading?.catalogIncomplete, true, 'it does not blink out mid-refresh');
+      await refreshing;
+    } finally {
+      undo();
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a failed search leaves the incomplete mark exactly as it was', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    const undo = cannedStderr(stub, 'search', 'WARN something\n');
+    canned(stub, 'search', { items: [searchItem('ghcr.io/grimoire-rs/skills/partial')] });
+    try {
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, true, 'marked');
+      // A search that could not run is not evidence the registry came back —
+      // taking the warning down here would clear it on the round with the least
+      // evidence for doing so.
+      undo();
+      canned(stub, 'search', { error: { code: 'unavailable', exit: 69, message: 'offline' } });
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, true, 'the verdict stands');
+    } finally {
+      undo();
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a clean search clears the incomplete mark', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    const undo = cannedStderr(stub, 'search', 'WARN something\n');
+    canned(stub, 'search', { items: [searchItem('ghcr.io/grimoire-rs/skills/partial')] });
+    try {
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, true, 'marked');
+      // Last-known, not sticky: the registry coming back must take it down.
+      undo();
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, undefined, 'and cleared again');
     } finally {
       undo();
       canned(stub, 'search', { items: [] });

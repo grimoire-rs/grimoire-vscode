@@ -538,23 +538,30 @@ function renderFooter(state: SidebarState): TemplateResult {
     registries > 0
       ? html`<span class="footer-right">${registries} ${registries === 1 ? 'registry' : 'registries'}</span>`
       : nothing;
-  return html`<div class="footer">${footerWarning(state)}<span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>`;
+  return html`<div class="footer"><span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>${footerWarning(state)}`;
 }
 
-/** grim answered the search but warned while doing it — a source it could not
- *  read was dropped and the rows below are a subset of the catalog by an unknown
- *  amount. Nothing else on screen says so: the exit code was 0 and the envelope
- *  names no failure, so without this the list simply looks short (or, when every
- *  source failed, empty). grim's own text is on the output channel, which is
- *  what the chip opens — it is the only place the reason exists. */
+/** Its own line under the sync timestamp: grim answered the search but warned
+ *  while doing it — a source it could not read was dropped, and it still exited
+ *  0, so the rows above are a subset of the catalog by an unknown amount and
+ *  nothing else on screen says so.
+ *
+ *  A click opens the output channel, which is the only place the dropped source
+ *  is named — the search envelope names no failure, so grim's stderr is all
+ *  there is to point at.
+ *
+ *  It does not blink: {@link SidebarState.catalogIncomplete} is a last-known
+ *  verdict stamped onto every post, including the `phase:'loading'` one that
+ *  opens the next round, and only a search that SUCCEEDS with no warning takes
+ *  it down. A refetch in flight is not evidence the registry came back. */
 function footerWarning(state: SidebarState): TemplateResult | typeof nothing {
   if (state.catalogIncomplete !== true) {
     return nothing;
   }
   return html`<button
-  class="link-button footer-warning"
+  class="footer-warning"
   data-action="show-output"
-  title="grim reported a problem while searching — some registries may be missing from these results."
+  title="grim could not read every registry — these results may be missing artifacts. Click to see which."
 ><span class="codicon codicon-warning"></span>Incomplete results</button>`;
 }
 

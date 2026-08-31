@@ -221,6 +221,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         origin?: GrimOrigin;
       }
     | undefined;
+  // Last-known "grim warned while searching", stamped onto every post for the
+  // same reason lastUnknown is: without it the mark blinks out on the
+  // `phase:'loading'` post that opens the next watcher round and back in when
+  // it settles, which reads as a flicker rather than as a state.
+  private lastCatalogIncomplete = false;
   // In-flight refresh count; repostCardMeta stays quiet while > 0.
   private refreshing = 0;
   /** Set when the results just posted came from an explicit refresh/check, so
@@ -657,6 +662,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     if (snap.grimMissing) {
       this.lastUnknown = undefined; // no grim at all is its own state, not a degraded one
+      this.lastCatalogIncomplete = false;
       // Cleared, not frozen: unlike an unknown install state, "there is no grim"
       // is a definite answer, and a leftover count would keep pointing at an
       // Updates tab that now renders the no-grim state.
@@ -702,6 +708,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     if (catalogState.grimMissing) {
       this.lastUnknown = undefined;
+      this.lastCatalogIncomplete = false;
       this.setUpdateCount(0); // same definite answer as the snapshot's own no-grim above
       this.postState({ phase: 'no-grim', items: [], installed: [] });
       return;
@@ -801,6 +808,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       (emptyFromBrokenScope
         ? (snap.error ?? 'grim could not read this scope — the catalog is unavailable.')
         : undefined);
+    // grim answered, but warned while doing it — it dropped a source it could
+    // not read and still exited 0, so the rows on screen are a subset of the
+    // catalog by an unknown amount. Recorded here, not passed per post, so it
+    // survives the next round's loading post rather than blinking out and back
+    // on every watcher-driven refresh.
+    //
+    // Only a SUCCESSFUL search moves it, in either direction. A search that
+    // failed outright says nothing about whether the registry came back, and
+    // clearing the mark on it would take the warning down on exactly the round
+    // that had the least evidence for it. A refetch in flight moves it not at
+    // all — the verdict stands until a clean answer replaces it.
+    if (catalogState.error === undefined) {
+      this.lastCatalogIncomplete = catalogState.warnings !== undefined;
+    }
     if (catalogError !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
       // error; notifyError's dedupe collapses them to one popup.
@@ -814,7 +835,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // grim answered, but warned while doing it — the rows on screen are a
       // subset of the catalog by an unknown amount. Not an error (there IS
       // something to browse) and not silence either.
-      ...(catalogState.warnings !== undefined ? { catalogIncomplete: true } : {}),
       // The status failure itself rides this.lastUnknown (stamped by postState).
       // The banner is persistent, so it needs no toast of its own — that would
       // re-fire on every refresh for as long as the failure persists.
@@ -1015,7 +1035,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     syncedAt?: number | null;
     snapshot?: Snapshot;
     stale?: boolean;
-    catalogIncomplete?: boolean;
   }): void {
     const snap = partial.snapshot;
     const projectName = snap?.projectFolder
@@ -1041,7 +1060,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.stale === true ? { stale: true } : {}),
-      ...(partial.catalogIncomplete === true ? { catalogIncomplete: true } : {}),
+      ...(this.lastCatalogIncomplete ? { catalogIncomplete: true } : {}),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
       // repost alike. One source, so no post can silently drop it.

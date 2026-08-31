@@ -919,20 +919,32 @@ vscode-progress-bar {
   margin-left: auto;
 }
 
-/* "Incomplete results": grim exited 0 but warned that it dropped a source it
-   could not read, so the list below is short by an unknown amount. Leads the
-   footer, in the theme's warning color — it outranks the sync timestamp beside
-   it, and there is nowhere else on screen that says the results are partial. */
+/* grim exited 0 but warned that it dropped a source it could not read, so the
+   list is short by an unknown amount. Its own line under the sync timestamp
+   rather than inline beside it: it is a sentence, and squeezing it into the
+   timestamp row pushed the registry count around whenever it appeared. Borrows
+   the footer's own metrics so the two lines read as one block. */
 .footer-warning {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  width: 100%;
+  padding: 0 12px 5px;
+  background: none;
+  border: none;
+  font-family: inherit;
   font-size: 10px;
+  text-align: left;
+  cursor: pointer;
   color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground));
 }
 
 .footer-warning .codicon {
   font-size: 12px;
+}
+
+.footer-warning:hover {
+  text-decoration: underline;
 }
 
 /* --- View modes: compact rows, group headers, tree ---------------------- */
