@@ -919,32 +919,31 @@ vscode-progress-bar {
   margin-left: auto;
 }
 
-/* grim exited 0 but warned that it dropped a source it could not read, so the
-   list is short by an unknown amount. Its own line under the sync timestamp
-   rather than inline beside it: it is a sentence, and squeezing it into the
-   timestamp row pushed the registry count around whenever it appeared. Borrows
-   the footer's own metrics so the two lines read as one block. */
-.footer-warning {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* The same footer line, when grim warned that it could not read a registry's
+   catalog cache: the cloud becomes a warning glyph and the whole row turns into
+   the click target for the log. A <button> for the keyboard, reset back to the
+   footer's own metrics — including the border-top, which the element reset
+   would otherwise take with it. */
+.footer-alert {
   width: 100%;
-  padding: 0 12px 5px;
-  background: none;
   border: none;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
+  background: none;
   font-family: inherit;
-  font-size: 10px;
   text-align: left;
   cursor: pointer;
+}
+
+/* The glyph carries the warning color at rest; hovering takes the whole line,
+   text included. No underline — it reads as a broken link rather than as a
+   status line you can open. */
+.footer-alert .codicon {
   color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground));
 }
 
-.footer-warning .codicon {
-  font-size: 12px;
-}
-
-.footer-warning:hover {
-  text-decoration: underline;
+.footer-alert:hover,
+.footer-alert:focus-visible {
+  color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground));
 }
 
 /* --- View modes: compact rows, group headers, tree ---------------------- */

@@ -538,31 +538,31 @@ function renderFooter(state: SidebarState): TemplateResult {
     registries > 0
       ? html`<span class="footer-right">${registries} ${registries === 1 ? 'registry' : 'registries'}</span>`
       : nothing;
-  return html`<div class="footer"><span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>${footerWarning(state)}`;
-}
-
-/** Its own line under the sync timestamp: grim answered the search but warned
- *  while doing it — a source it could not read was dropped, and it still exited
- *  0, so the rows above are a subset of the catalog by an unknown amount and
- *  nothing else on screen says so.
- *
- *  A click opens the output channel, which is the only place the dropped source
- *  is named — the search envelope names no failure, so grim's stderr is all
- *  there is to point at.
- *
- *  It does not blink: {@link SidebarState.catalogIncomplete} is a last-known
- *  verdict stamped onto every post, including the `phase:'loading'` one that
- *  opens the next round, and only a search that SUCCEEDS with no warning takes
- *  it down. A refetch in flight is not evidence the registry came back. */
-function footerWarning(state: SidebarState): TemplateResult | typeof nothing {
+  const body = html`<span>${synced}</span>${suffix}`;
   if (state.catalogIncomplete !== true) {
-    return nothing;
+    return html`<div class="footer"><span class="codicon codicon-cloud"></span>${body}</div>`;
   }
+  // grim answered the search but warned while doing it: the catalog cache for a
+  // registry could not be read, so it was dropped and the rows above are a
+  // subset of the catalog by an unknown amount. Nothing else on screen says so —
+  // the exit code was 0 and the envelope names no failure.
+  //
+  // It takes over the line the footer already has rather than adding one: the
+  // cloud IS the catalog-cache status glyph, so a warning in its place says
+  // "this cache is not what it should be" without a second row appearing and
+  // disappearing under the results. The whole line is the click target (a real
+  // button, so Enter and Space work) and carries the explanation on hover; the
+  // output channel it opens is the only place the dropped registry is named.
+  //
+  // It does not blink: {@link SidebarState.catalogIncomplete} is a last-known
+  // verdict stamped onto every post, including the `phase:'loading'` one that
+  // opens the next round, and only a search that SUCCEEDS with no warning takes
+  // it down. A refetch in flight is not evidence the registry came back.
   return html`<button
-  class="footer-warning"
+  class="footer footer-alert"
   data-action="show-output"
-  title="grim could not read every registry — these results may be missing artifacts. Click to see which."
-><span class="codicon codicon-warning"></span>Incomplete results</button>`;
+  title="The catalog cache could not be read for every registry, so these results may be missing artifacts. Click to see which."
+><span class="codicon codicon-warning"></span>${body}</button>`;
 }
 
 function renderNoGrim(): TemplateResult {

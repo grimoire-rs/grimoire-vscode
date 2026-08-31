@@ -1004,7 +1004,11 @@ suite('extension integration', () => {
       assert.strictEqual(last.phase, 'ready', 'there is still something to browse');
       assert.strictEqual(last.catalogIncomplete, true, 'the view is told the list is partial');
       const footer = await litString(renderSidebarFooter(last));
-      assert.ok(footer.includes('Incomplete results'), 'its own line under the timestamp');
+      // The footer's own line carries it — a warning glyph in the cloud's place,
+      // the whole row clickable through to the log that names the registry.
+      assert.ok(footer.includes('footer-alert'), 'the footer line marks itself');
+      assert.ok(footer.includes('codicon-warning'), 'the cloud is replaced by a warning glyph');
+      assert.ok(!footer.includes('codicon-cloud'), 'and not shown alongside it');
       assert.ok(footer.includes('data-action="show-output"'), 'and points at the output channel');
       // The loading post that opens the NEXT round carries it too. Without that
       // the mark blinks out and back on every watcher-driven refresh, which is
