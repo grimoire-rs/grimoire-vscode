@@ -5811,6 +5811,36 @@ suite('extension integration', () => {
     assert.ok(!add.includes('--global'), 'project scope, the workspace fixture being open');
   });
 
+  test('a link that picked global writes global, with the workspace still open', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'config', {
+      action: 'registry-added',
+      key: 'grimoire',
+      value: 'https://index.grimoire.rs/',
+      scope: 'global',
+      dry_run: false,
+    });
+    fs.rmSync(stub.argvLog, { force: true });
+    const modal = stubAddRegistryModal('Add Registry');
+    try {
+      await api.handleUri(addRegistryUri(`${INDEX_QUERY}&scope=global`));
+    } finally {
+      modal.restore();
+      fs.rmSync(path.join(stub.dir, 'config.json'), { force: true });
+    }
+    // The workspace fixture is open, so without the link's scope this would
+    // have gone to the project config — the bug this route fixes.
+    assert.ok(modal.prompts[0]?.detail.includes('GLOBAL'), 'the modal names the scope it writes');
+    assert.ok(
+      modal.prompts[0]?.detail.includes('the page asked for global scope'),
+      'and says a web page steered it there',
+    );
+    const add = argvLines(stub).find((l) => l.startsWith('config registry add'));
+    assert.ok(add, 'registry add ran');
+    assert.ok(add.includes('--global'), `the picked scope reaches grim's argv: ${add}`);
+  });
+
   test('declining the add-registry modal writes nothing', async function () {
     this.timeout(15000);
     const api = await activateExtension();

@@ -1404,7 +1404,7 @@ export function isValidRepo(repo: string): boolean {
   return /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._:@-]+)+$/.test(repo);
 }
 
-// --- Add-registry deep link (…/add-registry?index=<url>&alias=<name>) ---
+// --- Add-registry deep link (…/add-registry?index=<url>&alias=<name>&scope=<scope>) ---
 // Unlike /open, this one WRITES: an index website offers a one-click "add this
 // index". Any web page can navigate to the URI, so everything below treats the
 // query as hostile — the host still confirms modally before writing.
@@ -1418,6 +1418,12 @@ export interface AddRegistryLink {
   index: string;
   include: string[];
   exclude: string[];
+  /** The scope the page's own Scope picker was on, or null when the link
+   *  carries none — or names something that is neither scope, which falls back
+   *  rather than refusing the link. A page steering the write is why
+   *  {@link addRegistryPrompt} words the modal off THIS, not off what the host
+   *  would have derived. */
+  scope: Scope | null;
 }
 
 /** Alias charset: TOML bare-key safe (a `.` would split the key path, quotes
@@ -1528,7 +1534,12 @@ export function parseAddRegistryLink(
   if (exclude === null) {
     return null;
   }
-  return { alias, index: url.href, include, exclude };
+  // Not a rejection path, and deliberately not logged through `onReject`: that
+  // log line reads "add-registry link ignored", and a link whose scope is
+  // unreadable is honoured with the derived default, not ignored.
+  const picked = params.get('scope');
+  const scope = picked === 'project' || picked === 'global' ? picked : null;
+  return { alias, index: url.href, include, exclude, scope };
 }
 
 /** One "Include: …" / "Exclude: …" clause, continuation lines hanging under
@@ -1542,10 +1553,20 @@ function patternClause(label: string, patterns: string[]): string {
   return `\n${label}: ${patterns.join(`\n${indent}`)}`;
 }
 
-/** Where an add-registry link writes, plus the modal text that says so. The
- *  Settings UX defaults to project scope; with no folder open there is no
- *  project config to write, so it falls back to global — named in the modal
- *  rather than done silently, since global is a machine-wide change.
+/** Where an add-registry link writes, plus the modal text that says so.
+ *
+ *  Precedence: with no folder open it is global, whatever the link says —
+ *  there is no project config to write. Otherwise the link's own `scope=` wins
+ *  (an index page draws a Scope picker beside the button that produced this
+ *  URI), and a link that names none falls back to the Settings UX default of
+ *  project.
+ *
+ *  Every global write is NAMED as global rather than done silently, but for two
+ *  different reasons and so in two different words: with no folder open it is a
+ *  fallback the user did not ask for, and with one open it is a WEB PAGE
+ *  steering a write at the machine-wide config — the one thing a link can now
+ *  do that it could not before, and therefore the one thing this modal has to
+ *  say out loud.
  *
  *  Every pattern is listed in full: this modal IS the authorization, so it
  *  must show exactly what reaches grimoire.toml — the same reason the index is
@@ -1564,11 +1585,18 @@ export function addRegistryPrompt(
   link: AddRegistryLink,
   projectOpen: boolean,
 ): { scope: Scope; detail: string } {
-  const scope: Scope = projectOpen ? 'project' : 'global';
-  const where =
-    scope === 'project'
-      ? "this project's grimoire.toml"
-      : 'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
+  const scope: Scope = projectOpen ? (link.scope ?? 'project') : 'global';
+  let where: string;
+  if (scope === 'project') {
+    where = "this project's grimoire.toml";
+  } else if (projectOpen) {
+    where =
+      'your GLOBAL grimoire.toml (~/.grimoire) — the page asked for global scope, so this ' +
+      'applies to every project on this machine, not just the one you have open';
+  } else {
+    where =
+      'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
+  }
   const filters = patternClause('Include', link.include) + patternClause('Exclude', link.exclude);
   const filterNote = filters
     ? ' These patterns only narrow what browsing shows — they do not stop anything from being installed.'

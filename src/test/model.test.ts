@@ -1540,12 +1540,19 @@ suite('add-registry deep link', () => {
       index: 'https://index.grimoire.rs/',
       include: [],
       exclude: [],
+      scope: null,
     });
     assert.deepStrictEqual(
       parseAddRegistryLink(
         `index=${encodeURIComponent('https://idx.example.com/v1/')}&alias=my_idx-2`,
       ),
-      { alias: 'my_idx-2', index: 'https://idx.example.com/v1/', include: [], exclude: [] },
+      {
+        alias: 'my_idx-2',
+        index: 'https://idx.example.com/v1/',
+        include: [],
+        exclude: [],
+        scope: null,
+      },
     );
   });
 
@@ -1564,6 +1571,7 @@ suite('add-registry deep link', () => {
         index: 'https://idx.example.com/',
         include: ['acme/platform/**', 'acme/{tools,libs}/**'],
         exclude: ['acme/platform/legacy/**'],
+        scope: null,
       },
     );
   });
@@ -1643,6 +1651,7 @@ suite('add-registry deep link', () => {
         index: 'https://idx.example.com/',
         include: ['acme/platform/**', 'acme/tools/**'],
         exclude: ['acme/platform/legacy/**'],
+        scope: null,
       },
       true,
     ).detail;
@@ -1665,6 +1674,7 @@ suite('add-registry deep link', () => {
         // before the trust sentence push it out of view with plain text alone.
         include: Array.from({ length: 10 }, (_, i) => `acme/p${i}/${'x'.repeat(180)}`),
         exclude: ['acme/legacy/**'],
+        scope: null,
       },
       true,
     ).detail;
@@ -1713,7 +1723,13 @@ suite('add-registry deep link', () => {
 
   test('the modal omits a filter clause it has nothing to say about', () => {
     const detail = addRegistryPrompt(
-      { alias: 'acme', index: 'https://idx.example.com/', include: ['acme/**'], exclude: [] },
+      {
+        alias: 'acme',
+        index: 'https://idx.example.com/',
+        include: ['acme/**'],
+        exclude: [],
+        scope: null,
+      },
       true,
     ).detail;
     assert.ok(detail.includes('Include: acme/**'));
@@ -1770,6 +1786,7 @@ suite('add-registry deep link', () => {
       index: 'https://index.grimoire.rs/',
       include: [],
       exclude: [],
+      scope: null,
     };
     const project = addRegistryPrompt(link, true);
     assert.strictEqual(project.scope, 'project');
@@ -1780,6 +1797,112 @@ suite('add-registry deep link', () => {
     const global = addRegistryPrompt(link, false);
     assert.strictEqual(global.scope, 'global');
     assert.ok(global.detail.includes('GLOBAL'), 'the fallback is stated, not silent');
+  });
+
+  test('reads the scope the page picked, and falls back rather than refusing', () => {
+    const base = 'index=https://idx.example.com&alias=ok';
+    assert.strictEqual(parseAddRegistryLink(`${base}&scope=global`)?.scope, 'global');
+    assert.strictEqual(parseAddRegistryLink(`${base}&scope=project`)?.scope, 'project');
+    for (const query of [
+      base,
+      `${base}&scope=`,
+      `${base}&scope=nonsense`,
+      // Case-sensitive: the two scope names are the wire format, not prose.
+      `${base}&scope=GLOBAL`,
+      `${base}&scope=${encodeURIComponent('global ')}`,
+    ]) {
+      const link = parseAddRegistryLink(query);
+      assert.ok(link, `link honoured, not refused: ${query}`);
+      assert.strictEqual(link.scope, null, query);
+    }
+    // Repeated keys: `get` takes the first, the same way `alias` and `index`
+    // already behave — a second one cannot override the one shown in the modal.
+    assert.strictEqual(parseAddRegistryLink(`${base}&scope=global&scope=project`)?.scope, 'global');
+  });
+
+  test('an unreadable scope is not logged as an ignored link', () => {
+    // The caller prefixes every reason with "add-registry link ignored" — a
+    // link honoured with the derived default must produce no such line.
+    const reasons: string[] = [];
+    const link = parseAddRegistryLink('index=https://idx.example.com&alias=ok&scope=nonsense', (r) =>
+      reasons.push(r),
+    );
+    assert.ok(link);
+    assert.deepStrictEqual(reasons, []);
+  });
+
+  test("the link's scope overrides the derived default, and the modal says which", () => {
+    const link = {
+      alias: 'grimoire',
+      index: 'https://index.grimoire.rs/',
+      include: [],
+      exclude: [],
+      scope: 'global' as const,
+    };
+    // The case this whole feature exists for: a folder IS open, so today's
+    // code would have written the project config.
+    const chosen = addRegistryPrompt(link, true);
+    assert.strictEqual(chosen.scope, 'global');
+    assert.ok(chosen.detail.includes('GLOBAL'), 'names the scope it will write');
+    assert.ok(
+      chosen.detail.includes('the page asked for global scope'),
+      'says WHO chose it — a web page steering a machine-wide write',
+    );
+    assert.ok(
+      chosen.detail.includes('every project on this machine'),
+      'says what global costs, not just where it lands',
+    );
+    assert.ok(
+      !chosen.detail.includes('no folder is open'),
+      'the no-folder fallback wording is a different situation',
+    );
+    assert.ok(
+      chosen.detail.indexOf('Alias: grimoire') <
+        chosen.detail.indexOf('Only continue if you trust that page'),
+      'index and alias still lead',
+    );
+
+    assert.strictEqual(addRegistryPrompt({ ...link, scope: 'project' }, true).scope, 'project');
+  });
+
+  test('no folder open still forces global, whatever the link asked for', () => {
+    // There is no project config to write, so `scope=project` cannot make one.
+    const forced = addRegistryPrompt(
+      {
+        alias: 'grimoire',
+        index: 'https://index.grimoire.rs/',
+        include: [],
+        exclude: [],
+        scope: 'project',
+      },
+      false,
+    );
+    assert.strictEqual(forced.scope, 'global');
+    assert.ok(forced.detail.includes('no folder is open'), 'the modal explains the override');
+  });
+
+  test('a link with no scope produces byte-identical modal text', () => {
+    const link = {
+      alias: 'grimoire',
+      index: 'https://index.grimoire.rs/',
+      include: [],
+      exclude: [],
+      scope: null,
+    };
+    const lead = 'A web page is asking to add an index registry.\n\n';
+    const ids = 'Index: https://index.grimoire.rs/\nAlias: grimoire\n\n';
+    assert.deepStrictEqual(addRegistryPrompt(link, true), {
+      scope: 'project',
+      detail:
+        `${lead}${ids}This writes to this project's grimoire.toml. ` +
+        'Only continue if you trust that page.',
+    });
+    assert.deepStrictEqual(addRegistryPrompt(link, false), {
+      scope: 'global',
+      detail:
+        `${lead}${ids}This writes to your GLOBAL grimoire.toml — no folder is open, so there ` +
+        'is no project config to write. Only continue if you trust that page.',
+    });
   });
 });
 

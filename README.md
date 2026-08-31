@@ -67,6 +67,14 @@ AI artifacts your tools rely on.
   forge thread under your own account, so it only happens after you confirm the
   dialog naming the artifact. Needs `grim` 0.14.0 or newer. A link can only
   cast a vote — retracting one stays a button in the details panel.
+- **Add an index from the web** — an index site can link
+  `vscode://grimoire-rs.grimoire-vscode/add-registry?index=<https url>&alias=<name>`,
+  optionally with `&include=`/`&exclude=` browse-filter globs (repeat the key per
+  pattern) and `&scope=project|global` for the scope its own Scope picker was on.
+  Without `scope` it writes the project `grimoire.toml` when a folder is open and
+  the global one otherwise; with no folder open it is always global. The link
+  authorizes nothing on its own — a modal naming the exact index URL, alias,
+  patterns, and which `grimoire.toml` is written is what does.
 - **Get grim automatically** — if `grim` isn't on your `PATH`, Grimoire offers to
   download the latest release from GitHub (checksum-verified).
 - **Stay up to date** — once a day Grimoire checks GitHub for a newer `grim`

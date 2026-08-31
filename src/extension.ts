@@ -389,7 +389,10 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
   // …/add-registry?index=<https url>&alias=<name> lets an index website offer a
   // one-click "add this index". That one writes, and the URI is attacker-supplied
   // (any page can navigate to it), so it is gated on a modal naming the exact URL
-  // and alias — the link alone never authorizes a write.
+  // and alias — the link alone never authorizes a write. An optional
+  // &scope=project|global carries the page's own Scope picker; addRegistryPrompt
+  // resolves it and words the modal off the RESULT, so a page steering the write
+  // at the machine-wide config is what the user reads before confirming.
   // …/vote?repo=<repo> lets an index page offer a one-click upvote. Same posture:
   // it opens the artifact and then runs the ordinary vote path, whose disclosure
   // modal — not the link — is what authorizes the public post.
