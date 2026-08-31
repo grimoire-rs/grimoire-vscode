@@ -93,6 +93,37 @@ suite('escaping', () => {
     assert.ok(tree.includes('&lt;script&gt;'), 'it is there, escaped');
   });
 
+  test('publisher markdown bodies render inert in the server-side paint', async () => {
+    // renderDetails renders the three markdown slots itself now (the host inlines
+    // that same output into webview.html for the first paint), so publisher
+    // markdown reaches the initial document instead of only the booted webview.
+    // markdown-it runs html:false, which is what keeps it inert — this pins that
+    // the new render path did not become an unescaped one.
+    const hostile = [
+      '# Title',
+      '',
+      '<script>alert(1)</script>',
+      '',
+      '<img src=x onerror="alert(1)">',
+      '',
+      '[click](javascript:alert(1))',
+    ].join('\n');
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          readmeMarkdown: hostile,
+          contentMarkdown: hostile,
+          changelogMarkdown: hostile,
+        }),
+      ),
+    );
+    assert.ok(!html.includes('<script>alert(1)'), 'no live script from a README');
+    assert.ok(html.includes('&lt;script&gt;'), 'it is there, escaped');
+    assert.ok(!html.includes('onerror="alert(1)"'), 'no live handler from a README');
+    assert.ok(!html.includes('href="javascript:'), 'markdown-it neutralizes javascript: links');
+    assert.ok(html.includes('<h1>Title</h1>'), 'and real markdown still renders');
+  });
+
   test('a hostile registry-sourced deprecation message stays escaped in the card name tooltip', async () => {
     const hostile = '"><script>alert(1)</script>';
     const html = await litHtml(renderCard(card({ state: 'deprecated', deprecated: hostile })));
