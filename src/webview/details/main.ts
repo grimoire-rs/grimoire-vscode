@@ -3,12 +3,10 @@ import '../monogram.css';
 import './details.css';
 import '@vscode-elements/elements/dist/vscode-button/index.js';
 import '@vscode-elements/elements/dist/vscode-progress-ring/index.js';
-import { nothing, render as litRender } from 'lit-html';
-import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { render as litRender } from 'lit-html';
 import type { DetailsToHost, DetailsVM, HostToDetails, RevalidateState, Scope } from '../protocol';
 import { isMutating } from '../actions';
 import { armBrokenImages } from '../brokenImage';
-import { createMarkdown } from '../markdown';
 import { isInteractiveTarget, shouldResetUi } from '../model';
 import { renderDetails, revalidateIndicator } from '../render';
 
@@ -21,11 +19,10 @@ declare function acquireVsCodeApi(): {
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('root') as HTMLElement;
 // README/CHANGELOG images are publisher-supplied and routinely unresolvable
-// (an asset left out of the companion, or a remote URL the CSP blocks).
+// (an asset left out of the companion, or a remote URL the CSP blocks). Armed
+// on `root` itself, so it survives the first render's replaceChildren and
+// catches the markdown bodies renderDetails brings with it.
 armBrokenImages(root);
-// html:false (default) — raw HTML in fetched markdown stays inert; the factory
-// also permits our data:image/svg+xml companion images (see createMarkdown).
-const md = createMarkdown();
 
 // The host injects the repo via a data attribute on the root element; the
 // serializer restore path falls back to persisted state.
@@ -162,18 +159,6 @@ function resetForRetarget(): void {
   window.scrollTo(0, 0);
 }
 
-// Fill one of renderDetails' three empty markdown slots. markdown-it output is
-// html:false (inert) and injected via unsafeHTML, never as a raw string. Null
-// clears the slot (md-contents survives across kinds even when its markdown does
-// not) so a same-repo repost can't leave a stale body behind.
-function renderMarkdown(id: string, markdown: string | null): void {
-  const element = document.getElementById(id);
-  if (!element) {
-    return;
-  }
-  litRender(markdown ? unsafeHTML(md.render(markdown)) : nothing, element);
-}
-
 let firstRender = true;
 function render(): void {
   if (!vm) {
@@ -186,15 +171,9 @@ function render(): void {
     firstRender = false;
   }
   litRender(renderDetails(vm), root);
-  // renderDetails leaves the tab/menu/tags classes at their server defaults and
-  // the markdown slots empty; re-apply the live UI state and fill the bodies.
+  // renderDetails leaves the tab/menu/tags classes at their server defaults
+  // (the markdown bodies it renders itself); re-apply the live UI state.
   applyUiState();
-  // Tab semantics (item 5): DETAILS is the README (only when shipped); CONTENTS
-  // is the artifact's own source markdown (mcp/bundle content is JSON, rendered
-  // server-side in renderDetails, so #md-contents is absent for those).
-  renderMarkdown('md-details', vm.readmeMarkdown);
-  renderMarkdown('md-contents', vm.contentMarkdown);
-  renderMarkdown('md-changelog', vm.changelogMarkdown);
 }
 
 root.addEventListener('click', (event) => {

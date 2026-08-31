@@ -1478,6 +1478,16 @@ export function highlightJson(json: string): string {
   return out;
 }
 
+/** The body of one markdown tab panel. Rendered HERE rather than left empty for
+ *  main.ts to fill after boot: the host SSRs this same template into
+ *  `webview.html`, so a cached README is in the FIRST HTML parse instead of
+ *  waiting on the webview bundle to parse, register its elements and post
+ *  `ready`. markdown-it runs with html:false, so its output is inert — the one
+ *  sanctioned unsafeHTML source alongside highlightJson. */
+function mdBody(markdown: string | null): unknown {
+  return markdown ? unsafeHTML(md.render(markdown)) : nothing;
+}
+
 /** Full-width syntax-highlighted JSON block for the CONTENTS tab (item 6). */
 function renderJsonBlock(json: string): TemplateResult {
   // highlightJson output is self-generated, fully esc()-escaped <span> markup
@@ -1500,7 +1510,7 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
   if (vm.kind === 'mcp' && vm.contentJson !== null) {
     return renderJsonBlock(vm.contentJson);
   }
-  return html`<div class="md-body" id="md-contents"></div>`;
+  return html`<div class="md-body" id="md-contents">${mdBody(vm.contentMarkdown)}</div>`;
 }
 
 /** Header version chip (item 4): sits last in the badge row so its late
@@ -1615,7 +1625,7 @@ ${renderDeprecationBanner(vm)}
   const tabs = html`${hasDetails ? tab('details', 'README') : disabledDetailsTab}${tab('contents', 'CONTENTS')}${hasChangelog ? tab('changelog', 'CHANGELOG') : disabledChangelogTab}`;
   const panel = (id: string, active: boolean, inner: unknown): TemplateResult =>
     html`<div class="tab-panel${active ? '' : ' hidden'}" id="panel-${id}">${inner}</div>`;
-  const panels = html`${hasDetails ? panel('details', first === 'details', html`<div class="md-body" id="md-details"></div>`) : nothing}${panel('contents', first === 'contents', renderContentsBody(vm))}${hasChangelog ? panel('changelog', false, html`<div class="md-body" id="md-changelog"></div>`) : nothing}`;
+  const panels = html`${hasDetails ? panel('details', first === 'details', html`<div class="md-body" id="md-details">${mdBody(vm.readmeMarkdown)}</div>`) : nothing}${panel('contents', first === 'contents', renderContentsBody(vm))}${hasChangelog ? panel('changelog', false, html`<div class="md-body" id="md-changelog">${mdBody(vm.changelogMarkdown)}</div>`) : nothing}`;
   // A cold fetch failure (no content) surfaces in-body, inside the reading
   // column where the loading spinner sat — content area only, nothing above the
   // header shifts. Warm revalidate failures never repost a VM (the cached paint

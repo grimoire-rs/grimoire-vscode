@@ -399,6 +399,25 @@ function isolateCache(api: GrimoireApi): string {
   return dir;
 }
 
+/** Backdates every cached details entry so the next OPEN actually revalidates.
+ *
+ *  A panel open skips its own content revalidate when the entry was written
+ *  inside OPEN_REVALIDATE_TTL_MS (the viewport prefetch usually probed the very
+ *  row the user clicked). Every warm-reopen test below seeds the cache and
+ *  reopens milliseconds later, which is exactly that window — so they age the
+ *  entry first and assert the revalidation path they are actually about. The
+ *  skip itself gets its own test.
+ */
+function ageCachedEntries(dir: string): void {
+  const old = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.json'))) {
+    const file = path.join(dir, name);
+    const entry = JSON.parse(fs.readFileSync(file, 'utf8')) as { savedAt: string };
+    entry.savedAt = old;
+    fs.writeFileSync(file, JSON.stringify(entry));
+  }
+}
+
 async function activateExtension(): Promise<GrimoireApi> {
   const extension = vscode.extensions.getExtension<GrimoireApi>('grimoire-rs.grimoire-vscode');
   assert.ok(extension, 'extension not found');
@@ -3830,6 +3849,7 @@ suite('extension integration', () => {
       canned(stub, 'fetch-description', {
         error: { code: 'network', exit: 75, message: 'registry unreachable' },
       });
+      ageCachedEntries(cacheDir);
       const { panel, posts, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.match(
@@ -4306,6 +4326,7 @@ suite('extension integration', () => {
       await api.providers.details.buildVM(repo);
       // Second open: paint from cache, then revalidate.
       fs.rmSync(stub.argvLog, { force: true });
+      ageCachedEntries(cacheDir);
       const { panel, posts, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.strictEqual(posts.length, 1, 'single VM post (cached paint, no repost)');
@@ -4380,6 +4401,7 @@ suite('extension integration', () => {
         kind: 'desc',
         files: [{ path: 'README.md', size: 20, content: 'new-readme-marker' }],
       });
+      ageCachedEntries(cacheDir);
       const { panel, posts } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.ok(posts.length >= 2, 'cached paint then a fresh repost');
@@ -4443,6 +4465,7 @@ suite('extension integration', () => {
         files: [{ path: 'README.md', size: 20, content: 'freshly-published-readme' }],
       });
       canned(stub, 'fetch-desc-digest', { ref: `${repo}:__grimoire`, digest: 'sha256:comp1' });
+      ageCachedEntries(cacheDir);
       const { panel, posts } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.ok(posts.length >= 2, 'the new companion triggers a repost');
@@ -4501,6 +4524,7 @@ suite('extension integration', () => {
         }),
       );
       fs.rmSync(stub.argvLog, { force: true });
+      ageCachedEntries(cacheDir);
       const { panel, posts, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.strictEqual(posts.length, 2, 'cached paint + one metadata-only repost');
@@ -4590,6 +4614,7 @@ suite('extension integration', () => {
         describeDoc(repo, { name: 'broken', has_description: true, digest: 'sha256:art2' }),
       );
       canned(stub, 'fetch', { error: { code: 'not-found', exit: 79, message: 'gone' } });
+      ageCachedEntries(cacheDir);
       const { panel, posts, revalidates, revalidateMessages } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       assert.deepStrictEqual(revalidates, ['checking', 'failed'], 'indicator: checking → failed');
@@ -4706,6 +4731,7 @@ suite('extension integration', () => {
       await waitFor(() => fs.readdirSync(cacheDir).some((f) => f.endsWith('.json')));
       // Open the prefetched repo: paint from cache, revalidate via describe only.
       fs.rmSync(stub.argvLog, { force: true });
+      ageCachedEntries(cacheDir);
       const { panel, revalidates } = fakePanel();
       await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
       const lines = argvLines(stub);
@@ -4720,6 +4746,97 @@ suite('extension integration', () => {
       assert.deepStrictEqual(revalidates, ['checking', 'done'], 'cached paint → checking/done');
     } finally {
       canned(stub, 'search', { items: [] });
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a freshly probed entry opens without revalidating it again', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/just-probed';
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'just-probed', has_description: false, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'just-probed',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    try {
+      await api.providers.details.buildVM(repo); // a complete entry, written now
+      // NO ageCachedEntries here — that is the point. The sweep normally probes
+      // the row the user is about to click, so an open seconds later must not
+      // re-run describe just to re-learn a digest that cannot have moved.
+      fs.rmSync(stub.argvLog, { force: true });
+      const { panel, posts, revalidates } = fakePanel();
+      await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      assert.strictEqual(posts.length, 1, 'the cached paint, and nothing after it');
+      assert.deepStrictEqual(revalidates, ['done'], 'settles straight to done, no checking');
+      assert.deepStrictEqual(
+        argvLines(stub).filter((l) => invokes(l, 'describe', repo)),
+        [],
+        'no describe on an entry the sweep just wrote',
+      );
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a cached artifact is inlined into the FIRST paint, before any ready', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    const details = api.providers.details;
+    const cacheDir = isolateCache(api);
+    const repo = 'ghcr.io/grimoire-rs/skills/first-paint';
+    canned(
+      stub,
+      'describe',
+      describeDoc(repo, { name: 'first-paint', has_description: true, digest: 'sha256:art1' }),
+    );
+    canned(stub, 'fetch', {
+      ref: `${repo}:latest`,
+      digest: 'sha256:art1',
+      kind: 'skill',
+      name: 'first-paint',
+      vendor: 'canonical',
+      content: '# Descriptor',
+      files: [],
+    });
+    canned(stub, 'fetch-description', {
+      ref: `${repo}:__grimoire`,
+      digest: 'sha256:comp1',
+      kind: 'desc',
+      files: [{ path: 'README.md', size: 20, content: '# first-paint-marker' }],
+    });
+    try {
+      await details.buildVM(repo); // populate the cache
+      details.openPreview(repo);
+      const panel = details.previewPanel;
+      assert.ok(panel, 'preview slot has a panel');
+      await waitFor(() => panel.webview.html !== '');
+      const html = panel.webview.html;
+      // The webview has not booted, let alone posted 'ready' — this is the
+      // host-rendered document itself.
+      assert.ok(
+        html.includes('first-paint-marker'),
+        'the cached README is in the initial document',
+      );
+      assert.ok(
+        !html.includes('rail-skeleton-line'),
+        `a cached open renders the real page, not the skeleton: ${html.slice(0, 400)}`,
+      );
+    } finally {
+      // Close the real panel this opened. Leaving webview panels behind starves
+      // later tests that assert on vscode.window.tabGroups.
+      details.previewPanel?.dispose();
+      fs.rmSync(path.join(stub.dir, 'fetch-description.json'), { force: true });
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
   });
@@ -5029,7 +5146,9 @@ suite('extension integration', () => {
     details.openPreview(a);
     const panel = details.previewPanel;
     assert.ok(panel, 'preview slot has a panel');
-    // attach inlines the full skeleton into the initial document — no empty shell.
+    // attach inlines the full page into the initial document — no empty shell.
+    // It reads the details cache first, so the assignment lands a tick later.
+    await waitFor(() => panel.webview.html !== '');
     const initialHtml = panel.webview.html;
     assert.ok(initialHtml.includes('Content-Security-Policy'), 'shell + CSP present');
     assert.ok(initialHtml.includes('rail-skeleton-line'), 'skeleton inlined server-side');

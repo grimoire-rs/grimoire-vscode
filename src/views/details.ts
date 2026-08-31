@@ -94,6 +94,23 @@ const PREFETCH_TTL_MS = 6 * 60 * 60 * 1000;
  *  still polite to the registry. */
 const RETRY_TTL_MS = 10 * 60 * 1000;
 
+/** How long after a COMPLETE probe an open trusts the entry outright and skips
+ *  its own content revalidate.
+ *
+ *  The viewport prefetch probes the rows the user is looking at — including the
+ *  one they are about to click — so the on-open revalidate normally re-ran a
+ *  `describe` plus a companion digest probe seconds after the sweep had done
+ *  exactly that. Measured against the public index that is ~1.8s of network per
+ *  open, spent competing with the sweep's own concurrent spawns, to re-learn a
+ *  digest that could not have moved. A minute is short enough that anything the
+ *  user might have published themselves is still picked up on the next open.
+ *
+ *  Much shorter than {@link PREFETCH_TTL_MS} on purpose: that one decides
+ *  whether a BACKGROUND sweep bothers, this one whether a deliberate open
+ *  double-checks. Only a `complete` entry qualifies — an incomplete one is
+ *  precisely the case that deserves the retry. */
+const OPEN_REVALIDATE_TTL_MS = 60 * 1000;
+
 const KIND_LABELS: Record<string, string> = {
   skill: 'Skill',
   rule: 'Rule',
@@ -101,6 +118,18 @@ const KIND_LABELS: Record<string, string> = {
   mcp: 'MCP',
   bundle: 'Bundle',
 };
+
+/** True when a COMPLETE entry was written inside {@link OPEN_REVALIDATE_TTL_MS}.
+ *  Pure; exported for the open-path test. A future-dated `savedAt` (clock skew)
+ *  and an unparsable one both read as stale, the same direction
+ *  {@link DetailsManager.isFresh} takes. */
+export function justProbed(entry: DetailsCacheEntry): boolean {
+  if (entry.complete !== true) {
+    return false;
+  }
+  const age = Date.now() - Date.parse(entry.savedAt);
+  return age >= 0 && age < OPEN_REVALIDATE_TTL_MS;
+}
 
 /** Preview-tab title marker: VS Code offers no styling for webview tab titles,
  *  so a plain " (Preview)" suffix stands in; plain title once permanent. */
@@ -199,7 +228,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
     const panel = this.createPanel(repo, false);
     this.panels.set(repo, panel);
-    this.attach(repo, panel);
+    void this.attach(repo, panel);
   }
 
   /** Opens the shared preview tab (single-click); keeps sidebar focus. */
@@ -234,7 +263,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     }
     const panel = this.createPanel(repo, true);
     this.preview = { panel, repo };
-    this.attach(repo, panel);
+    void this.attach(repo, panel);
   }
 
   /** Test seam: repos with a permanent panel. */
@@ -268,7 +297,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     panel.webview.options = this.webviewOptions();
     // Serialized panels always restore as permanent.
     this.panels.set(repo, panel);
-    this.attach(repo, panel);
+    await this.attach(repo, panel);
   }
 
   private webviewOptions(): vscode.WebviewOptions {
@@ -306,22 +335,39 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return vscode.Uri.joinPath(this.extensionUri, 'assets', 'logo.png');
   }
 
-  private renderHtml(webview: vscode.Webview, repo: string): string {
-    // Inline the skeleton server-side so the first HTML parse shows the full
-    // structure before the script boots — no empty shell awaiting the ready
-    // round-trip. main.ts's first message-driven render replaces #root wholesale.
-    // renderDetails returns a lit TemplateResult now; @lit-labs/ssr renders it to
-    // the same markup string the webview's first lit render produces (the host
-    // bundle is platform:node, so lit-html's Node/SSR export conditions resolve).
-    // collectResultSync keeps attach synchronous — the skeleton template has no
-    // async directives, and the sync path preserves the pre-lit timing that
-    // panel.webview.html is populated before attach's caller returns.
+  /** The panel's server-side first paint. With a cached snapshot on disk this is
+   *  the REAL page — header, logo, install rows, README, changelog — inlined into
+   *  webview.html, so the content is in the first HTML parse instead of waiting
+   *  for the bundle to parse, register its elements and post `ready`. That round
+   *  trip was the whole of "details is slow though everything is cached": the
+   *  SWR paint in {@link paint} was already instant, it just could not start
+   *  until the webview existed. Without an entry (or without a scope snapshot to
+   *  read install state from) it falls back to the skeleton, exactly as before.
+   *
+   *  renderDetails returns a lit TemplateResult; @lit-labs/ssr renders it to the
+   *  same markup string the webview's first lit render produces (the host bundle
+   *  is platform:node, so lit-html's Node/SSR export conditions resolve).
+   *  collectResultSync keeps this synchronous — the template has no async
+   *  directives — so only the cache read above it is awaited. */
+  private renderHtml(
+    panel: vscode.WebviewPanel,
+    repo: string,
+    cached: DetailsCacheEntry | null,
+  ): string {
+    const snapshot = this.scopes.cachedSnapshot();
+    // Same guard skeletonVM applies to its own install boxes: a snapshot with
+    // neither scope cannot say what is installed, and vmFromCache would render
+    // that silence as a positive "Not installed".
+    const vm =
+      cached && snapshot && (snapshot.project || snapshot.global)
+        ? this.vmFromCache(repo, cached, snapshot)
+        : this.skeletonVM(repo);
     return webviewHtml(
-      webview,
+      panel.webview,
       this.extensionUri,
       'details',
       `data-repo="${esc(repo)}"`,
-      collectResultSync(render(renderDetails(this.skeletonVM(repo)))),
+      collectResultSync(render(renderDetails(this.stampVM(panel, vm)))),
     );
   }
 
@@ -338,11 +384,16 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     return undefined;
   }
 
-  private attach(repo: string, panel: vscode.WebviewPanel): void {
-    // Register listeners before the html assignment so a 'ready' — only
-    // reachable once html boots the webview — is never missed. html is assigned
-    // exactly ONCE per panel (reassigning html reboots the webview — a tested
-    // invariant).
+  /** Wires a freshly created panel and gives it its one html assignment.
+   *
+   *  Async because the first paint reads the details cache (see
+   *  {@link renderHtml}) — so `panel.webview.html` is populated a disk read
+   *  after the caller returns, not before it. The listeners below are still
+   *  registered synchronously, which is what actually matters: `ready` is only
+   *  reachable once html boots the webview, so it can never be missed. */
+  private async attach(repo: string, panel: vscode.WebviewPanel): Promise<void> {
+    // html is assigned exactly ONCE per panel (reassigning it reboots the
+    // webview — a tested invariant).
     panel.onDidDispose(() => {
       this.disposedPanels.add(panel);
       if (this.preview?.panel === panel) {
@@ -361,7 +412,15 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         void this.onMessage(current, panel, message);
       }
     });
-    panel.webview.html = this.renderHtml(panel.webview, repo);
+    const cached = await this.cache.load(repo).catch(() => null);
+    if (this.disposedPanels.has(panel)) {
+      return; // closed during the read; touching webview.html would throw
+    }
+    // A preview retarget inside that read would make this the wrong artifact's
+    // markup. paint() reposts for whichever repo the panel tracks now, so paint
+    // THAT one and drop the entry we loaded for the other.
+    const current = this.repoOf(panel) ?? repo;
+    panel.webview.html = this.renderHtml(panel, current, current === repo ? cached : null);
   }
 
   /** Re-sends fresh view models to every open panel (after installs etc.),
@@ -439,11 +498,22 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     if (this.disposedPanels.has(panel)) {
       return;
     }
+    void panel.webview.postMessage({
+      type: 'artifact',
+      vm: this.stampVM(panel, vm),
+    } satisfies HostToDetails);
+  }
+
+  /** The per-panel fields no builder can know: whether this panel is the reusable
+   *  preview slot, this session's vote, and whether voting is supported at all.
+   *
+   *  Shared by {@link postArtifact} and the server-side first paint
+   *  ({@link renderHtml}) so the SSR'd markup and the first posted VM cannot
+   *  disagree about them. `?? 'unknown'` is the whole of R-3's default: an
+   *  artifact this window has not voted on in this session has an UNKNOWN vote,
+   *  because the user may well have voted elsewhere. */
+  private stampVM(panel: vscode.WebviewPanel, vm: DetailsVM): DetailsVM {
     vm.isPreview = this.preview?.panel === panel;
-    // Stamped here, at the single post choke point, so the skeleton and the
-    // full VM can never disagree about it. `?? 'unknown'` is the whole of
-    // R-3's default: an artifact this window has not voted on in this session
-    // has an UNKNOWN vote, because the user may well have voted elsewhere.
     const voted = this.votes.get(vm.repo);
     if (vm.rating) {
       vm.rating = {
@@ -453,7 +523,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       };
     }
     vm.canVote = this.ratingSupported();
-    void panel.webview.postMessage({ type: 'artifact', vm } satisfies HostToDetails);
+    return vm;
   }
 
   /** Builds (full pipeline) and posts the VM; syncs the editor tab title + icon
@@ -1178,9 +1248,13 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  cooling repo costs no I/O at all.
    *
    *  Only the background sweep consults this (Prefetcher.enqueue is the sole
-   *  caller). Opening a panel probes regardless — a cooldown that silences
-   *  something the user just asked for would be a bug, not a saving. An explicit
-   *  refresh passes `force`, which skips this call entirely.
+   *  caller). Opening a panel is never subject to the COOLDOWN half — muting
+   *  something the user just asked for because the registry refused it earlier
+   *  would be a bug, not a saving. It does honour a much shorter freshness
+   *  window of its own ({@link justProbed} / {@link OPEN_REVALIDATE_TTL_MS}),
+   *  which is a different question: not "is this worth sweeping" but "did the
+   *  sweep already answer this a moment ago". An explicit refresh passes
+   *  `force`, which skips this call entirely.
    *
    *  It does NOT close a registry-wide 429: this is per repo, and 100 different
    *  repos scrolling into view still each fire one probe. That needs a
@@ -1442,6 +1516,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     // The top-right indicator is driven only when a cached paint is on screen —
     // cold opens go straight skeleton→full with no background-check UI.
     if (cached) {
+      if (justProbed(cached)) {
+        // Nothing to check: the sweep proved this entry current a moment ago.
+        this.postRevalidate(panel, 'done');
+        return;
+      }
       this.postRevalidate(panel, 'checking');
     }
     const live = await this.describe(repo);

@@ -376,7 +376,7 @@ suite('unknown install state: details panel', () => {
     }
   });
 
-  test('a scope whose install state is unknown gets no install affordance (A2)', () => {
+  test('a scope whose install state is unknown gets no install affordance (A2)', async () => {
     // Project status is unknown, global is known and holds the artifact. The
     // panel must stay silent about project and honest about global — the
     // failure being pinned is the opposite: project renders "Not installed"
@@ -415,6 +415,11 @@ suite('unknown install state: details panel', () => {
     const panel = manager.previewPanel;
     assert.ok(panel, 'the preview panel opened');
     panels.push(panel);
+    // attach reads the details cache before assigning webview.html, so the
+    // first paint lands a tick after openPreview returns.
+    for (let i = 0; i < 200 && panel.webview.html === ''; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     const html = normalizeHtml(panel.webview.html);
 
     assert.ok(
