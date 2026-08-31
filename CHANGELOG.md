@@ -5,6 +5,24 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-08-31
+
+### Added
+
+- Order browse and installed by name, date or rating *(sidebar)*
+- Offer a way in when a vote finds no credential *(rate)*
+- Honour the scope an index page picked *(deep-link)*
+
+### Changed
+
+- Paint the cached artifact in the first HTML parse *(details)*
+- Fold the incomplete-catalog warning into the footer line *(sidebar)*
+
+### Fixed
+
+- Stop reporting an unreadable scope as an empty catalog *(sidebar)*
+- Stop the incomplete-results warning blinking on every refresh *(sidebar)*
+
 ## [0.3.3] - 2026-08-30
 
 ### Added
@@ -226,6 +244,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.3.4]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.3..v0.3.4
 [0.3.3]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.2..v0.3.3
 [0.3.2]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.1..v0.3.2
 [0.3.1]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.0..v0.3.1
