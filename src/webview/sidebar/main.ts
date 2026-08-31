@@ -659,6 +659,9 @@ root.addEventListener('click', (event) => {
     case 'show-grim-info':
       post({ type: 'showGrimInfo' });
       break;
+    case 'show-output':
+      post({ type: 'showOutput' });
+      break;
     case 'toggle-node': {
       // A twisty on a group header or tree node. The only view control still in
       // the webview — it belongs to the row, not to the view.

@@ -9,6 +9,12 @@ export interface CatalogState {
   syncedAt: number | null;
   error?: string;
   grimMissing?: boolean;
+  /** grim wrote to stderr while still exiting 0 — it dropped a source it could
+   *  not read and reported nothing about it in the envelope. The results here
+   *  are therefore incomplete by an unknown amount, which is a different claim
+   *  from `error` (no results at all) and from a clean empty list. Only its
+   *  presence is used; the text goes to the output channel. */
+  warnings?: string;
 }
 
 export class CatalogService {
@@ -61,14 +67,15 @@ export class CatalogService {
     // and possible on a version-skewed grim) must not poison the cache — the
     // card builders iterate it.
     const items = Array.isArray(result.value.items) ? result.value.items : [];
+    const warnings = result.warnings !== undefined ? { warnings: result.warnings } : {};
     if (generation !== this.generation) {
       // A newer search started while this one was in flight and its results
       // are what the cache should hold. Return this caller's own results —
       // they are real, just superseded — without clobbering the cache.
-      return { items, syncedAt: this.syncedAt };
+      return { items, syncedAt: this.syncedAt, ...warnings };
     }
     this.items = items;
     this.syncedAt = Date.now();
-    return this.state();
+    return { ...this.state(), ...warnings };
   }
 }

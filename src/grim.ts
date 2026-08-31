@@ -399,7 +399,20 @@ export interface RateReport {
 // --- Results
 
 export type GrimResult<T> =
-  | { ok: true; value: T }
+  | {
+      ok: true;
+      value: T;
+      /** grim's stderr on a SUCCESSFUL run, trimmed, when it wrote any.
+       *
+       *  grim degrades a source it cannot read to a tracing WARN and still
+       *  exits 0 — `grim search` against a catalog file written by a newer grim
+       *  drops that whole registry from `items` and says so on stderr alone. A
+       *  consumer reading only stdout cannot tell that from "no results", which
+       *  is exactly how an older grim produced an empty (or silently truncated)
+       *  browse list. Presence is the whole signal; nothing here parses the
+       *  text. Absent when stderr was empty. */
+      warnings?: string;
+    }
   | { ok: false; kind: 'not-found' }
   | {
       ok: false;
@@ -485,7 +498,8 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
       ...(doc.error.forceable !== undefined ? { forceable: doc.error.forceable } : {}),
     };
   }
-  return { ok: true, value: doc as T };
+  const warnings = stderr.trim();
+  return { ok: true, value: doc as T, ...(warnings !== '' ? { warnings } : {}) };
 }
 
 /** True when a failed grim call is worth retrying once: grim tagged the

@@ -511,6 +511,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // diagnostics with no state to plumb back.
         await vscode.commands.executeCommand('grimoire.showGrimInfo');
         return;
+      case 'showOutput':
+        // Same posture: pure diagnostics, straight to the existing command.
+        await vscode.commands.executeCommand('grimoire.showOutput');
+        return;
     }
   }
 
@@ -775,7 +779,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     // A catalog failure is the one that still has nothing to show: its cards
     // come from a possibly-empty result set, so it keeps the error phase.
-    const catalogError = catalogState.error;
+    //
+    // An EMPTY result set out of a scope grim could not read is the same
+    // nothing-to-show wearing a friendlier face. `grim search` reports a source
+    // it cannot load as a stderr warning and still exits 0 with the rows it did
+    // manage — so a grim older than the config or the catalog cache on disk
+    // answers "0 results" where the honest answer is "I could not read your
+    // setup". Rendering that as "No results" is what made an old grim look like
+    // an empty registry. The contradicting evidence is already in this same
+    // round: the search scope's own `grim context` probe failed, or the binary
+    // is below the floor. Gated on an empty list, so a scope that still
+    // returned rows keeps browsing them.
+    const searchProbeFailed =
+      searchScope === 'project'
+        ? snap.projectProbeFailed === true
+        : snap.globalProbeFailed === true;
+    const scopeUnusable = searchProbeFailed || firstUnknown?.unknownReason === 'too-old';
+    const emptyFromBrokenScope = catalogState.items.length === 0 && scopeUnusable;
+    const catalogError =
+      catalogState.error ??
+      (emptyFromBrokenScope
+        ? (snap.error ?? 'grim could not read this scope — the catalog is unavailable.')
+        : undefined);
     if (catalogError !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
       // error; notifyError's dedupe collapses them to one popup.
@@ -786,6 +811,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       items: cards,
       installed,
       ...(catalogError !== undefined ? { error: catalogError } : {}),
+      // grim answered, but warned while doing it — the rows on screen are a
+      // subset of the catalog by an unknown amount. Not an error (there IS
+      // something to browse) and not silence either.
+      ...(catalogState.warnings !== undefined ? { catalogIncomplete: true } : {}),
       // The status failure itself rides this.lastUnknown (stamped by postState).
       // The banner is persistent, so it needs no toast of its own — that would
       // re-fire on every refresh for as long as the failure persists.
@@ -986,6 +1015,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     syncedAt?: number | null;
     snapshot?: Snapshot;
     stale?: boolean;
+    catalogIncomplete?: boolean;
   }): void {
     const snap = partial.snapshot;
     const projectName = snap?.projectFolder
@@ -1011,6 +1041,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.stale === true ? { stale: true } : {}),
+      ...(partial.catalogIncomplete === true ? { catalogIncomplete: true } : {}),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
       // repost alike. One source, so no post can silently drop it.

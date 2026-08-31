@@ -216,6 +216,14 @@ export interface SidebarState {
    *  preferred (resolveExecutable prefers it), so the download changes nothing
    *  and the banner offers "Show grim Info" instead. Absent when not known. */
   installStateUnknownOrigin?: GrimOrigin;
+  /** Set when the catalog search SUCCEEDED but grim warned on stderr — it
+   *  dropped a source it could not read and still exited 0 with a truncated
+   *  (possibly empty) `items`. The results on screen are therefore incomplete
+   *  by an unknown amount. Distinct from {@link error} (no results at all) and
+   *  from {@link installStateUnknown} (results fine, install state is not):
+   *  browsing works, it just is not the whole catalog. Only presence matters —
+   *  grim's text goes to the output channel, which the footer chip points at. */
+  catalogIncomplete?: boolean;
 }
 
 export type SidebarToHost =
@@ -259,7 +267,12 @@ export type SidebarToHost =
    *  which binary resolved and why its install state is unknown (offered when
    *  installing a fresh grim would not change the resolution — a PATH/setting
    *  grim, or a non-too-old failure). */
-  | { type: 'showGrimInfo' };
+  | { type: 'showGrimInfo' }
+  /** Footer "Incomplete results" — opens the Grimoire output channel, where the
+   *  warning grim wrote to stderr while still exiting 0 was logged. That text is
+   *  the only record of WHICH source was dropped, so the chip points at it
+   *  rather than trying to restate it in the footer. */
+  | { type: 'showOutput' };
 
 export type HostToSidebar =
   | { type: 'state'; state: SidebarState }

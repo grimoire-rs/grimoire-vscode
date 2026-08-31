@@ -919,6 +919,22 @@ vscode-progress-bar {
   margin-left: auto;
 }
 
+/* "Incomplete results": grim exited 0 but warned that it dropped a source it
+   could not read, so the list below is short by an unknown amount. Leads the
+   footer, in the theme's warning color — it outranks the sync timestamp beside
+   it, and there is nowhere else on screen that says the results are partial. */
+.footer-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--vscode-editorWarning-foreground, var(--vscode-notificationsWarningIcon-foreground));
+}
+
+.footer-warning .codicon {
+  font-size: 12px;
+}
+
 /* --- View modes: compact rows, group headers, tree ---------------------- */
 
 /* One artifact per 22px row: logo, name, version, then kind / gear / state.

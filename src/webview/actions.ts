@@ -53,6 +53,7 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   'clear-search': false,
   'search-tag': false,
   'show-grim-info': false,
+  'show-output': false,
   'revalidate-error': false,
   // Pins the preview tab open ("Keep open"), not a grim call.
   promote: false,

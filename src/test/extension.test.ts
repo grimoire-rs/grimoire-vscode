@@ -36,6 +36,8 @@ import {
   type UpdateEntry,
 } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
+import { renderSidebarFooter } from '../webview/render';
+import { litString } from './litString';
 import {
   MINIMUM_GRIM_VERSION,
   RATING_GRIM_VERSION,
@@ -135,6 +137,12 @@ if [ "$cmd" = "update" ] && [ -f "${dir}/update-name.json" ]; then
   esac
 fi
 if [ -f "${dir}/$cmd.json" ]; then
+  # Optional stderr companion (see cannedStderr). Real grim writes tracing
+  # warnings there while still exiting 0 and printing a normal report — the
+  # degrade that hides a dropped registry behind a full-looking result.
+  if [ -f "${dir}/$cmd.err" ]; then
+    cat "${dir}/$cmd.err" >&2
+  fi
   cat "${dir}/$cmd.json"
   # Optional exit-code companion (see cannedExit). Absent ⇒ exit 0, which is
   # what every fixture predating it relies on: real grim pairs a report with a
@@ -162,6 +170,15 @@ function canned(stub: Stub, command: string, doc: unknown): void {
 function cannedExit(stub: Stub, command: string, code: number): () => void {
   const file = path.join(stub.dir, `${command}.exit`);
   fs.writeFileSync(file, String(code));
+  return () => fs.rmSync(file, { force: true });
+}
+
+/** Makes the canned response for `command` write `text` to stderr before its
+ *  JSON, while still exiting 0. Returns the undo, for the same reason
+ *  {@link cannedExit} does. */
+function cannedStderr(stub: Stub, command: string, text: string): () => void {
+  const file = path.join(stub.dir, `${command}.err`);
+  fs.writeFileSync(file, text);
   return () => fs.rmSync(file, { force: true });
 }
 
@@ -902,6 +919,94 @@ suite('extension integration', () => {
       assert.ok(last.items.length > 0, 'catalog cards still reach the webview');
     } finally {
       api.scopes.run = originalRun;
+    }
+  });
+
+  test('an empty catalog out of a scope grim cannot read is an error, not "no results"', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // The reported bug, reproduced with real binaries: point the extension at a
+    // grim older than the config on disk and `grim context` exits 78 naming the
+    // key it cannot parse, while `grim search` degrades the sources it could not
+    // load to a stderr warning and still exits 0 with `{"items": []}`. Reading
+    // only stdout, that is indistinguishable from an empty registry — so the
+    // browse tab rendered "No artifacts found" and the user was told nothing.
+    const configError =
+      '/home/u/.grimoire/grimoire.toml: invalid TOML: unknown field `include`, ' +
+      'expected one of `alias`, `oci`, `url`, `index`, `default`';
+    canned(stub, 'context', { error: { code: 'config', exit: 78, message: configError } });
+    canned(stub, 'search', { items: [] });
+    try {
+      await api.providers.sidebar.refresh();
+      const last = states.at(-1);
+      assert.ok(last, 'no state was posted');
+      assert.strictEqual(last.phase, 'error', 'an unreadable scope is not an empty one');
+      assert.ok(
+        last.error?.includes('unknown field'),
+        `grim's own reason reaches the view: ${last.error}`,
+      );
+    } finally {
+      canned(stub, 'context', contextDoc());
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a search that still returned rows is left alone even on a broken scope', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // The guard above is gated on an EMPTY list on purpose: `grim search` drops
+    // only the sources it could not read, so a config that still has one working
+    // registry keeps browsing it. Blanking that into an error would be the same
+    // overreach in the other direction.
+    canned(stub, 'context', {
+      error: { code: 'config', exit: 78, message: 'bad config' },
+    });
+    canned(stub, 'search', { items: [searchItem('ghcr.io/grimoire-rs/skills/survivor')] });
+    try {
+      await api.providers.sidebar.refresh();
+      const last = states.at(-1);
+      assert.ok(last, 'no state was posted');
+      assert.strictEqual(last.phase, 'ready', 'rows are rows — keep browsing them');
+      assert.ok(last.items.length > 0, 'the surviving registry still reaches the webview');
+    } finally {
+      canned(stub, 'context', contextDoc());
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a search that warns on stderr marks the results incomplete', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // The worse half of the same grim behavior: a binary NEWER than the floor
+    // (no banner, no version gate) whose catalog cache was written by a newer
+    // grim still exits 0 — with the rows from the sources it could read and a
+    // WARN naming the ones it dropped. The list looks healthy and is silently
+    // short. stderr is the only evidence, so presence of it is the signal.
+    const undo = cannedStderr(
+      stub,
+      'search',
+      "WARN grim::catalog: catalog for source 'https://index.grimoire.rs' unavailable: " +
+        'invalid catalog file\n',
+    );
+    canned(stub, 'search', { items: [searchItem('ghcr.io/grimoire-rs/skills/partial')] });
+    try {
+      await api.providers.sidebar.refresh();
+      const last = states.at(-1);
+      assert.ok(last, 'no state was posted');
+      assert.strictEqual(last.phase, 'ready', 'there is still something to browse');
+      assert.strictEqual(last.catalogIncomplete, true, 'the view is told the list is partial');
+      const footer = await litString(renderSidebarFooter(last));
+      assert.ok(footer.includes('Incomplete results'), 'the footer chip renders');
+      assert.ok(footer.includes('data-action="show-output"'), 'and points at the output channel');
+    } finally {
+      undo();
+      canned(stub, 'search', { items: [] });
     }
   });
 
@@ -4833,9 +4938,11 @@ suite('extension integration', () => {
         `a cached open renders the real page, not the skeleton: ${html.slice(0, 400)}`,
       );
     } finally {
-      // Close the real panel this opened. Leaving webview panels behind starves
-      // later tests that assert on vscode.window.tabGroups.
+      // Close the real panel this opened and let the manager observe it: a
+      // lingering preview slot (and its editor tab) is state the next test
+      // inherits, and the ones that assert on vscode.window.tabGroups notice.
       details.previewPanel?.dispose();
+      await waitFor(() => details.previewRepo === null);
       fs.rmSync(path.join(stub.dir, 'fetch-description.json'), { force: true });
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
@@ -5057,6 +5164,9 @@ suite('extension integration', () => {
     } finally {
       canned(stub, 'context', contextDoc());
       canned(stub, 'search', { items: [] });
+      // These cans name a DIFFERENT artifact ("rows"); left behind they answer
+      // the next test's describe/fetch, which retitles its panel after this one.
+      uncan(stub, 'describe', 'fetch');
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
   });

@@ -538,7 +538,24 @@ function renderFooter(state: SidebarState): TemplateResult {
     registries > 0
       ? html`<span class="footer-right">${registries} ${registries === 1 ? 'registry' : 'registries'}</span>`
       : nothing;
-  return html`<div class="footer"><span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>`;
+  return html`<div class="footer">${footerWarning(state)}<span class="codicon codicon-cloud"></span><span>${synced}</span>${suffix}</div>`;
+}
+
+/** grim answered the search but warned while doing it — a source it could not
+ *  read was dropped and the rows below are a subset of the catalog by an unknown
+ *  amount. Nothing else on screen says so: the exit code was 0 and the envelope
+ *  names no failure, so without this the list simply looks short (or, when every
+ *  source failed, empty). grim's own text is on the output channel, which is
+ *  what the chip opens — it is the only place the reason exists. */
+function footerWarning(state: SidebarState): TemplateResult | typeof nothing {
+  if (state.catalogIncomplete !== true) {
+    return nothing;
+  }
+  return html`<button
+  class="link-button footer-warning"
+  data-action="show-output"
+  title="grim reported a problem while searching — some registries may be missing from these results."
+><span class="codicon codicon-warning"></span>Incomplete results</button>`;
 }
 
 function renderNoGrim(): TemplateResult {

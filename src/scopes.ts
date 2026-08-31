@@ -608,6 +608,14 @@ export class ScopeService {
             : 'exited 64 (unrecognized subcommand/argument — stale binary?)';
         this.output.appendLine(`  grim executable '${executable}' ${why}`);
       }
+      // A run that SUCCEEDED but wrote to stderr degraded something silently —
+      // a source it could not read, most often. The exit code says nothing, so
+      // the log is the only place that record can exist.
+      if (result.ok && result.warnings !== undefined) {
+        for (const line of result.warnings.split('\n')) {
+          this.output.appendLine(`  ${line}`);
+        }
+      }
       return result;
     });
   }
