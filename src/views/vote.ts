@@ -22,7 +22,7 @@
 // this file being correct. Do not drop it because step 1 "already got it right".
 import * as vscode from 'vscode';
 
-import { authTargetFor, voteToken, type SecretReader } from '../auth';
+import { authTargetFor, voteToken, type SecretReader, type VoteCredential } from '../auth';
 import { rateArgs, type GrimResult, type RateReport } from '../grim';
 import type { Scope, VoteState } from '../webview/protocol';
 
@@ -30,7 +30,15 @@ import type { Scope, VoteState } from '../webview/protocol';
  *  {@link voteStateAfter} reads as **unknown** — never "not voted" (S-007). */
 export type VoteOutcome =
   | { ok: true; report: RateReport }
-  | { ok: false; message: string };
+  | {
+      ok: false;
+      message: string;
+      /** Set only when the failure was "no credential for this host", carrying
+       *  WHY. The caller turns it into the matching offer — install the provider
+       *  extension, or store a token — instead of a dead-end toast naming two
+       *  remedies the extension does not provide. */
+      credential?: Extract<VoteCredential, { ok: false }>;
+    };
 
 export interface VoteDeps {
   /** Runs grim. `stdin`, when given, carries the credential and nothing else. */
@@ -43,6 +51,24 @@ export interface VoteDeps {
    *  click — the /vote deep link reaches here from an attacker-supplied URI,
    *  and consent to post about an unnamed artifact is not consent. */
   confirm: (reference: string, provider: string, host: string, remove: boolean) => Promise<boolean>;
+}
+
+/** The one sentence each no-credential reason deserves. Kept beside castVote
+ *  rather than in the notification layer so a caller that only logs the outcome
+ *  still says something true. */
+function noCredentialMessage(credential: Extract<VoteCredential, { ok: false }>): string {
+  switch (credential.reason) {
+    case 'provider-missing':
+      return credential.providerId === 'gitlab'
+        ? `Voting on ${credential.host} needs the GitLab Workflow extension, or a stored token.`
+        : `No ${credential.providerId} sign-in available for ${credential.host}.`;
+    case 'instance-mismatch':
+      return credential.instance !== undefined
+        ? `GitLab Workflow is signed in to ${credential.instance}, but this index rates on ${credential.host}.`
+        : `No sign-in for ${credential.host} — the signed-in instance is a different one.`;
+    case 'no-session':
+      return `No credential for ${credential.host}.`;
+  }
 }
 
 /** grim's word for "this row has no rating" / "I cannot vote here". */
@@ -94,12 +120,13 @@ export async function castVote(
     return { ok: false, message: '' };
   }
 
-  const token = await voteToken(target, deps.secrets, 'interactive');
-  if (token === undefined) {
+  const credential = await voteToken(target, deps.secrets, 'interactive');
+  if (!credential.ok) {
     // PIPE NOTHING. Falling through to a token-less `grim rate` would make
     // grim run its own credential ladder against a host we could not
     // authenticate against; the honest answer is that we have no credential.
-    return { ok: false, message: `No credential for ${target.host} — sign in, or store a token.` };
+    // The reason rides along so the caller can offer the way out.
+    return { ok: false, message: noCredentialMessage(credential), credential };
   }
 
   // 3. `--token-host` alongside `--token-stdin`: grim fails closed on a
@@ -107,7 +134,7 @@ export async function castVote(
   const result = await deps.run<RateReport>(
     rateArgs(reference, { remove, tokenStdin: true, tokenHost: target.host }),
     'project',
-    token,
+    credential.token,
   );
   if (!result.ok) {
     return {
@@ -186,14 +213,14 @@ export async function refineVoteState(
   if (!target) {
     return 'unknown';
   }
-  const token = await voteToken(target, deps.secrets, 'silent');
-  if (token === undefined) {
+  const credential = await voteToken(target, deps.secrets, 'silent');
+  if (!credential.ok) {
     return 'unknown';
   }
   const viewer = await deps.run<RateReport>(
     rateArgs(reference, { dryRun: true, tokenStdin: true, tokenHost: target.host }),
     'project',
-    token,
+    credential.token,
   );
   if (!viewer.ok) {
     return 'unknown';

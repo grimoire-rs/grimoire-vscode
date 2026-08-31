@@ -23,8 +23,13 @@ export interface AuthTarget {
   scopes: readonly string[];
 }
 
-/** The read half of {@link vscode.SecretStorage} — all this module needs. */
+/** The read half of {@link vscode.SecretStorage} — all this module needs. The
+ *  credential ladder never writes: storing a token is a deliberate user action,
+ *  and it lives in views/ratingAuth.ts behind a command. */
 export type SecretReader = Pick<vscode.SecretStorage, 'get'>;
+
+/** The write half, for the store/clear commands only. */
+export type SecretWriter = Pick<vscode.SecretStorage, 'store' | 'delete'>;
 
 /** C-007's default host per provider. An override for GHES / self-managed
  *  GitLab comes from the user's own grim config and NEVER from index-fetched
@@ -143,16 +148,81 @@ function gitlabInstanceMatches(host: string): boolean {
   });
 }
 
+/** Why no credential could be resolved for a host.
+ *
+ *  A bare "there is none" was the whole of the reported problem: the toast said
+ *  "sign in, or store a token" and the extension offered neither, because it
+ *  could not tell a MISSING PROVIDER (no GitLab Workflow installed — its
+ *  absence makes `getSession` throw) from a provider pointed at a DIFFERENT
+ *  instance from a provider that simply has no session. Those need three
+ *  different remedies, so the ladder reports which one it hit. */
+export type NoCredentialReason =
+  /** VS Code has no auth provider with this id — for `gitlab` that means the
+   *  GitLab Workflow extension is not installed, which is installable from
+   *  here. GitHub's providers are built in, so this cannot be them. */
+  | 'provider-missing'
+  /** The provider is registered but signed in to another instance. It has no
+   *  per-request host parameter, so its session must not travel to this host
+   *  (see {@link gitlabInstanceMatches}) — a stored PAT is the way in. */
+  | 'instance-mismatch'
+  /** Provider present, host matches, nothing came back — the user dismissed the
+   *  sign-in, or there is no session and none was created. */
+  | 'no-session';
+
+/** The outcome of resolving a rating credential. Every `ok: false` means the
+ *  caller pipes NOTHING; the reason only decides what it can offer the user. */
+export type VoteCredential =
+  | { ok: true; token: string }
+  | {
+      ok: false;
+      reason: NoCredentialReason;
+      /** Normalised host the vote would go to. */
+      host: string;
+      /** On `instance-mismatch`, the instance the provider IS pointed at, so the
+       *  message can name both sides. Absent when it cannot be read. */
+      instance?: string;
+      /** The provider that would have supplied it — drives the "install it"
+       *  offer, which only exists for `gitlab`. */
+      providerId: AuthTarget['providerId'];
+    };
+
+/** The instance a host-anchored provider is actually pointed at, for the
+ *  mismatch message. Undefined when the setting is unset or unparsable. */
+function configuredInstance(providerId: AuthTarget['providerId']): string | undefined {
+  const raw =
+    providerId === 'github-enterprise'
+      ? vscode.workspace.getConfiguration('github-enterprise').get<string>('uri')
+      : (vscode.workspace.getConfiguration('gitlab').get<string>('instanceUrl') ??
+        vscode.workspace.getConfiguration('gitlab').get<string>('url'));
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return normalizeHost(new URL(raw).host);
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when VS Code has no provider registered under this id. `getAccounts` is
+ *  the probe: it REJECTS for an unregistered provider and resolves `[]` for a
+ *  registered one with no accounts. The blanket try/catch around `getSession`
+ *  used to collapse those two into the same silent undefined, which is why "the
+ *  GitLab extension is missing" was indistinguishable from "you dismissed the
+ *  prompt" and neither could be acted on. */
+async function providerMissing(providerId: AuthTarget['providerId']): Promise<boolean> {
+  try {
+    await vscode.authentication.getAccounts(providerId);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 async function ratingSession(
   target: AuthTarget,
   mode: 'interactive' | 'silent',
 ): Promise<vscode.AuthenticationSession | undefined> {
-  if (target.providerId === 'github-enterprise' && !enterpriseUriMatches(target.host)) {
-    return undefined;
-  }
-  if (target.providerId === 'gitlab' && !gitlabInstanceMatches(target.host)) {
-    return undefined;
-  }
   const scopes = [...target.scopes];
   try {
     if (mode === 'silent') {
@@ -179,24 +249,53 @@ async function ratingSession(
       createIfNone: true,
     });
   } catch {
-    // Provider not registered (no GitLab Workflow extension), or the user
-    // dismissed the sign-in. Neither is an error here — fall through to the
-    // stored PAT, and to "no credential" if there is none.
+    // Provider not registered, or the user dismissed the sign-in. Neither is an
+    // error here — the caller falls through to the stored PAT, and reports a
+    // reason if there is none.
     return undefined;
   }
 }
 
 /**
- * The credential to pipe to `grim rate --token-stdin`, or undefined — in which
- * case the caller pipes NOTHING and reports "no credential for <host>". The
- * SecretStorage PAT is consulted only after the matching provider yields no
- * session.
+ * The credential to pipe to `grim rate --token-stdin`, or a reason there is
+ * none — in which case the caller pipes NOTHING.
+ *
+ * The host-anchor checks come first and short-circuit the provider entirely: a
+ * session for another instance must not travel to this host, whatever the mode.
+ * The SecretStorage PAT is consulted only after the matching provider yields no
+ * session; it is host-keyed, so it is by construction the credential the user
+ * stored for THIS host.
  */
 export async function voteToken(
   target: AuthTarget,
   secrets: SecretReader,
   mode: 'interactive' | 'silent',
-): Promise<string | undefined> {
-  const session = await ratingSession(target, mode);
-  return session?.accessToken ?? (await secrets.get(voteSecretKey(target.host)));
+): Promise<VoteCredential> {
+  const anchored =
+    target.providerId === 'github-enterprise'
+      ? enterpriseUriMatches(target.host)
+      : target.providerId === 'gitlab'
+        ? gitlabInstanceMatches(target.host)
+        : true;
+  const session = anchored ? await ratingSession(target, mode) : undefined;
+  const token = session?.accessToken ?? (await secrets.get(voteSecretKey(target.host)));
+  if (token !== undefined) {
+    return { ok: true, token };
+  }
+  if (!anchored) {
+    const instance = configuredInstance(target.providerId);
+    return {
+      ok: false,
+      reason: 'instance-mismatch',
+      host: target.host,
+      providerId: target.providerId,
+      ...(instance !== undefined ? { instance } : {}),
+    };
+  }
+  // Asked last, and only on the failing path: it costs a provider round trip,
+  // and it is only ever needed to explain a failure.
+  const reason: NoCredentialReason = (await providerMissing(target.providerId))
+    ? 'provider-missing'
+    : 'no-session';
+  return { ok: false, reason, host: target.host, providerId: target.providerId };
 }

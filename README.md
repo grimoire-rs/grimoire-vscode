@@ -99,11 +99,44 @@ Run from the Command Palette (all under the **Grimoire** category).
 | `Grimoire: Open Settings`      | Open the Settings editor tab (`grim config` UI)                                  |
 | `Grimoire: Show Output`        | Open the Grimoire output channel                                                 |
 | `Grimoire: Show Info`          | Which `grim` would be spawned, how it was resolved, and its version              |
+| `Grimoire: Store Rating Token…`| Store a personal access token for a rating host (see **Voting**)                 |
+| `Grimoire: Clear Rating Token…`| Remove the stored token for a rating host                                        |
 | `Grimoire: Report Bug`         | Open a prefilled GitHub bug report                                               |
 | `Grimoire: Request Feature`    | Open a prefilled GitHub feature request                                          |
 
 `grimoire.openDetails` is intentionally omitted from the palette — it is
 invoked via the `vscode://` deep link.
+
+## Voting
+
+An upvote is a public post on the index's forge thread, under **your** account —
+so it needs a credential for the forge host, and Grimoire will never guess one.
+`grim rate --dry-run` names the host first; the credential is then chosen from
+that host alone, and if none can be found for it, nothing is sent.
+
+Where the credential comes from, in order:
+
+1. **The forge's own VS Code sign-in.** `github.com` uses the built-in GitHub
+   account. A GitHub Enterprise host uses the built-in `github-enterprise`
+   provider — and only when `github-enterprise.uri` names that exact host. A
+   **GitLab** host needs the
+   [GitLab Workflow](https://marketplace.visualstudio.com/items?itemName=GitLab.gitlab-workflow)
+   extension, which is what registers a `gitlab` account in VS Code; without it
+   installed there is no GitLab sign-in to use. Its instance setting must also
+   name the host being rated: GitLab Workflow registers one identity for
+   gitlab.com and self-managed alike, so a gitlab.com token is never sent to a
+   corporate instance just because both are "GitLab".
+
+2. **A token you store.** `Grimoire: Store Rating Token…` keeps a personal
+   access token in VS Code's secret storage, keyed by host. This is the path for
+   a self-managed instance GitLab Workflow is not pointed at, and it works with
+   no extra extension at all. On GitLab the token needs `api` scope (it posts to
+   a discussion); on GitHub, `public_repo`. `Grimoire: Clear Rating Token…`
+   takes it back out.
+
+A vote that finds neither says so and offers whichever of the two applies. See
+grim's [self-hosted GitLab guide](https://grimoire.rs/self-hosted-gitlab.html)
+for standing up the index side on a corporate instance.
 
 ## Settings
 

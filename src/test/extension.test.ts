@@ -504,6 +504,8 @@ suite('extension integration', () => {
       'grimoire.installGrim',
       'grimoire.showOutput',
       'grimoire.openDetails',
+      'grimoire.storeRatingToken',
+      'grimoire.clearRatingToken',
     ]) {
       assert.ok(commands.includes(command), `${command} missing`);
     }

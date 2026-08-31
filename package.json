@@ -129,6 +129,16 @@
         "category": "Grimoire"
       },
       {
+        "command": "grimoire.storeRatingToken",
+        "title": "Store Rating Token…",
+        "category": "Grimoire"
+      },
+      {
+        "command": "grimoire.clearRatingToken",
+        "title": "Clear Rating Token…",
+        "category": "Grimoire"
+      },
+      {
         "command": "grimoire.reportBug",
         "title": "Report Bug",
         "category": "Grimoire",

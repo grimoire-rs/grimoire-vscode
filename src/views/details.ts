@@ -57,7 +57,8 @@ import type {
 } from '../webview/protocol';
 import { supportsRating } from '../installer';
 import { castVote, confirmVote, refineVoteState, type VoteDeps } from './vote';
-import type { SecretReader } from '../auth';
+import { offerRatingCredential } from './ratingAuth';
+import type { SecretReader, SecretWriter } from '../auth';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { esc, renderDetails } from '../webview/render';
 import { render } from '@lit-labs/ssr';
@@ -171,11 +172,19 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
      *  counts: opening a details panel caches both exactly like the background
      *  prefetch does, and only the prefetch used to report them. */
     private readonly onCardMetaCached: () => void = () => {},
-    /** SecretStorage read half, for the manual-PAT half of the vote credential
-     *  ladder. Defaults to "no stored token" so the manager stays usable
-     *  unwired — the safe direction: an unwired manager pipes nothing rather
-     *  than reaching for a credential it cannot prove belongs to the host. */
-    private readonly secrets: SecretReader = { get: async () => undefined },
+    /** SecretStorage, for the manual-PAT half of the vote credential ladder.
+     *  Read on the ladder itself (never written there); the write half is used
+     *  ONLY by the "Store Token…" offer a failed vote makes — a deliberate user
+     *  action, never something the credential resolution does behind their
+     *  back. Defaults to "no stored token, writes go nowhere" so the manager
+     *  stays usable unwired — the safe direction: an unwired manager pipes
+     *  nothing rather than reaching for a credential it cannot prove belongs to
+     *  the host. */
+    private readonly secrets: SecretReader & SecretWriter = {
+      get: async () => undefined,
+      store: async () => {},
+      delete: async () => {},
+    },
   ) {
     this.cache = new DetailsCache(cacheDir);
   }
@@ -778,6 +787,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         vote: voteStateAfter(outcome.report),
         up: outcome.report.up,
       });
+    } else if (outcome.credential !== undefined) {
+      // No credential for the host grim named. The message alone used to be the
+      // end of it, naming two remedies neither of which the extension offered —
+      // so it carries the reason now and the offer matches it.
+      void offerRatingCredential(outcome.credential, outcome.message, this.secrets);
     } else if (outcome.message !== '') {
       // An empty message is the user declining the disclosure — nothing
       // happened and nothing needs saying. Everything else is a real failure,

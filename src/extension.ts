@@ -33,6 +33,7 @@ import { Prefetcher } from './prefetch';
 import { ScopeService, type CheckStore, type CheckedFields } from './scopes';
 import { DetailsManager, DETAILS_VIEW_TYPE } from './views/details';
 import { showGrimInfo } from './views/grimInfo';
+import { clearRatingToken, storeRatingToken } from './views/ratingAuth';
 import { pickVersion } from './views/pickVersion';
 import { SettingsManager } from './views/settings';
 import { SidebarProvider, scopeStatuses } from './views/sidebar';
@@ -320,8 +321,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // version) — prefetch OR a panel open — pokes the (debounced) sidebar repost. `prefetcher` is declared below and
     // read at call time — forward-ref safe.
     () => prefetcher.notifyCardMeta(),
-    // Read half only: the vote credential ladder reads a manually stored PAT,
-    // and never writes one.
+    // The credential ladder READS a manually stored PAT and never writes one;
+    // the write half is reached only through the "Store Token…" offer a failed
+    // vote makes, which is a deliberate user action (see views/ratingAuth.ts).
     context.secrets,
   );
 
@@ -847,6 +849,15 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     vscode.commands.registerCommand('grimoire.openSettings', () => settings.open()),
     vscode.commands.registerCommand('grimoire.showOutput', () => output.show()),
     vscode.commands.registerCommand('grimoire.showGrimInfo', () => showGrimInfo(scopes)),
+    // The remedies a failed vote offers, also reachable on their own: a token
+    // stored before the first vote, or cleared after one turns out to be wrong.
+    // Host optional — a failure passes the one grim named, the palette asks.
+    vscode.commands.registerCommand('grimoire.storeRatingToken', (host: unknown) =>
+      storeRatingToken(context.secrets, typeof host === 'string' && host ? host : undefined),
+    ),
+    vscode.commands.registerCommand('grimoire.clearRatingToken', (host: unknown) =>
+      clearRatingToken(context.secrets, typeof host === 'string' && host ? host : undefined),
+    ),
     vscode.commands.registerCommand('grimoire.openDetails', (repo: unknown) => {
       if (typeof repo === 'string' && repo.length > 0) {
         details.open(repo);

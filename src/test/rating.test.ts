@@ -11,6 +11,8 @@ import {
   voteToken,
   type AuthTarget,
   type SecretReader,
+  type SecretWriter,
+  type VoteCredential,
 } from '../auth';
 import { rateArgs, runJson, type RateReport } from '../grim';
 import {
@@ -29,6 +31,7 @@ import {
 import type { DetailsVM, VoteState } from '../webview/protocol';
 import { renderCard, renderDetails } from '../webview/render';
 import { castVote, confirmVote, refineVoteState, type VoteDeps } from '../views/vote';
+import { clearRatingToken, offerRatingCredential, storeRatingToken } from '../views/ratingAuth';
 import { card, detailsVM } from './fixtures/vms';
 import { litString } from './litString';
 
@@ -127,17 +130,25 @@ suite('rating credential resolution', () => {
   const ghes = (): AuthTarget => authTargetFor('github', 'ghes.corp.example') as AuthTarget;
 
   test('pipes nothing when the host is not one we authenticated against', async () => {
-    assert.strictEqual(await voteToken(ghes(), fakeSecrets(), 'silent'), undefined);
+    const credential = await voteToken(ghes(), fakeSecrets(), 'silent');
+    assert.strictEqual(credential.ok, false);
+    // The refusal names WHY: github-enterprise is pointed elsewhere (here,
+    // nowhere), which is what the caller turns into an offer instead of a
+    // dead-end toast.
+    assert.strictEqual(credential.ok === false && credential.reason, 'instance-mismatch');
   });
 
   test('falls back to a PAT stored for that exact host', async () => {
     const secrets = fakeSecrets({ [voteSecretKey(ghes().host)]: 'pat-for-ghes' });
-    assert.strictEqual(await voteToken(ghes(), secrets, 'silent'), 'pat-for-ghes');
+    assert.deepStrictEqual(await voteToken(ghes(), secrets, 'silent'), {
+      ok: true,
+      token: 'pat-for-ghes',
+    });
   });
 
   test('a PAT stored for another host is never used', async () => {
     const secrets = fakeSecrets({ [voteSecretKey('github.com')]: 'pat-for-dot-com' });
-    assert.strictEqual(await voteToken(ghes(), secrets, 'silent'), undefined);
+    assert.strictEqual((await voteToken(ghes(), secrets, 'silent')).ok, false);
   });
 
   // Security review (2026-08-18, B-1): the GitLab arm had NEITHER host anchor
@@ -153,19 +164,218 @@ suite('rating credential resolution', () => {
     authTargetFor('gitlab', 'gitlab.corp.example') as AuthTarget;
 
   test('pipes no gitlab session to a host GitLab Workflow does not name', async () => {
-    assert.strictEqual(await voteToken(selfManagedGitlab(), fakeSecrets(), 'silent'), undefined);
+    const credential = await voteToken(selfManagedGitlab(), fakeSecrets(), 'silent');
+    assert.strictEqual(credential.ok, false);
+    assert.strictEqual(credential.ok === false && credential.reason, 'instance-mismatch');
+    assert.strictEqual(credential.ok === false && credential.host, 'gitlab.corp.example');
   });
 
   test('a self-managed gitlab host still takes a PAT stored for that exact host', async () => {
     const secrets = fakeSecrets({ [voteSecretKey('gitlab.corp.example')]: 'pat-for-corp' });
-    assert.strictEqual(await voteToken(selfManagedGitlab(), secrets, 'silent'), 'pat-for-corp');
+    assert.deepStrictEqual(await voteToken(selfManagedGitlab(), secrets, 'silent'), {
+      ok: true,
+      token: 'pat-for-corp',
+    });
   });
 
   test('a gitlab.com PAT is never piped at a self-managed instance', async () => {
     const secrets = fakeSecrets({ [voteSecretKey('gitlab.com')]: 'pat-for-dot-com' });
-    assert.strictEqual(await voteToken(selfManagedGitlab(), secrets, 'silent'), undefined);
+    assert.strictEqual((await voteToken(selfManagedGitlab(), secrets, 'silent')).ok, false);
   });
 });
+
+// --- The way OUT of a no-credential refusal. The refusal itself is C-018 and
+// --- unchanged; what is pinned here is that each reason reaches the user with
+// --- a remedy the extension actually provides.
+
+suite('rating credential remedies', () => {
+  /** Swaps the two authentication entry points for the duration of one test.
+   *  `getAccounts` REJECTING is how VS Code reports a provider id nobody
+   *  registered — the signal that separates "GitLab Workflow is not installed"
+   *  from "you dismissed the prompt". */
+  function withAuth(
+    accounts: () => Promise<readonly vscode.AuthenticationSessionAccountInformation[]>,
+    session: () => Promise<vscode.AuthenticationSession | undefined>,
+  ): () => void {
+    const auth = vscode.authentication as unknown as Record<string, unknown>;
+    const originalAccounts = auth['getAccounts'];
+    const originalSession = auth['getSession'];
+    auth['getAccounts'] = accounts;
+    auth['getSession'] = session;
+    return () => {
+      auth['getAccounts'] = originalAccounts;
+      auth['getSession'] = originalSession;
+    };
+  }
+
+  const dotCom = (): AuthTarget => authTargetFor('gitlab', 'gitlab.com') as AuthTarget;
+
+  test('an unregistered provider reads as provider-missing, not as a dismissal', async () => {
+    const restore = withAuth(
+      () => Promise.reject(new Error('no provider')),
+      () => Promise.reject(new Error('no provider')),
+    );
+    try {
+      const credential = await voteToken(dotCom(), fakeSecrets(), 'interactive');
+      assert.strictEqual(credential.ok, false);
+      assert.strictEqual(credential.ok === false && credential.reason, 'provider-missing');
+    } finally {
+      restore();
+    }
+  });
+
+  test('a registered provider that yields nothing reads as no-session', async () => {
+    const restore = withAuth(
+      () => Promise.resolve([]),
+      () => Promise.resolve(undefined),
+    );
+    try {
+      const credential = await voteToken(dotCom(), fakeSecrets(), 'interactive');
+      assert.strictEqual(credential.ok, false);
+      assert.strictEqual(credential.ok === false && credential.reason, 'no-session');
+    } finally {
+      restore();
+    }
+  });
+
+  test('a stored token wins without the provider being consulted at all', async () => {
+    let consulted = false;
+    const restore = withAuth(
+      () => {
+        consulted = true;
+        return Promise.resolve([]);
+      },
+      () => {
+        consulted = true;
+        return Promise.resolve(undefined);
+      },
+    );
+    const secrets = fakeSecrets({ [voteSecretKey('gitlab.com')]: 'stored-pat' });
+    try {
+      // The session lookup still runs (a live session outranks a stale PAT);
+      // what must NOT happen is the provider-missing probe, which only exists
+      // to explain a failure there is no longer any need to explain.
+      const credential = await voteToken(dotCom(), secrets, 'interactive');
+      assert.deepStrictEqual(credential, { ok: true, token: 'stored-pat' });
+    } finally {
+      restore();
+    }
+    assert.ok(consulted, 'the provider is still asked first — the PAT is the fallback');
+  });
+
+  /** Records which buttons an offer put on the notification, and answers with
+   *  `pick` (undefined = the user dismissed it). */
+  function withWarning(pick: string | undefined, seen: string[][]): () => void {
+    const window = vscode.window as unknown as Record<string, unknown>;
+    const original = window['showWarningMessage'];
+    window['showWarningMessage'] = (_message: string, ...actions: string[]) => {
+      seen.push(actions);
+      return Promise.resolve(pick);
+    };
+    return () => {
+      window['showWarningMessage'] = original;
+    };
+  }
+
+  const refusal = (
+    reason: 'provider-missing' | 'instance-mismatch' | 'no-session',
+    providerId: AuthTarget['providerId'] = 'gitlab',
+  ): Extract<VoteCredential, { ok: false }> => ({
+    ok: false,
+    reason,
+    host: 'gitlab.corp.example',
+    providerId,
+  });
+
+  test('a missing gitlab provider is offered the extension AND a token', async () => {
+    const seen: string[][] = [];
+    const restore = withWarning(undefined, seen);
+    try {
+      await offerRatingCredential(refusal('provider-missing'), 'msg', fakeWriter());
+      assert.deepStrictEqual(seen, [['Install GitLab Workflow', 'Store Token…']]);
+    } finally {
+      restore();
+    }
+  });
+
+  test('the other reasons offer the token alone — there is nothing to install', async () => {
+    for (const reason of ['instance-mismatch', 'no-session'] as const) {
+      const seen: string[][] = [];
+      const restore = withWarning(undefined, seen);
+      try {
+        await offerRatingCredential(refusal(reason), 'msg', fakeWriter());
+        assert.deepStrictEqual(seen, [['Store Token…']], reason);
+      } finally {
+        restore();
+      }
+    }
+    // github-enterprise has no installable provider either: VS Code ships it.
+    const seen: string[][] = [];
+    const restore = withWarning(undefined, seen);
+    try {
+      await offerRatingCredential(
+        refusal('provider-missing', 'github-enterprise'),
+        'msg',
+        fakeWriter(),
+      );
+      assert.deepStrictEqual(seen, [['Store Token…']]);
+    } finally {
+      restore();
+    }
+  });
+
+  test('storing a token puts it under the host key the ladder reads', async () => {
+    const stored = new Map<string, string>();
+    const secrets: SecretWriter = {
+      store: async (key, value) => void stored.set(key, value),
+      delete: async (key) => void stored.delete(key),
+    };
+    const window = vscode.window as unknown as Record<string, unknown>;
+    const originalInput = window['showInputBox'];
+    const originalInfo = window['showInformationMessage'];
+    window['showInputBox'] = () => Promise.resolve('typed-pat');
+    window['showInformationMessage'] = () => Promise.resolve(undefined);
+    try {
+      assert.strictEqual(await storeRatingToken(secrets, 'gitlab.corp.example'), true);
+      assert.strictEqual(stored.get(voteSecretKey('gitlab.corp.example')), 'typed-pat');
+      // And the ladder reads exactly that key back — the two halves agreeing is
+      // the whole point of routing the write through voteSecretKey.
+      const target = authTargetFor('gitlab', 'gitlab.corp.example') as AuthTarget;
+      const secretsRead: SecretReader = { get: async (key) => stored.get(key) };
+      assert.deepStrictEqual(await voteToken(target, secretsRead, 'silent'), {
+        ok: true,
+        token: 'typed-pat',
+      });
+      await clearRatingToken(secrets, 'gitlab.corp.example');
+      assert.strictEqual(stored.size, 0, 'a wrong token can be taken back out');
+    } finally {
+      window['showInputBox'] = originalInput;
+      window['showInformationMessage'] = originalInfo;
+    }
+  });
+
+  test('an empty token entry stores nothing', async () => {
+    const stored = new Map<string, string>();
+    const secrets: SecretWriter = {
+      store: async (key, value) => void stored.set(key, value),
+      delete: async (key) => void stored.delete(key),
+    };
+    const window = vscode.window as unknown as Record<string, unknown>;
+    const original = window['showInputBox'];
+    window['showInputBox'] = () => Promise.resolve('');
+    try {
+      assert.strictEqual(await storeRatingToken(secrets, 'gitlab.com'), false);
+      assert.strictEqual(stored.size, 0);
+    } finally {
+      window['showInputBox'] = original;
+    }
+  });
+});
+
+/** Write half double for the store/clear commands. */
+function fakeWriter(): SecretWriter {
+  return { store: async () => {}, delete: async () => {} };
+}
 
 // --- C-018: the version gate is above the hard floor.
 
@@ -816,9 +1026,12 @@ suite('the detail-view refinement never prompts (S-008)', () => {
     // would genuinely open the sign-in flow (and hang this test). Silent mode
     // resolving to undefined without a prompt is the whole assertion.
     const target = authTargetFor('github', 'github.com') as AuthTarget;
-    const token = await voteToken(target, fakeSecrets(), 'silent');
+    const credential = await voteToken(target, fakeSecrets(), 'silent');
+    // Either answer is fine — a session this instance happens to hold, or a
+    // reasoned refusal. Neither may prompt, and neither may throw; reaching
+    // this line at all is the assertion.
     assert.ok(
-      token === undefined || typeof token === 'string',
+      credential.ok === true || credential.reason !== undefined,
       'silent resolution neither prompted nor threw',
     );
   });
