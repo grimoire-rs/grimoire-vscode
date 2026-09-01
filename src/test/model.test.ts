@@ -14,6 +14,7 @@ import {
   buildInstalledCards,
   buildShareLink,
   buildSkeletonVM,
+  cardKey,
   cardMenuEntries,
   clientDriftTooltip,
   collectNodeIds,
@@ -76,6 +77,9 @@ import {
   type WireStatusItem,
 } from '../webview/model';
 import type { CardVM, InstallVM, RegistryVM, RowState, ScopesVM } from '../webview/protocol';
+
+/** The index two configured entries in these tests both browse. */
+const INDEX = 'https://index.grimoire.rs';
 
 function searchItem(overrides: Partial<WireSearchItem> = {}): WireSearchItem {
   return {
@@ -221,15 +225,51 @@ suite('card building', () => {
   });
 
   // grim flattens its per-source groups, so one repo listed by two configured
-  // sources (an index and the registry it indexes) arrives twice. `repeat()`
-  // keys cards on `repo` and lit-html requires unique keys.
-  test('a repo listed by two sources yields one card, the first', () => {
+  // entries arrives once per entry — and each is its own row under its own
+  // registry root, exactly as grim's TUI lists it (S-022b). Collapsing them
+  // emptied a whole registry out of Browse whenever its filtered rows were a
+  // subset of an unfiltered entry's.
+  test('a repo listed by two registries yields one card per registry', () => {
     const cards = buildCards(
-      [searchItem({ description: 'from the index' }), searchItem({ description: 'from _catalog' })],
+      [
+        searchItem({ description: 'from the full entry', source: { alias: 'full', locator: INDEX } }),
+        searchItem({ description: 'from the filtered entry', source: { alias: 'mine', locator: INDEX } }),
+      ],
+      [],
+    );
+    assert.deepStrictEqual(
+      cards.map((c) => c.source?.alias),
+      ['full', 'mine'],
+    );
+    assert.deepStrictEqual(
+      cards.map((c) => cardKey(c)),
+      [`full\u0000${cards[0]?.repo}`, `mine\u0000${cards[1]?.repo}`],
+      'the repeat() key separates them',
+    );
+  });
+
+  // Two entries with the same locator and no alias are indistinguishable in
+  // every view, so there is nothing to render twice.
+  test('a repo listed twice by ONE source yields one card, the first', () => {
+    const source = { alias: 'hub', locator: INDEX };
+    const cards = buildCards(
+      [
+        searchItem({ description: 'from the index', source }),
+        searchItem({ description: 'from _catalog', source }),
+      ],
       [],
     );
     assert.strictEqual(cards.length, 1);
     assert.strictEqual(cards[0]?.description, 'from the index');
+  });
+
+  test('an unattributed repo listed twice still yields one card', () => {
+    const cards = buildCards(
+      [searchItem({ description: 'first' }), searchItem({ description: 'second' })],
+      [],
+    );
+    assert.strictEqual(cards.length, 1);
+    assert.strictEqual(cards[0]?.description, 'first');
   });
 
   test('deprecated wins over installed', () => {
@@ -2568,6 +2608,37 @@ suite('buildTree', () => {
       '  hex',
       'quay.io/other/skills',
       '  tidy',
+    ]);
+  });
+
+  // The reported bug: adding a browse filter to a second entry on an index that
+  // another entry already carries in full made that registry vanish from Browse
+  // — every one of its rows was a duplicate repo, and the old per-repo dedupe
+  // ate them all. grim's TUI showed both roots the whole time.
+  test('a filtered entry keeps its own root when a full entry serves the same repos', () => {
+    const registries: RegistryVM[] = [
+      { alias: 'full', oci: INDEX, kind: 'index', isDefault: true },
+      { alias: 'mine', oci: INDEX, kind: 'index', isDefault: false },
+    ];
+    const repo = 'ghcr.io/michael-herwig/arcana/hex';
+    const cards = buildCards(
+      [
+        searchItem({ repo, source: { alias: 'full', locator: INDEX } }),
+        searchItem({ repo: 'ghcr.io/grimoire-rs/skills/grim-usage', source: { alias: 'full', locator: INDEX } }),
+        searchItem({ repo, source: { alias: 'mine', locator: INDEX } }),
+      ],
+      [],
+    );
+    assert.deepStrictEqual(labels(buildTree(cards, { registries })), [
+      'full',
+      '  ghcr.io',
+      '    grimoire-rs/skills',
+      '      grim-usage',
+      '    michael-herwig/arcana',
+      '      hex',
+      'mine',
+      '  ghcr.io/michael-herwig/arcana',
+      '    hex',
     ]);
   });
 

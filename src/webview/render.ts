@@ -33,6 +33,7 @@ import {
   KIND_ICONS,
   avatarTint,
   buildTree,
+  cardKey,
   cardMenuEntries,
   clientDriftTooltip,
   cardVersion,
@@ -738,7 +739,7 @@ function listBody(
   if (key === 'none') {
     return html`${repeat(
       cards,
-      (c) => c.repo,
+      cardKey,
       (c) => tabRow(c, state, view),
     )}`;
   }
@@ -756,7 +757,7 @@ function listBody(
               g.cards,
               // Keyed per group: an artifact installed in both scopes lands in
               // both, and lit requires the keys to be unique across the list.
-              (c) => `${g.id}:${c.repo}`,
+              (c) => `${g.id}:${cardKey(c)}`,
               (c) => tabRow(c, state, view, g),
             )}`
           : nothing
@@ -811,7 +812,7 @@ function renderInstalledResults(
     return state.items.length
       ? html`${repeat(
           state.items,
-          (c) => c.repo,
+          cardKey,
           (c) => tabRow(c, state, view),
         )}`
       : installedEmpty('Everything is up to date.');

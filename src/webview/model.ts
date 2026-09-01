@@ -414,6 +414,20 @@ export function hasUpdate(card: Pick<CardVM, 'installs'>): boolean {
   return card.installs.some((i) => i.updateAvailable);
 }
 
+/** A card's identity, and the only thing `repeat()` may key on: the repo TOGETHER
+ *  with the registry entry it was browsed from. A repo alone is not unique —
+ *  two configured entries can serve the same package (an index and the registry
+ *  it indexes; one index declared twice under different browse filters), and
+ *  each is its own row under its own registry root, exactly as grim's TUI lists
+ *  them. The alias identifies the entry when it has one; an alias-less entry
+ *  falls back to its locator, and a card with no attribution at all to the bare
+ *  repo. NUL separates the halves — neither an alias nor a repo can contain
+ *  one, so no two distinct pairs collide. Pure. */
+export function cardKey(card: Pick<CardVM, 'repo' | 'source'>): string {
+  const source = card.source;
+  return source ? `${source.alias ?? source.locator}\u0000${card.repo}` : card.repo;
+}
+
 /** Merges search results with per-scope install status into sidebar cards.
  *  `authed` = registry hosts the user is authenticated to (marks cards
  *  private, except the public default registry — see {@link isPrivateRegistry}). */
@@ -425,22 +439,29 @@ export function buildCards(
 ): CardVM[] {
   const indexes = scopes.map((s) => installIndex(s));
   const cards: CardVM[] = [];
-  // One card per repository. `grim search` flattens its per-source groups, so
-  // the SAME repo arrives twice whenever two configured sources list it — an
-  // index and the registry it indexes, most obviously. The cards render through
-  // a `repeat()` keyed on `repo`, and lit-html requires those keys to be
-  // unique, so a duplicate is a rendering fault, not a cosmetic one. First
-  // occurrence wins: groups arrive in registry declaration order, so the card
-  // comes from the source that would resolve the reference.
+  // One card per (repo, source) — NOT per repo. `grim search` flattens its
+  // per-source groups, so the same repo arrives once per configured entry that
+  // serves it, and two entries legitimately do: an index and the registry it
+  // indexes, or one index declared twice under different browse filters (grim's
+  // own S-022b, `tui/state.rs`: "`repo` is not a row key"). Collapsing those to
+  // one card deleted a whole registry from Browse whenever its filtered rows
+  // were a subset of an unfiltered entry's — the group had no rows left to
+  // render, while grim's TUI showed both.
+  //
+  // Two rows that share a repo AND a source are genuinely indistinguishable
+  // (two alias-less entries on one locator); first occurrence wins there, since
+  // groups arrive in registry declaration order — the source that would resolve
+  // the reference.
   const seen = new Set<string>();
   for (const item of items) {
-    if (seen.has(item.repo)) {
+    const source = readSource(item.source);
+    const key = cardKey({ repo: item.repo, ...(source ? { source } : {}) });
+    if (seen.has(key)) {
       continue;
     }
-    seen.add(item.repo);
+    seen.add(key);
     const installs = indexes.flatMap((index) => index.get(item.repo) ?? []);
     const deprecated = item.deprecated ?? null;
-    const source = readSource(item.source);
     cards.push({
       repo: item.repo,
       name: artifactName(item.repo),
@@ -586,7 +607,17 @@ export function buildInstalledCards(
   authed: Set<string> = new Set(),
   defaultRegistryHost: string | null = null,
 ): CardVM[] {
-  const catalog = new Map(items.map((i) => [i.repo, i]));
+  // FIRST occurrence wins, matching {@link buildCards}: one repo may arrive
+  // once per configured source, and an installed row borrows that source below.
+  // A last-wins map handed the borrow a different alias than Browse renders the
+  // very same repo under, and the two trees then rooted it in different
+  // registries.
+  const catalog = new Map<string, WireSearchItem>();
+  for (const item of items) {
+    if (!catalog.has(item.repo)) {
+      catalog.set(item.repo, item);
+    }
+  }
   const byRepo = new Map<string, CardVM>();
   for (const scope of scopes) {
     for (const [repo, installs] of installIndex(scope)) {
@@ -1165,10 +1196,11 @@ function namespaceChildren(parentId: string, placed: PlacedCard[], depth: number
     const segments = entry.segments.slice(depth);
     const head = segments.length > 1 ? segments[0] : undefined;
     if (head === undefined) {
-      // Keyed by repo, not by path: unique, and stable across a refresh even if
-      // the artifact's display name changes.
+      // Keyed by card identity, not by path: unique even where one repo is
+      // served by two registries, and stable across a refresh even if the
+      // artifact's display name changes.
       leaves.push({
-        id: entry.card.repo,
+        id: cardKey(entry.card),
         label: entry.card.name,
         children: [],
         count: 1,
