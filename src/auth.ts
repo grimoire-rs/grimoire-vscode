@@ -100,52 +100,38 @@ export function voteSecretKey(host: string): string {
   return `grimoire.rating.token:${host}`;
 }
 
-/** True when VS Code's `github-enterprise` provider is pointed at this exact
- *  host. The provider has no per-request host parameter — it authenticates
- *  against whatever `github-enterprise.uri` names — so a session it hands back
- *  for a DIFFERENT instance must not travel to this one. */
-function enterpriseUriMatches(host: string): boolean {
-  const uri = vscode.workspace.getConfiguration('github-enterprise').get<string>('uri');
-  if (!uri) {
-    return false;
-  }
-  try {
-    return normalizeHost(new URL(uri).host) === host;
-  } catch {
-    return false;
-  }
-}
-
-/** True when the GitLab Workflow extension is signed in to this exact host.
+/** True when the provider that would hand back a session is pointed at THIS
+ *  exact host. Neither `github-enterprise` nor `gitlab` takes a per-request
+ *  host: each authenticates against whatever its own setting names, so a
+ *  session it hands back for a DIFFERENT instance must not travel to this one.
  *
- *  Same hazard as {@link enterpriseUriMatches}, and it bit harder: the `gitlab`
- *  provider registers **one** identity for gitlab.com and self-managed alike,
- *  with no per-request host parameter, so `getSession('gitlab', …)` returns
- *  whatever instance the user happens to be signed in to. Without this anchor a
- *  user signed in to gitlab.com who sets `GRIM_RATING_HOST=gitlab.corp.example`
- *  had their gitlab.com `api`-scoped token — full read/write on the account —
- *  POSTed to the corporate instance on **panel open**, with no click and no
- *  prompt, because the refinement path is silent. grim's `--token-host` gate
- *  cannot catch it: declared and resolved are the same wrong host.
+ *  The `gitlab` arm bit hardest, and in BOTH directions. The provider registers
+ *  **one** identity for gitlab.com and self-managed alike, so
+ *  `getSession('gitlab', …)` returns whatever instance the user happens to be
+ *  signed in to:
  *
- *  GitLab Workflow's instance setting is the only host evidence available, so a
- *  host it does not name falls through to the host-keyed SecretStorage PAT,
- *  which the user stored for that host deliberately. */
-function gitlabInstanceMatches(host: string): boolean {
-  if (host === DEFAULT_HOSTS.gitlab) {
-    return true;
+ *  - signed in to gitlab.com, rating `gitlab.corp.example` ⇒ a gitlab.com
+ *    `api` token (full read/write on the account) POSTed at the corporate
+ *    instance on **panel open**, with no click and no prompt, because the
+ *    refinement path is silent;
+ *  - signed in to `gitlab.corp.example`, rating gitlab.com ⇒ the CORPORATE
+ *    token leaving for public gitlab.com. This is the one the gitlab.com free
+ *    pass here used to wave through — the default rating host is gitlab.com,
+ *    so every corporate user who had not set `GRIM_RATING_HOST` hit exactly it.
+ *
+ *  grim's `--token-host` gate catches neither: declared and resolved are the
+ *  same wrong host. So the setting is the anchor, in both directions — a host
+ *  it does not name falls through to the host-keyed SecretStorage PAT, which
+ *  the user stored for that host deliberately.
+ *
+ *  Unset is not a mismatch, it is no evidence: GitHub Enterprise then names no
+ *  instance at all, while GitLab Workflow's own default is gitlab.com. */
+function instanceMatches(providerId: AuthTarget['providerId'], host: string): boolean {
+  const instance = configuredInstance(providerId);
+  if (instance !== undefined) {
+    return instance === host;
   }
-  const config = vscode.workspace.getConfiguration('gitlab');
-  const candidates = [config.get<string>('instanceUrl'), config.get<string>('url')].filter(
-    (value): value is string => typeof value === 'string' && value !== '',
-  );
-  return candidates.some((value) => {
-    try {
-      return normalizeHost(new URL(value).host) === host;
-    } catch {
-      return false;
-    }
-  });
+  return providerId === 'gitlab' && host === DEFAULT_HOSTS.gitlab;
 }
 
 /** Why no credential could be resolved for a host.
@@ -186,14 +172,19 @@ export type VoteCredential =
       providerId: AuthTarget['providerId'];
     };
 
-/** The instance a host-anchored provider is actually pointed at, for the
- *  mismatch message. Undefined when the setting is unset or unparsable. */
+/** The instance a host-anchored provider is actually pointed at — the anchor
+ *  {@link instanceMatches} tests, and the instance the mismatch message names.
+ *  Undefined when the setting is unset, empty or unparsable. */
 function configuredInstance(providerId: AuthTarget['providerId']): string | undefined {
+  const gitlab = vscode.workspace.getConfiguration('gitlab');
   const raw =
     providerId === 'github-enterprise'
       ? vscode.workspace.getConfiguration('github-enterprise').get<string>('uri')
-      : (vscode.workspace.getConfiguration('gitlab').get<string>('instanceUrl') ??
-        vscode.workspace.getConfiguration('gitlab').get<string>('url'));
+      : // `??` would stop at an empty `instanceUrl` and never reach `url`, and
+        // an empty string is "unset" here, not "no host".
+        [gitlab.get<string>('instanceUrl'), gitlab.get<string>('url')].find(
+          (value) => typeof value === 'string' && value !== '',
+        );
   if (!raw) {
     return undefined;
   }
@@ -271,12 +262,11 @@ export async function voteToken(
   secrets: SecretReader,
   mode: 'interactive' | 'silent',
 ): Promise<VoteCredential> {
+  // `github` is the built-in provider, which serves github.com and nothing
+  // else — authTargetFor only selects it for those hosts, so it is anchored by
+  // construction. The other two carry their host in a setting.
   const anchored =
-    target.providerId === 'github-enterprise'
-      ? enterpriseUriMatches(target.host)
-      : target.providerId === 'gitlab'
-        ? gitlabInstanceMatches(target.host)
-        : true;
+    target.providerId === 'github' ? true : instanceMatches(target.providerId, target.host);
   const session = anchored ? await ratingSession(target, mode) : undefined;
   const token = session?.accessToken ?? (await secrets.get(voteSecretKey(target.host)));
   if (token !== undefined) {

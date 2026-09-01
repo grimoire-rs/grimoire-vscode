@@ -123,6 +123,31 @@ function fakeSecrets(entries: Record<string, string> = {}): SecretReader {
   return { get: async (key) => entries[key] };
 }
 
+/** Points the named config sections at fixed values for one test, delegating
+ *  every other section to the real configuration. `gitlab.instanceUrl` and
+ *  `github-enterprise.uri` belong to extensions the test host does not have, so
+ *  `update` refuses them as unregistered — stubbing the reader is the way in. */
+function withConfig(sections: Record<string, Record<string, unknown>>): () => void {
+  const workspace = vscode.workspace as unknown as Record<string, unknown>;
+  const original = vscode.workspace.getConfiguration;
+  workspace['getConfiguration'] = (section?: string, scope?: unknown) => {
+    const real = original.call(vscode.workspace, section, scope as never);
+    const overrides = section === undefined ? undefined : sections[section];
+    if (!overrides) {
+      return real;
+    }
+    return {
+      get: (key: string) => (key in overrides ? overrides[key] : real.get(key)),
+      has: (key: string) => key in overrides || real.has(key),
+      inspect: real.inspect.bind(real),
+      update: real.update.bind(real),
+    } as unknown as vscode.WorkspaceConfiguration;
+  };
+  return () => {
+    workspace['getConfiguration'] = original;
+  };
+}
+
 suite('rating credential resolution', () => {
   // github-enterprise is bound to VS Code's own `github-enterprise.uri`
   // setting; the test instance configures none, so this host is provably not
@@ -181,6 +206,42 @@ suite('rating credential resolution', () => {
   test('a gitlab.com PAT is never piped at a self-managed instance', async () => {
     const secrets = fakeSecrets({ [voteSecretKey('gitlab.com')]: 'pat-for-dot-com' });
     assert.strictEqual((await voteToken(selfManagedGitlab(), secrets, 'silent')).ok, false);
+  });
+
+  // The other direction, and the one a corporate user hits WITHOUT touching a
+  // setting: the default rating host is gitlab.com, so a user signed in to
+  // their own instance would have had that instance's `api` token piped at
+  // public gitlab.com. gitlab.com used to be waved through unconditionally.
+  test('pipes no self-managed gitlab session at public gitlab.com', async () => {
+    const restore = withConfig({ gitlab: { instanceUrl: 'https://gitlab.corp.example' } });
+    try {
+      const credential = await voteToken(
+        authTargetFor('gitlab', 'gitlab.com') as AuthTarget,
+        fakeSecrets(),
+        'silent',
+      );
+      assert.strictEqual(credential.ok, false);
+      assert.strictEqual(credential.ok === false && credential.reason, 'instance-mismatch');
+      // Both sides named: the message is the user's only clue that the vote
+      // and the sign-in disagree about which GitLab this is.
+      assert.strictEqual(credential.ok === false && credential.host, 'gitlab.com');
+      assert.strictEqual(credential.ok === false && credential.instance, 'gitlab.corp.example');
+    } finally {
+      restore();
+    }
+  });
+
+  test('gitlab.com stays anchored when GitLab Workflow names no instance', async () => {
+    const restore = withConfig({ gitlab: { instanceUrl: '' } });
+    try {
+      const secrets = fakeSecrets({ [voteSecretKey('gitlab.com')]: 'pat-for-dot-com' });
+      assert.deepStrictEqual(
+        await voteToken(authTargetFor('gitlab', 'gitlab.com') as AuthTarget, secrets, 'silent'),
+        { ok: true, token: 'pat-for-dot-com' },
+      );
+    } finally {
+      restore();
+    }
   });
 });
 
