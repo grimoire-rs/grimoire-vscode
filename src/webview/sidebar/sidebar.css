@@ -1234,8 +1234,12 @@ vscode-progress-bar {
 }
 
 /* Tree indentation. Inline style= is blocked by the webview CSP, so depth is a
-   class; past d5 the tree stops indenting rather than walking off a 300px
-   sidebar (deep paths fold into one node anyway — see buildTree). */
+   class: one per level, 12px a step, up to MAX_TREE_DEPTH in render.ts (keep
+   the two in step — render.test.ts pins them). Past the last class the tree
+   stops indenting rather than walking off a 300px sidebar. The set used to end
+   at d5 on the theory that the fold keeps trees shallow; a registry branching
+   at every level reaches level 6 for real, and its rows sat in their parent's
+   column. */
 .d0 {
   padding-left: 12px;
 }
@@ -1253,6 +1257,27 @@ vscode-progress-bar {
 }
 .d5 {
   padding-left: 72px;
+}
+.d6 {
+  padding-left: 84px;
+}
+.d7 {
+  padding-left: 96px;
+}
+.d8 {
+  padding-left: 108px;
+}
+.d9 {
+  padding-left: 120px;
+}
+.d10 {
+  padding-left: 132px;
+}
+.d11 {
+  padding-left: 144px;
+}
+.d12 {
+  padding-left: 156px;
 }
 
 /* Community rating on a browse card: the aggregate count, no affordance. The

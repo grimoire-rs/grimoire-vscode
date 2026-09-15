@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   buildCards,
   buildTree,
@@ -15,6 +17,7 @@ import {
   formatDate,
   highlightJson,
   kindIcon,
+  MAX_TREE_DEPTH,
   renderCard,
   renderCardContextMenu,
   renderCompactRow,
@@ -2810,5 +2813,81 @@ suite('revalidate indicator', () => {
         'id="revalidate-indicator"',
       ),
     );
+  });
+});
+
+suite('tree indentation', () => {
+  // A namespace chain that branches at every level: each namespace holds a
+  // package of its own beside the next namespace down, so the fold can never
+  // join two of them and the tree is exactly as deep as the path. Fifteen
+  // levels: past MAX_TREE_DEPTH, to pin the clamp as well as the steps below it.
+  const CHAIN = Array.from({ length: 15 }, (_, i) => `lvl${i}`);
+  const deepItems = () =>
+    buildCards(
+      CHAIN.map((_, i) =>
+        searchItem({ repo: `registry.example/${CHAIN.slice(0, i + 1).join('/')}/pkg${i}` }),
+      ),
+      [],
+    );
+
+  test('every level gets its own indent class up to MAX_TREE_DEPTH, then the last one', async () => {
+    // Regression: the classes used to stop at d5, so a registry branching down
+    // to a sixth level (host/org/area/team/users/<user>/<kind>) drew those
+    // nodes in their parent's column, and only the twisties told the levels
+    // apart. The sole host is elided as the root, so lvl0 IS level 0.
+    const items = deepItems();
+    const treeView = { ...DEFAULT_VIEW, density: 'compact' as const, mode: 'tree' as const };
+    const expanded = new Set(collectNodeIds(buildTree(items, {})));
+    const html = await litHtml(
+      renderSidebarResults(sidebarState({ items }), DEFAULT_FILTER, treeView, expanded),
+    );
+    const groups = [
+      ...html.matchAll(/class="tree-node d(\d+)" data-action="toggle-node" data-node="([^"]+)"/g),
+    ];
+    assert.strictEqual(groups.length, CHAIN.length, 'one group row per namespace');
+    for (const [, cls = '', id = ''] of groups) {
+      const level = CHAIN.findIndex((segment) => id.endsWith(`/${segment}`));
+      assert.notStrictEqual(level, -1, `unexpected group id ${id}`);
+      assert.strictEqual(Number(cls), Math.min(level, MAX_TREE_DEPTH), `group ${id}`);
+    }
+    const leaves = [...html.matchAll(/class="compact-row tree-leaf d(\d+)" data-repo="([^"]+)"/g)];
+    assert.strictEqual(leaves.length, CHAIN.length, 'one leaf row per package');
+    for (const [, cls = '', repo = ''] of leaves) {
+      // pkgN sits under lvlN, one level below it.
+      const level = Number(/pkg(\d+)$/.exec(repo)?.[1]) + 1;
+      assert.strictEqual(Number(cls), Math.min(level, MAX_TREE_DEPTH), `leaf ${repo}`);
+    }
+    assert.ok(html.includes('class="tree-node d6"'), 'the sixth level indents past the fifth');
+    assert.ok(!html.includes(`d${MAX_TREE_DEPTH + 1}"`), 'nothing claims a class the CSS lacks');
+  });
+
+  test('sidebar.css defines one indent class per level, one step each', () => {
+    // The class set lives in CSS and the clamp in TypeScript; this is the only
+    // thing that keeps them from drifting apart. out/test/render.test.js runs
+    // from out/test, so walk back up to the source tree like parity.test.ts.
+    // A Windows checkout (core.autocrlf) hands back CRLF; the regex below wants LF.
+    const css = fs
+      .readFileSync(
+        path.join(__dirname, '..', '..', 'src', 'webview', 'sidebar', 'sidebar.css'),
+        'utf8',
+      )
+      .replace(/\r\n/g, '\n');
+    const paddings = new Map<number, number>();
+    for (const [, level = '', px = ''] of css.matchAll(
+      /^\.d(\d+) \{\n {2}padding-left: (\d+)px;\n\}/gm,
+    )) {
+      paddings.set(Number(level), Number(px));
+    }
+    assert.deepStrictEqual(
+      [...paddings.keys()].sort((a, b) => a - b),
+      Array.from({ length: MAX_TREE_DEPTH + 1 }, (_, i) => i),
+      'exactly .d0 through .d<MAX_TREE_DEPTH>',
+    );
+    const base = paddings.get(0) ?? NaN;
+    const step = (paddings.get(1) ?? NaN) - base;
+    assert.ok(step > 0, 'each level indents further than the one above');
+    for (let level = 2; level <= MAX_TREE_DEPTH; level++) {
+      assert.strictEqual(paddings.get(level), base + level * step, `.d${level} is one step deeper`);
+    }
   });
 });

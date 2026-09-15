@@ -430,11 +430,21 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
 
 // --- Compact rows, group headers, tree (the view modes) ---
 
+/** The deepest tree level with its own indent class — sidebar.css defines
+ *  `.d0` through `.d${MAX_TREE_DEPTH}`; keep the two in step (render.test.ts
+ *  pins them). The cap was 5 once, on the theory that the fold keeps real trees
+ *  shallow. A registry that branches at every level
+ *  (host/org/area/team/users/<user>/<kind>/<pkg>) reaches level 6 for real, and
+ *  the clamp drew those nodes in their parent's column. 12 is far past any path
+ *  a registry serves today, and a 13-deep row would have no room left for its
+ *  label in a 300px sidebar anyway. */
+export const MAX_TREE_DEPTH = 12;
+
 /** Indent class per tree level — CSP blocks inline style, so depth is a class
  *  (see renderLoading's skeleton widths for the same constraint). Deeper than
  *  the last class simply stops indenting rather than falling off the sidebar. */
 function depthClass(depth: number): string {
-  return `d${Math.min(depth, 5)}`;
+  return `d${Math.min(depth, MAX_TREE_DEPTH)}`;
 }
 
 /** The trailing slot on a compact row / tree leaf. One fixed-width box whose
