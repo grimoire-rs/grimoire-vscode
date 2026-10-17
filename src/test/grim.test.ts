@@ -65,6 +65,31 @@ suite('grim arg builders', () => {
     ]);
   });
 
+  test('searchArgs with offset and limit pages behind the flags and before --', () => {
+    assert.deepStrictEqual(searchArgs('q', { offset: 0, limit: 200 }), [
+      'search',
+      '--limit',
+      '200',
+      '--offset',
+      '0',
+      '--',
+      'q',
+    ]);
+  });
+
+  test('searchArgs orders offline and sort ahead of the page flags', () => {
+    assert.deepStrictEqual(
+      searchArgs('q', { offline: true, sort: 'rating', limit: 10, offset: 400 }),
+      ['search', '--offline', '--sort', 'rating', '--limit', '10', '--offset', '400', '--', 'q'],
+    );
+    assert.deepStrictEqual(searchArgs('', { refresh: true, showDeprecated: true, offline: true }), [
+      'search',
+      '--refresh',
+      '--show-deprecated',
+      '--offline',
+    ]);
+  });
+
   test('searchArgs query that looks like a flag is forced positional', () => {
     assert.deepStrictEqual(searchArgs('--foo'), ['search', '--', '--foo']);
   });
@@ -998,6 +1023,7 @@ suite('grim report parsing', () => {
       const result = await runJson(scriptPath, ['search'], { maxBufferBytes: 1024 * 1024 });
       assert.ok(!result.ok && result.kind === 'error');
       assert.strictEqual(result.message, 'grim output exceeded 1 MiB');
+      assert.strictEqual(result.overflow, true);
     } finally {
       fs.rmSync(scriptPath, { force: true });
     }

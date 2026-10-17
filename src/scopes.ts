@@ -416,6 +416,53 @@ export class ScopeService {
     return this.lastSnapshot;
   }
 
+  /** The in-flight or settled bare `grim context` probe behind {@link grimVersion},
+   *  with the binary it asked. */
+  private versionProbe: { key: string; version: Promise<string | undefined> } | undefined;
+
+  /** The binary the cached snapshot was taken against; see {@link exeKey}. */
+  private snapshotKey: string | undefined;
+
+  /** The resolved binary's identity: its path and mtime, so a changed setting
+   *  and an in-place upgrade both read as a different grim. */
+  private exeKey(): string {
+    const exe = this.resolveExecutable();
+    try {
+      return `${exe}\0${fs.statSync(exe).mtimeMs}`;
+    } catch {
+      return exe;
+    }
+  }
+
+  /** The resolved grim's version, or `undefined` when it cannot be read.
+   *
+   *  The sidebar starts its search concurrently with the snapshot, so on a
+   *  session's first refresh no snapshot is cached yet; reading the cache alone
+   *  would send that first (largest) search down the unpaged path. A memoized
+   *  local `grim context` covers the gap. Both answers are kept per binary: a
+   *  cached version from before a replaced or re-pointed grim would send paged
+   *  flags to an older one (clap exit 64) or an unpaged request to a newer one. */
+  grimVersion(): Promise<string | undefined> {
+    const key = this.exeKey();
+    const cached =
+      key === this.snapshotKey
+        ? (this.lastSnapshot?.project?.context.version ??
+          this.lastSnapshot?.global?.context.version)
+        : undefined;
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+    if (this.versionProbe?.key !== key) {
+      this.versionProbe = {
+        key,
+        version: this.run<ContextInfo>(contextArgs(), 'global').then((r) =>
+          r.ok ? r.value.version : undefined,
+        ),
+      };
+    }
+    return this.versionProbe.version;
+  }
+
   /** Test seam for the PATH scan (see {@link whichGrim}) — instance-overridable
    *  the same way tests override run(). Yields the ABSOLUTE hit rather than a
    *  boolean because both consumers need it: the spawn as much as the naming
@@ -807,12 +854,15 @@ export class ScopeService {
    *  `grim status --check` in both scopes for the explicit update check + daily
    *  interval; plain refreshes leave it off (no network). */
   async snapshot(options: { check?: boolean } = {}): Promise<Snapshot> {
+    this.versionProbe = undefined;
+    const key = this.exeKey();
     const folder = this.projectFolder();
     const [global, project] = await Promise.all([
       this.scopeSnapshot('global', options),
       folder ? this.scopeSnapshot('project', options) : Promise.resolve(undefined),
     ]);
     if (!global.probe.ok && global.probe.kind === 'not-found') {
+      this.snapshotKey = key;
       return (this.lastSnapshot = { grimMissing: true });
     }
     const snapshot: Snapshot = { grimMissing: false };
@@ -848,6 +898,7 @@ export class ScopeService {
       snapshot.projectProbeFailed = true;
     }
     this.lastSnapshot = snapshot;
+    this.snapshotKey = key;
     return snapshot;
   }
 }

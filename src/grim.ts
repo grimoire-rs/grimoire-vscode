@@ -275,6 +275,17 @@ export interface ItemsEnvelope<T> {
   items: T[];
 }
 
+/** `grim search`'s envelope. `total` (matches before `--offset/--limit`),
+ *  `truncated` and `sources` are additive fields a grim without paging does not
+ *  emit, so they are `unknown` here and validated where they are read. */
+export interface SearchEnvelope extends ItemsEnvelope<SearchItem> {
+  total?: unknown;
+  truncated?: unknown;
+  sources?: unknown;
+}
+
+export type SearchSortFlag = 'name' | 'updated' | 'rating' | 'downloads';
+
 /** `grim status`'s envelope. `checked` is `true` only when `--check` was passed
  *  AND the invocation ran online — an offline `--check` degrades with a stderr
  *  warning and reports `false`. grim's contract: `checked === false` implies
@@ -464,6 +475,9 @@ export type GrimResult<T> =
       // reason is forceable (currently "modified" and "untracked-destination")
       // — never a bare `false`. See isForceable.
       forceable?: boolean;
+      /** Set only when grim's stdout outgrew the child-process buffer, so a
+       *  caller can tell "too much output" from any other failure. */
+      overflow?: true;
     };
 
 /** `search --format json` runs ~2 KB per row, so 128 MiB leaves headroom for large indexes. */
@@ -677,6 +691,7 @@ export function runJson<T>(
             code: 'failure',
             exitCode,
             message: `grim output exceeded ${limit}`,
+            overflow: true,
           });
           return;
         }
@@ -714,7 +729,14 @@ export function runJson<T>(
 
 export function searchArgs(
   query: string,
-  options: { refresh?: boolean; showDeprecated?: boolean } = {},
+  options: {
+    refresh?: boolean;
+    showDeprecated?: boolean;
+    sort?: SearchSortFlag;
+    offset?: number;
+    limit?: number;
+    offline?: boolean;
+  } = {},
 ): string[] {
   const args = ['search'];
   if (options.refresh) {
@@ -722,6 +744,18 @@ export function searchArgs(
   }
   if (options.showDeprecated) {
     args.push('--show-deprecated');
+  }
+  if (options.offline) {
+    args.push('--offline');
+  }
+  if (options.sort !== undefined) {
+    args.push('--sort', options.sort);
+  }
+  if (options.limit !== undefined) {
+    args.push('--limit', String(options.limit));
+  }
+  if (options.offset !== undefined) {
+    args.push('--offset', String(options.offset));
   }
   // grim's [QUERY] is ONE positional — grim whitespace-splits and ANDs the
   // terms itself. Passing pre-split words as separate argv entries makes clap
