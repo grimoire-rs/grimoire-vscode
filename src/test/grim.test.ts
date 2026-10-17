@@ -983,6 +983,25 @@ suite('grim report parsing', () => {
       fs.rmSync(scriptPath, { force: true });
     }
   });
+
+  test('runJson reports a stdout overflow as a clear error, not the truncated stdout (skipped on Windows: POSIX stub)', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    // 2 MiB of non-JSON text against a 1 MiB cap: Node kills the child, and
+    // without the overflow branch parseReport would surface the partial dump.
+    const scriptPath = path.join(os.tmpdir(), `grim-overflow-${Date.now()}.sh`);
+    fs.writeFileSync(scriptPath, "#!/bin/sh\nhead -c 2097152 /dev/zero | tr '\\0' x\n", {
+      mode: 0o755,
+    });
+    try {
+      const result = await runJson(scriptPath, ['search'], { maxBufferBytes: 1024 * 1024 });
+      assert.ok(!result.ok && result.kind === 'error');
+      assert.strictEqual(result.message, 'grim output exceeded 1 MiB');
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
 });
 
 suite('isRetryable', () => {

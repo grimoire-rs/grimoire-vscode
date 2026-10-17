@@ -466,10 +466,15 @@ export type GrimResult<T> =
       forceable?: boolean;
     };
 
+/** `search --format json` runs ~2 KB per row, so 128 MiB leaves headroom for large indexes. */
+const MAX_OUTPUT_BYTES = 128 * 1024 * 1024;
+
 export interface RunOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs?: number;
+  /** Overrides {@link MAX_OUTPUT_BYTES}; exists so a test can overflow cheaply. */
+  maxBufferBytes?: number;
   /** Written to the child's stdin, which is then closed. The ONLY way a
    *  credential reaches grim: argv lands in world-readable /proc/<pid>/cmdline
    *  and env in /proc/<pid>/environ, stdin in neither. Omit for every other
@@ -644,6 +649,7 @@ export function runJson<T>(
 ): Promise<GrimResult<T>> {
   return new Promise((resolve) => {
     const fullArgs = withFlags(args, ['--format', 'json']);
+    const maxBuffer = options.maxBufferBytes ?? MAX_OUTPUT_BYTES;
     const child = execFile(
       executable,
       fullArgs,
@@ -651,15 +657,29 @@ export function runJson<T>(
         cwd: options.cwd,
         env: { ...process.env, ...options.env },
         timeout: options.timeoutMs ?? 120_000,
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer,
         shell: false,
       },
       (error, stdout, stderr) => {
-        if (error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+        const errorCode = error?.code;
+        if (errorCode === 'ENOENT') {
           resolve({ ok: false, kind: 'not-found' });
           return;
         }
         const exitCode = typeof child.exitCode === 'number' ? child.exitCode : 1;
+        if (errorCode === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+          // Node killed the child mid-write, so stdout is a truncated JSON
+          // document: report the cap, never the partial dump parseReport would show.
+          const limit = `${maxBuffer / (1024 * 1024)} MiB`;
+          resolve({
+            ok: false,
+            kind: 'error',
+            code: 'failure',
+            exitCode,
+            message: `grim output exceeded ${limit}`,
+          });
+          return;
+        }
         resolve(parseReport<T>(stdout, exitCode, stderr));
       },
     );
