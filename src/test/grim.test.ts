@@ -65,6 +65,31 @@ suite('grim arg builders', () => {
     ]);
   });
 
+  test('searchArgs with offset and limit pages behind the flags and before --', () => {
+    assert.deepStrictEqual(searchArgs('q', { offset: 0, limit: 200 }), [
+      'search',
+      '--limit',
+      '200',
+      '--offset',
+      '0',
+      '--',
+      'q',
+    ]);
+  });
+
+  test('searchArgs orders offline and sort ahead of the page flags', () => {
+    assert.deepStrictEqual(
+      searchArgs('q', { offline: true, sort: 'rating', limit: 10, offset: 400 }),
+      ['search', '--offline', '--sort', 'rating', '--limit', '10', '--offset', '400', '--', 'q'],
+    );
+    assert.deepStrictEqual(searchArgs('', { refresh: true, showDeprecated: true, offline: true }), [
+      'search',
+      '--refresh',
+      '--show-deprecated',
+      '--offline',
+    ]);
+  });
+
   test('searchArgs query that looks like a flag is forced positional', () => {
     assert.deepStrictEqual(searchArgs('--foo'), ['search', '--', '--foo']);
   });
@@ -979,6 +1004,26 @@ suite('grim report parsing', () => {
       const result = await runJson(scriptPath, ['search', '--global', '--', '--foo']);
       assert.ok(!result.ok && result.kind === 'error');
       assert.strictEqual(result.message, 'search --global --format json -- --foo');
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
+
+  test('runJson reports a stdout overflow as a clear error, not the truncated stdout (skipped on Windows: POSIX stub)', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    // 2 MiB of non-JSON text against a 1 MiB cap: Node kills the child, and
+    // without the overflow branch parseReport would surface the partial dump.
+    const scriptPath = path.join(os.tmpdir(), `grim-overflow-${Date.now()}.sh`);
+    fs.writeFileSync(scriptPath, "#!/bin/sh\nhead -c 2097152 /dev/zero | tr '\\0' x\n", {
+      mode: 0o755,
+    });
+    try {
+      const result = await runJson(scriptPath, ['search'], { maxBufferBytes: 1024 * 1024 });
+      assert.ok(!result.ok && result.kind === 'error');
+      assert.strictEqual(result.message, 'grim output exceeded 1 MiB');
+      assert.strictEqual(result.overflow, true);
     } finally {
       fs.rmSync(scriptPath, { force: true });
     }

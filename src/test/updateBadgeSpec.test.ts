@@ -143,6 +143,9 @@ function makeSidebar(options: {
       lastCatalog = catalogStates.shift() ?? lastCatalog;
       return lastCatalog;
     },
+    knownItems: () => lastCatalog.items,
+    row: () => null,
+    looked: () => true,
   } as unknown as CatalogService;
   const delegate: SidebarDelegate = {
     openDetails: () => {},

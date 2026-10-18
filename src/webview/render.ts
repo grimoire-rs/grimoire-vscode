@@ -41,20 +41,25 @@ import {
   concreteVersion,
   effectiveInstall,
   filterCards,
+  formatCount,
   groupCards,
   groupKeyFor,
   hasClientDrift,
   hasOutputsPending,
   hasUpdate,
+  browseSortRequest,
   installedCards,
   monogram,
   normalizeKind,
   outputsPendingTooltip,
+  pagingSummary,
   registryCount,
   registryLabel,
   relativeTime,
+  resultIsPartial,
   scopeRowMenuEntries,
   viaBundleTitle,
+  PAGING_CAP_NOTE,
   type CardGroup,
   type SortMode,
   type MenuEntry,
@@ -668,6 +673,15 @@ function renderEmpty(state: SidebarState): TemplateResult {
 </div>`;
 }
 
+function renderPartialEmpty(loaded: number, failed: boolean): TemplateResult {
+  return html`
+<div class="empty-state">
+  <span class="codicon codicon-search empty-icon"></span>
+  <p class="title">None of the ${formatCount(loaded)} loaded results match</p>
+  <p>The selected kinds may be in results that ${failed ? 'did not load' : 'are still loading'}.</p>
+</div>`;
+}
+
 function renderLoading(): TemplateResult {
   // Fade is applied via .skeleton-row-N classes — inline style= is blocked by
   // the webview CSP (style-src is nonce/cspSource only). Line widths vary per
@@ -943,14 +957,28 @@ const SORT_DESC_ICON = html`<svg viewBox="0 0 24 24" fill="none" stroke="current
  * separate filters, and Installed drops the relevance entry) has to move it
  * programmatically.
  */
-function sortControl(filter: CardFilter, mode: SidebarState['mode']): TemplateResult {
-  const asc = filter.dir === 'asc';
-  const label = asc ? 'Ascending — click for descending' : 'Descending — click for ascending';
+function sortControl(
+  filter: CardFilter,
+  mode: SidebarState['mode'],
+  paging?: SidebarState['paging'],
+): TemplateResult {
+  // While pages remain grim's order has one direction per field, so the toggle
+  // is held at the field's natural one rather than reversing a partial prefix.
+  const { dir, dirDisabled } =
+    mode === 'browse'
+      ? browseSortRequest(filter, paging)
+      : { dir: filter.dir, dirDisabled: false };
+  const asc = dir === 'asc';
+  const label = dirDisabled
+    ? 'Loading all results — the order can be reversed once they are loaded'
+    : asc
+      ? 'Ascending — click for descending'
+      : 'Descending — click for ascending';
   const options = SORT_OPTIONS.filter(
     (option) => option.id !== 'relevance' || mode === 'browse',
   );
   return html`<div class="sort-group" role="group" aria-label="Sort by">
-    <button class="sort-dir" data-action="toggle-sort-dir" title="${label}" aria-label="${label}">${asc ? SORT_ASC_ICON : SORT_DESC_ICON}</button>
+    <button class="sort-dir" data-action="toggle-sort-dir" title="${label}" aria-label="${label}" aria-disabled="${ifDefined(dirDisabled ? 'true' : undefined)}">${asc ? SORT_ASC_ICON : SORT_DESC_ICON}</button>
     <select class="sort-field" id="sort-field" aria-label="Sort by" title="Sort by" .value="${filter.sort}">${options.map(
       (option) =>
         html`<option value="${option.id}" ?selected="${option.id === filter.sort}">${option.label}</option>`,
@@ -978,7 +1006,7 @@ export function renderSidebarSearch(
   const clearHidden = state.query ? '' : ' hidden';
   return html`<div class="search-row"><vscode-textfield id="search" placeholder="${
     state.mode === 'browse' ? 'Search artifacts…' : 'Search installed…'
-  }" value="${state.query}"><vscode-icon slot="content-after" id="search-clear" class="clear-icon${clearHidden}" name="close" action-icon label="Clear search" title="Clear search" data-action="clear-search"></vscode-icon></vscode-textfield>${sortControl(filter, state.mode)}</div>`;
+  }" value="${state.query}"><vscode-icon slot="content-after" id="search-clear" class="clear-icon${clearHidden}" name="close" action-icon label="Clear search" title="Clear search" data-action="clear-search"></vscode-icon></vscode-textfield>${sortControl(filter, state.mode, state.paging)}</div>`;
 }
 
 export function renderSidebarFilters(
@@ -1019,14 +1047,44 @@ export function renderSidebarResults(
     }
     return renderInstalledResults(state, filter, view, expanded);
   }
-  const filtered = filterCards(state.items, filter);
+  // Held at the field's natural direction while pages remain (see sortControl).
+  const sorted = { ...filter, dir: browseSortRequest(filter, state.paging).dir };
+  const filtered = filterCards(state.items, sorted);
   const registries = registryCount(state);
+  const partial = pagingSummary(state.paging, filtered.length, registries);
   const summary =
+    partial !== null
+      ? renderPartialSummary(state, partial)
+      : filtered.length > 0
+        ? html`<div class="result-summary">${filtered.length} result${filtered.length === 1 ? '' : 's'} in ${registries} ${registries === 1 ? 'registry' : 'registries'}</div>`
+        : nothing;
+  // Kind chips filter only the loaded rows, so an empty list with pages still to
+  // load cannot claim that nothing matches.
+  const body =
     filtered.length > 0
-      ? html`<div class="result-summary">${filtered.length} result${filtered.length === 1 ? '' : 's'} in ${registries} ${registries === 1 ? 'registry' : 'registries'}</div>`
-      : nothing;
-  const body = filtered.length === 0 ? renderEmpty(state) : listBody(filtered, state, view, expanded);
+      ? listBody(filtered, state, view, expanded)
+      : state.paging && state.items.length > 0 && resultIsPartial(state.paging)
+        ? renderPartialEmpty(state.items.length, state.paging.failed === true)
+        : // Nothing loaded yet while the catalog is still being built is not "no results".
+          state.paging?.hasMore === true && state.paging.failed !== true && state.items.length === 0
+          ? renderLoading()
+          : renderEmpty(state);
   return html`${summary}<div class="cards">${body}</div>`;
+}
+
+/** The summary line of a partly loaded (or capped) Browse list. While pages load
+ *  by themselves it is a quiet, busy status — a polite live region would
+ *  announce every page. A failure is announced and carries the Retry; the
+ *  button is absent on a stale restored round, whose token names no live list. */
+function renderPartialSummary(state: SidebarState, text: string): TemplateResult {
+  const paging = state.paging;
+  const loading = paging?.hasMore === true && paging.failed !== true;
+  const failed = paging?.failed === true;
+  return html`<div class="result-summary" role="status" tabindex="-1" aria-live="${loading ? 'off' : 'polite'}" aria-busy="${ifDefined(loading ? 'true' : undefined)}">${text}${
+    failed && state.phase === 'ready' && state.stale !== true
+      ? html` <span class="load-error" role="alert">Could not load the remaining results.</span> <button type="button" class="retry" data-action="retry-load">Retry</button>`
+      : nothing
+  }</div>${paging?.lowerBound && !paging.hasMore ? html`<div class="result-note">${PAGING_CAP_NOTE}</div>` : nothing}`;
 }
 
 const SIDEBAR_TABS: ReadonlyArray<{ id: SidebarState['mode']; label: string }> = [

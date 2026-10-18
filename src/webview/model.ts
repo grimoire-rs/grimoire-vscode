@@ -11,6 +11,7 @@ import type {
   DownloadVersionVM,
   InstallVM,
   GroupKey,
+  HostToSidebar,
   RatingVM,
   RegistryVM,
   RowState,
@@ -812,9 +813,9 @@ export const DEFAULT_INSTALLED_FILTER: CardFilter = {
  * It is offered on BROWSE ONLY; `grim status` ranks nothing, so Installed lists
  * name-first instead (see the sidebar's own filter seed). `name`, `updated`
  * and `rating` mirror grim's `--sort` (`browse_sort.rs`) and the index site's
- * control, bucket rules included. `downloads` follows the same bucket rules
- * but has no `--sort` counterpart in grim yet — the ordering is applied here,
- * over rows grim already handed us, so nothing depends on that.
+ * control, bucket rules included, and so does `downloads` (grim 0.14.2+). On a
+ * paged Browse the field is also sent to grim so the first page holds the top
+ * rows; the ordering is still applied here over the rows loaded.
  */
 export type SortMode = 'relevance' | 'name' | 'updated' | 'rating' | 'downloads';
 export type SortDir = 'asc' | 'desc';
@@ -973,6 +974,109 @@ export function registriesOf(cards: CardVM[]): string[] {
  *  distinct hosts the cards themselves name. */
 export function registryCount(state: Pick<SidebarState, 'registries' | 'items'>): number {
   return state.registries.length > 0 ? state.registries.length : registriesOf(state.items).length;
+}
+
+// --- Paged Browse ---
+
+type BrowsePaging = NonNullable<SidebarState['paging']>;
+
+const COUNT_FORMAT = new Intl.NumberFormat('en-US');
+
+/** A count with thousands separators, the same in every locale so the goldens
+ *  and the screen agree. */
+export function formatCount(n: number): string {
+  return COUNT_FORMAT.format(n);
+}
+
+/** Shown under the summary when grim reports a registry listing it could not read to the end. */
+export const PAGING_CAP_NOTE =
+  'A registry listing is incomplete, so there may be more. Refresh to retry it; a narrower registry locator or a package index reaches the rest.';
+
+/** True while the loaded rows are only part of the result: pages remain (still
+ *  loading, or stopped on a failed page). Pure. */
+export function resultIsPartial(paging: Pick<BrowsePaging, 'hasMore'> | undefined): boolean {
+  return paging?.hasMore === true;
+}
+
+/** The Browse summary line while the result is only partly loaded or a capped
+ *  listing may hold more, or null when it is complete (the plain "N results in M
+ *  registries" line then stands). `filteredCount` is what the kind chips leave
+ *  of the loaded rows. Pure. */
+export function pagingSummary(
+  paging: BrowsePaging | undefined,
+  filteredCount: number,
+  registries: number,
+): string | null {
+  if (!paging || (!paging.hasMore && !paging.lowerBound)) {
+    return null;
+  }
+  const total = `${formatCount(paging.total)}${paging.lowerBound ? '+' : ''}`;
+  if (paging.hasMore) {
+    const progress =
+      paging.failed === true
+        ? `Stopped at ${formatCount(paging.loaded)} of ${total}.`
+        : `Loading ${formatCount(paging.loaded)} of ${total}…`;
+    return filteredCount !== paging.loaded
+      ? `${formatCount(filteredCount)} shown · ${progress}`
+      : progress;
+  }
+  if (filteredCount !== paging.loaded) {
+    return `${formatCount(filteredCount)} of ${formatCount(paging.loaded)} loaded · ${total} total`;
+  }
+  return `Showing ${formatCount(paging.loaded)} of ${total} in ${registries} ${registries === 1 ? 'registry' : 'registries'}`;
+}
+
+/** The sort Browse applies and sends to grim, and whether the direction toggle
+ *  is locked. While the result is partial (see {@link resultIsPartial}), grim's
+ *  server-side order has one direction per field, so reversing the loaded prefix
+ *  would show a wrong order: the direction is pinned to the field's natural one
+ *  until everything is loaded. Pure. */
+export function browseSortRequest(
+  filter: Pick<CardFilter, 'sort' | 'dir'>,
+  paging: Pick<BrowsePaging, 'hasMore'> | undefined,
+): { sort: SortMode; dir: SortDir; dirDisabled: boolean } {
+  const dirDisabled = resultIsPartial(paging);
+  return {
+    sort: filter.sort,
+    dir: dirDisabled ? NATURAL[filter.sort] : filter.dir,
+    dirDisabled,
+  };
+}
+
+/** Applies a host `append` to the painted state: the new cards join the end of
+ *  the Browse list and the paging facts move on. Null when the message does not
+ *  continue exactly the list on screen (another list's token, or a list that is
+ *  not `offset` rows long) — dropped whole, never partly applied; the next full
+ *  state heals. Pure. */
+export function applyAppend(
+  state: SidebarState | null,
+  message: Extract<HostToSidebar, { type: 'append' }>,
+): SidebarState | null {
+  if (
+    state?.phase !== 'ready' ||
+    state.paging?.token !== message.token ||
+    state.items.length !== message.offset
+  ) {
+    return null;
+  }
+  return {
+    ...state,
+    items: state.items.concat(message.cards),
+    paging: message.paging,
+    ...(message.installed ? { installedItems: message.installed } : {}),
+    ...(message.catalogIncomplete ? { catalogIncomplete: true } : {}),
+  };
+}
+
+/** Where to resume observing rows after a render: the index of the first row
+ *  `next` adds, or null when `next` does not simply extend `prev` and every row
+ *  must be re-observed. Equal lists return `prev.length` (nothing to do).
+ *  Pure. */
+export function appendedFrom(prev: readonly string[], next: readonly string[]): number | null {
+  if (next.length < prev.length) {
+    return null;
+  }
+  return prev.every((repo, i) => next[i] === repo) ? prev.length : null;
 }
 
 // --- Logo placeholder ---

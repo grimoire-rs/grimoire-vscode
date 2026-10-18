@@ -37,6 +37,18 @@ export const REGISTRY_EDIT_GRIM_VERSION = '0.13.0';
  *  See {@link supportsRating}. */
 export const RATING_GRIM_VERSION = '0.14.0';
 
+/** First grim carrying `search --limit/--offset` and the `total` field, which
+ *  let the browse list load a page at a time. Above the floor, so
+ *  {@link MINIMUM_GRIM_VERSION} is never bumped for it: an older grim keeps
+ *  working through the unpaged branch in `CatalogService.search`, which is the
+ *  only reason this is a constant rather than a feature-hiding gate. See
+ *  {@link supportsPaging}.
+ *
+ *  Must equal the grim release that really ships paging. `task release:prepare`
+ *  picks that number by hand, so a paging grim cut under any other number is
+ *  driven unpaged and told to update to this one; set it before releasing. */
+export const PAGING_GRIM_VERSION = '0.15.0';
+
 /** True when the resolved grim can be handed browse-filter patterns and a
  *  plain-HTTP opt-in, and asked to edit a registry in place. An older one
  *  rejects those flags and the whole `set` verb as unknown (clap, exit 64), so
@@ -54,6 +66,14 @@ export function supportsRegistryEditing(version: string): boolean {
  *  {@link grimTooOld}. Pure; exported for tests. */
 export function supportsRating(version: string): boolean {
   return !isNewerVersion(RATING_GRIM_VERSION, version);
+}
+
+/** True when the resolved grim accepts `search --limit/--offset`. An older one
+ *  rejects both as unknown (clap, exit 64) and would fail the whole Browse, so
+ *  the catalog fetches unpaged instead. Unparseable versions read as
+ *  unsupported, same reasoning as {@link grimTooOld}. Pure; exported for tests. */
+export function supportsPaging(version: string): boolean {
+  return !isNewerVersion(PAGING_GRIM_VERSION, version);
 }
 
 /** True when a resolved grim is older than {@link MINIMUM_GRIM_VERSION}.

@@ -44,11 +44,13 @@ import {
   repoForInstall,
   updateCount,
   type ScopeStatus,
+  type SortMode,
 } from '../webview/model';
 import type {
   CardVM,
   GrimOrigin,
   HostToSidebar,
+  PagingState,
   RegistryVM,
   SidebarState,
   SidebarToHost,
@@ -88,6 +90,19 @@ const SEED_SWEEP = 24;
  *  reinstate the fixed top-K the viewport sweep replaced. */
 const MAX_VISIBLE_REPOS = 500;
 
+/** Installed artifacts whose catalog row is looked up per refresh when the
+ *  loaded pages do not hold it. Each repo costs one local spawn once per
+ *  session; past the cap an installed card keeps the fields `grim status`
+ *  gave it. */
+const MAX_INSTALLED_LOOKUPS = 25;
+
+const SORT_MODES: readonly SortMode[] = ['relevance', 'name', 'updated', 'rating', 'downloads'];
+
+/** The webview's sort, or undefined for anything that is not one of the five. */
+function validSort(value: unknown): SortMode | undefined {
+  return SORT_MODES.find((mode) => mode === value);
+}
+
 /** One successfully painted round. Re-posted verbatim by the boot replay and
  *  the logo repost — neither runs grim again — and the shape the persisted
  *  {@link LAST_RESULTS_KEY} blob restores into. */
@@ -96,6 +111,9 @@ interface ReadyResult {
   installed: CardVM[];
   snap: Snapshot;
   syncedAt: number | null;
+  /** Present only while Browse is paged. Never persisted: its token names a
+   *  list that exists only in this session. */
+  paging?: PagingState;
 }
 
 /** A {@link ReadyResult} on disk, plus what postState needs to redraw it and
@@ -194,6 +212,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** Last published update count — see setUpdateCount. */
   private badgeCount = 0;
   private query = '';
+  /** The Browse sort the webview chose, sent to grim only while pages remain. */
+  private sort: SortMode | undefined;
   // Last-known default registry host, carried into the loading footer
   // ("Refreshing from <host>…") which is posted before the snapshot lands.
   private lastDefaultRegistry: string | undefined;
@@ -207,6 +227,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // handler): VS Code disposes a hidden view, and the round that painted it is
   // still perfectly good.
   private lastReady: ReadyResult | undefined;
+  /** The last round whose catalog search worked, trusted or not. The page
+   *  walker extends THIS round's cards: `lastReady` skips a round with unknown
+   *  install state, but that round still browses a list that keeps loading. */
+  private lastRound: ReadyResult | undefined;
   // Last-known install-state trust, updated the moment a snapshot lands and
   // stamped onto EVERY post by postState. Kept on the provider rather than
   // passed per post because the two posts that most need it don't have a
@@ -226,6 +250,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // `phase:'loading'` post that opens the next watcher round and back in when
   // it settles, which reads as a flicker rather than as a state.
   private lastCatalogIncomplete = false;
+  /** What the webview was last told about {@link lastCatalogIncomplete}, so a
+   *  page that changes nothing else does not repost (and re-render) the list. */
+  private postedCatalogIncomplete = false;
   // In-flight refresh count; repostCardMeta stays quiet while > 0.
   private refreshing = 0;
   /** Set when the results just posted came from an explicit refresh/check, so
@@ -258,6 +285,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   // refresh of its own, so a held one would only repaint cards that are stale by
   // the time they land.
   private readonly pendingPosts = new Map<HostToSidebar['type'], HostToSidebar>();
+  /** The one loop that loads Browse pages after the first (see {@link walk}).
+   *  Only one runs: two would fetch the same offset and interleave their posts. */
+  private walker: Promise<void> | null = null;
+  /** Something asked for loading while the walker ran; it re-checks before exiting. */
+  private walkAgain = false;
+  /** A page failed and the walker stopped; cleared by Retry or the next refresh. */
+  private loadFailed = false;
+  /** The refresh in flight ended on a paged list; its last act (once the refresh
+   *  count drains) starts the walker, which catches up with whatever landed
+   *  after the refresh took its snapshot and ends at once when nothing did. */
+  private wantLoading = false;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -324,6 +362,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private post(message: HostToSidebar): void {
+    if (message.type === 'append') {
+      // Never held: the pending map keeps one message per type, so a queued
+      // append would drop the ones before it. A webview that is not live loses
+      // nothing, because its boot replay re-posts every card syncList added.
+      if (this.ready) {
+        void this.view?.webview.postMessage(message);
+      }
+      return;
+    }
     if (!this.ready && message.type !== 'state') {
       this.pendingPosts.set(message.type, message);
       return;
@@ -371,7 +418,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
       case 'search':
         this.query = message.query;
+        this.sort = validSort(message.sort);
         await this.refresh();
+        return;
+      case 'retry-load':
+        if (
+          Number.isSafeInteger(message.token) &&
+          this.loadFailed &&
+          this.lastRound?.paging?.token === message.token
+        ) {
+          this.loadFailed = false;
+          this.ensureLoading();
+        }
         return;
       case 'refresh':
         await this.refresh({ refresh: true });
@@ -631,6 +689,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.metaRepostPending = false;
         void this.repostCardMeta(); // replay the signal this refresh swallowed
       }
+      // After the count drains: the walker does not run while a refresh does.
+      if (this.refreshing === 0 && this.wantLoading) {
+        this.ensureLoading();
+      }
     }
   }
 
@@ -638,6 +700,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     options: { refresh?: boolean; check?: boolean },
     gen: number,
   ): Promise<void> {
+    this.loadFailed = false;
+    this.wantLoading = false;
     // `check` (network-verified update/deprecation data) threads to
     // `grim status --check`; the search options below stay as-is.
     //
@@ -655,7 +719,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       : await this.scopes.projectSearchableProbe();
     const [snap, searched] = await Promise.all([
       this.scopes.snapshot(options),
-      this.catalog.search(this.query, { ...options, projectConfigured: searchable }),
+      this.catalog.search(this.query, {
+        ...options,
+        projectConfigured: searchable,
+        ...(this.sort ? { sort: this.sort } : {}),
+      }),
     ]);
     if (gen !== this.refreshGen) {
       return; // a newer refresh started while snapshotting — it owns the state
@@ -702,6 +770,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         : await this.catalog.search(this.query, {
             ...options,
             projectConfigured: projectSearchable(snap),
+            ...(this.sort ? { sort: this.sort } : {}),
           });
     if (gen !== this.refreshGen) {
       return; // superseded during the search
@@ -736,17 +805,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Default registry host, so a stored credential for it (many users are
     // docker-logged-in to ghcr.io, the default) doesn't lock-mark every card.
     const defaultRegistryHost = this.lastDefaultRegistry ?? null;
-    const cards = buildCards(catalogState.items, scopeStatus, authed, defaultRegistryHost);
-    // Both scopes' installs; the webview slices Updates (outdated) and the
-    // Installed tab's SCOPE toggle client-side.
-    const installed = buildInstalledCards(
-      catalogState.items,
-      scopeStatus,
-      authed,
-      defaultRegistryHost,
-    );
-    await this.enrichCards(cards);
-    await this.enrichCards(installed);
+    this.cardInputs = { authed, defaultRegistryHost };
+    const { cards, installed } = await this.buildCardSets(catalogState.items, scopeStatus);
     if (gen !== this.refreshGen) {
       return; // superseded during logo enrichment — don't clobber newer state
     }
@@ -769,8 +829,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // are just as untrusted — storing them as lastReady or recomputing the badge
     // from a single known scope would undercount updates the banner says are
     // unavailable.
+    const round: ReadyResult = {
+      cards,
+      installed,
+      snap,
+      syncedAt: catalogState.syncedAt,
+      ...(catalogState.paging ? { paging: catalogState.paging } : {}),
+    };
+    this.lastRound = round;
     if (firstUnknown === undefined) {
-      this.lastReady = { cards, installed, snap, syncedAt: catalogState.syncedAt };
+      this.lastReady = round;
       // Fire-and-forget: a globalState write that fails is a slower next boot,
       // never a broken refresh. Gated on the same firstUnknown check as
       // lastReady — a round built from an unknown install state must not be
@@ -840,7 +908,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // re-fire on every refresh for as long as the failure persists.
       syncedAt: catalogState.syncedAt,
       snapshot: snap,
+      ...(catalogState.paging ? { paging: catalogState.paging } : {}),
     });
+    // Installed artifacts the loaded pages do not hold fill in from a local
+    // lookup, after the first paint so the lookups never delay it.
+    if (catalogError === undefined && firstUnknown === undefined && catalogState.paging) {
+      void this.enrichInstalled(installed, gen);
+    }
+    // A failed search leaves the previous list in the catalog, and the walker
+    // must not keep loading it under an error screen. Not gated on hasMore: a
+    // page that landed after the snapshot above may have finished the list, and
+    // only the walker's first sync posts the rows this round missed.
+    this.wantLoading = catalogError === undefined && catalogState.paging !== undefined;
     // The webview reports which rows are actually on screen and that drives the
     // sweep from here on ('visible' above). Seeding the first screenful anyway
     // costs one superseded queue — the generation guard drops it as soon as the
@@ -855,6 +934,217 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         cards.slice(0, SEED_SWEEP).map((c) => c.repo),
         { force: this.forcePrefetch },
       );
+    }
+  }
+
+  /** Authenticated hosts and default registry of the last round, so a page
+   *  loaded later builds its cards exactly as that round did. */
+  private cardInputs: { authed: Set<string>; defaultRegistryHost: string | null } = {
+    authed: new Set(),
+    defaultRegistryHost: null,
+  };
+
+  /** Browse cards for `items`, enriched from the details cache. */
+  private async buildBrowseCards(
+    items: Parameters<typeof buildCards>[0],
+    scopeStatus: ScopeStatus[],
+  ): Promise<CardVM[]> {
+    const { authed, defaultRegistryHost } = this.cardInputs;
+    const cards = buildCards(items, scopeStatus, authed, defaultRegistryHost);
+    await this.enrichCards(cards);
+    return cards;
+  }
+
+  /** Installed cards for one round. They borrow catalog fields from every row
+   *  seen this session, not only the loaded page: a typed query or an unloaded
+   *  page would otherwise strip the description, rating and source alias off an
+   *  installed card. */
+  private async buildInstalledSet(scopeStatus: ScopeStatus[]): Promise<CardVM[]> {
+    const { authed, defaultRegistryHost } = this.cardInputs;
+    // Both scopes' installs; the webview slices Updates (outdated) and the
+    // Installed tab's SCOPE toggle client-side.
+    const installed = buildInstalledCards(
+      this.catalog.knownItems(),
+      scopeStatus,
+      authed,
+      defaultRegistryHost,
+    );
+    await this.enrichCards(installed);
+    return installed;
+  }
+
+  private async buildCardSets(
+    items: Parameters<typeof buildCards>[0],
+    scopeStatus: ScopeStatus[],
+  ): Promise<{ cards: CardVM[]; installed: CardVM[] }> {
+    const cards = await this.buildBrowseCards(items, scopeStatus);
+    return { cards, installed: await this.buildInstalledSet(scopeStatus) };
+  }
+
+  /** Starts loading the live list's remaining pages, or asks the loop already
+   *  running to re-check. */
+  private ensureLoading(): void {
+    if (this.walker) {
+      this.walkAgain = true;
+      return;
+    }
+    this.walker = this.walk().finally(() => {
+      this.walker = null;
+    });
+  }
+
+  /** Loads the pages after the first, one at a time, and posts each as it
+   *  lands. Pauses while the view is not live or a refresh runs (the refresh
+   *  that follows restarts it), and stops on a failed page until Retry. A newer
+   *  list supersedes the page in flight, which then appends nothing. */
+  private async walk(): Promise<void> {
+    do {
+      this.walkAgain = false;
+      await this.syncList(); // catch up with rows loaded before this loop began
+      while (this.ready && this.refreshing === 0 && !this.loadFailed && this.catalog.hasMore()) {
+        const result = await this.catalog.loadNext();
+        if (result.error !== undefined) {
+          this.output.appendLine(`sidebar: loading results failed: ${result.error}`);
+          if (result.shadow) {
+            continue; // a reload nobody sees was dropped; the list on screen stands
+          }
+          this.loadFailed = true;
+          await this.syncList(); // posts paging.failed; the loaded rows stay
+          break;
+        }
+        if (result.warnings !== undefined) {
+          this.lastCatalogIncomplete = true; // same stderr semantics as the first page
+        }
+        await this.syncList();
+      }
+    } while (this.walkAgain);
+  }
+
+  /** Brings the webview's copy of the live list up to the catalog's: builds
+   *  cards for the rows it lacks and posts only those. The one place rounds
+   *  grow; idempotent, so the walker may call it after every page and again at
+   *  its start. Each await is followed by a re-check, because a refresh may
+   *  replace the round meanwhile — the later sync catches up. */
+  private async syncList(): Promise<void> {
+    const round = this.lastRound;
+    if (!round?.paging || this.refreshing > 0) {
+      return;
+    }
+    const live = this.catalog.paging();
+    if (live && live.token !== round.paging.token) {
+      await this.swapList(); // the reload replaced the list: one full post
+      return;
+    }
+    if (!live) {
+      return;
+    }
+    const from = round.paging.loaded;
+    const rows = this.catalog.rowsFrom(from);
+    const scopeStatus = scopeStatuses(round.snap);
+    const cards = rows.length > 0 ? await this.buildBrowseCards(rows, scopeStatus) : [];
+    // Installed borrows from every row seen, so it is rebuilt once, when the
+    // list is complete and `known` covers the catalog.
+    const finishing = round.paging.hasMore && !live.hasMore;
+    const installed = finishing ? await this.buildInstalledSet(scopeStatus) : undefined;
+    if (
+      this.lastRound !== round ||
+      this.refreshing > 0 ||
+      round.paging.loaded !== from ||
+      this.catalog.paging()?.loaded !== from + rows.length
+    ) {
+      return;
+    }
+    const offset = round.cards.length;
+    const paging = { ...live, ...(this.loadFailed ? { failed: true as const } : {}) };
+    // A reload loading behind the list on screen moves none of this.
+    if (
+      cards.length === 0 &&
+      !installed &&
+      this.lastCatalogIncomplete === this.postedCatalogIncomplete &&
+      JSON.stringify(paging) === JSON.stringify(round.paging)
+    ) {
+      return;
+    }
+    round.cards.push(...cards);
+    round.paging = paging;
+    if (installed) {
+      round.installed = installed;
+    }
+    this.postAppend(round, offset, cards, installed);
+  }
+
+  /** Rebuilds the last round from the list that just replaced the one on screen
+   *  and posts it whole; the cards cannot be appended, they replace. */
+  private async swapList(): Promise<void> {
+    const base = this.lastRound;
+    const gen = this.refreshGen;
+    if (!base) {
+      return;
+    }
+    const catalogState = this.catalog.state();
+    const { cards, installed } = await this.buildCardSets(
+      catalogState.items,
+      scopeStatuses(base.snap),
+    );
+    if (gen !== this.refreshGen || this.refreshing > 0 || this.lastRound !== base) {
+      return; // a newer round owns the view
+    }
+    const rebuilt: ReadyResult = {
+      cards,
+      installed,
+      snap: base.snap,
+      syncedAt: base.syncedAt,
+      ...(catalogState.paging ? { paging: catalogState.paging } : {}),
+    };
+    // A round built from an unknown install state stays out of lastReady here
+    // too; postReady stamps the banner on the repost either way.
+    if (this.lastReady === base) {
+      this.lastReady = rebuilt;
+    }
+    this.lastRound = rebuilt;
+    this.postReady(rebuilt);
+  }
+
+  private postAppend(
+    round: ReadyResult,
+    offset: number,
+    cards: CardVM[],
+    installed?: CardVM[],
+  ): void {
+    if (!round.paging) {
+      return;
+    }
+    this.postedCatalogIncomplete = this.lastCatalogIncomplete;
+    this.post({
+      type: 'append',
+      token: round.paging.token,
+      offset,
+      cards,
+      ...(installed ? { installed } : {}),
+      paging: round.paging,
+      ...(this.lastCatalogIncomplete ? { catalogIncomplete: true as const } : {}),
+    });
+  }
+
+  /** Looks up the catalog row of installed artifacts the loaded pages lack. */
+  private async enrichInstalled(installed: CardVM[], gen: number): Promise<void> {
+    const missing = [...new Set(installed.map((card) => card.repo))]
+      .filter((repo) => this.catalog.row(repo) === null && !this.catalog.looked(repo))
+      .slice(0, MAX_INSTALLED_LOOKUPS);
+    let resolved = false;
+    for (const repo of missing) {
+      if (gen !== this.refreshGen) {
+        return;
+      }
+      resolved = (await this.catalog.lookup(repo)) !== null || resolved;
+    }
+    const round = this.lastRound;
+    if (resolved && gen === this.refreshGen && this.refreshing === 0 && round?.paging) {
+      const rebuilt = await this.buildInstalledSet(scopeStatuses(round.snap));
+      if (gen === this.refreshGen && this.refreshing === 0 && this.lastRound === round) {
+        round.installed = rebuilt;
+        this.postAppend(round, round.cards.length, [], rebuilt);
+      }
     }
   }
 
@@ -1017,6 +1307,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  flash. `stale` marks a round restored from disk, whose install state has
    *  not been verified in this session yet (see postState's `stale`). */
   private postReady(ready: ReadyResult, options: { stale?: boolean } = {}): void {
+    const paging = ready.paging;
     this.postState({
       phase: 'ready',
       items: ready.cards,
@@ -1024,6 +1315,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: ready.syncedAt,
       snapshot: ready.snap,
       ...(options.stale === true ? { stale: true } : {}),
+      ...(paging ? { paging } : {}),
     });
   }
 
@@ -1035,8 +1327,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     syncedAt?: number | null;
     snapshot?: Snapshot;
     stale?: boolean;
+    paging?: SidebarState['paging'];
   }): void {
     const snap = partial.snapshot;
+    this.postedCatalogIncomplete = this.lastCatalogIncomplete;
     const projectName = snap?.projectFolder
       ? (snap.projectFolder.split(/[\\/]/).pop() ?? null)
       : null;
@@ -1060,6 +1354,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.stale === true ? { stale: true } : {}),
+      ...(partial.paging ? { paging: partial.paging } : {}),
       ...(this.lastCatalogIncomplete ? { catalogIncomplete: true } : {}),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo

@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   MINIMUM_GRIM_VERSION,
+  PAGING_GRIM_VERSION,
   REGISTRY_EDIT_GRIM_VERSION,
   RELEASE_PAGE,
   SKIP_VERSION,
@@ -18,6 +19,7 @@ import {
   parseSha256,
   selectAsset,
   sha256Hex,
+  supportsPaging,
   supportsRegistryEditing,
   targetTriple,
   tooOldMessage,
@@ -187,6 +189,15 @@ suite('installer update check', () => {
       true,
       'MINIMUM_GRIM_VERSION must move past 0.10.0 for the forceable/anchor-escape contract',
     );
+  });
+
+  test('supportsPaging gates on the release that adds search --limit/--offset', () => {
+    assert.strictEqual(supportsPaging(PAGING_GRIM_VERSION), true);
+    assert.strictEqual(supportsPaging('0.14.3'), false);
+    assert.strictEqual(supportsPaging('garbage'), false);
+    assert.strictEqual(supportsPaging(''), false);
+    assert.strictEqual(supportsPaging('0.15.1'), true);
+    assert.strictEqual(supportsPaging('1.0.0'), true);
   });
 
   test('supportsRegistryEditing gates on the release that adds the two flags', () => {

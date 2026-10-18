@@ -18,11 +18,14 @@ import type {
   ViewAction,
 } from '../protocol';
 import {
+  appendedFrom,
   CardFilter,
   DEFAULT_FILTER,
   DEFAULT_INSTALLED_FILTER,
   DEFAULT_VIEW,
   NATURAL,
+  applyAppend,
+  browseSortRequest,
   buildTree,
   collectNodeIds,
   cycleGroup,
@@ -33,6 +36,7 @@ import {
   groupKeyFor,
   installedCards,
   keepPaintedOnLoading,
+  resultIsPartial,
   toggleKinds,
   topLevelIds,
   viewForTab,
@@ -203,7 +207,7 @@ function visibleCards(): CardVM[] {
   const tabView = viewForTab(state, activeTab, installedQuery);
   return activeTab === 'installed'
     ? installedCards(tabView, activeFilter())
-    : filterCards(tabView.items, activeFilter());
+    : filterCards(tabView.items, shownFilter());
 }
 
 /** Group-header / tree-node ids currently in play, outermost first. */
@@ -252,6 +256,15 @@ function seedExpanded(): void {
  *  the tab pill and the activity-bar badge went on counting. */
 function activeFilter(): CardFilter {
   return activeTab === 'installed' ? filters.installed : filters.browse;
+}
+
+/** The filter the list is actually ordered by: Browse's direction is pinned to
+ *  the field's natural one while pages remain (see browseSortRequest). */
+function shownFilter(): CardFilter {
+  const filter = activeFilter();
+  return activeTab === 'browse'
+    ? { ...filter, dir: browseSortRequest(filter, state?.paging).dir }
+    : filter;
 }
 
 function setActiveFilter(next: CardFilter): void {
@@ -304,6 +317,24 @@ function render(): void {
   }
 }
 
+/** The results region alone, for a page of cards appended to the painted list.
+ *  Unlike render() it leaves an open card menu in place. */
+function renderResults(): void {
+  if (!state) {
+    return;
+  }
+  litRender(
+    renderSidebarResults(
+      viewForTab(state, activeTab, installedQuery),
+      activeFilter(),
+      viewOptions,
+      expanded,
+    ),
+    resultsEl,
+  );
+  observeVisibleRows();
+}
+
 // Renders the search region on every render() (lit's own dirty-check makes an
 // unchanged value a no-op — no more shape-signature gating). The one thing
 // lit's template binding can't know on its own: `vscode-textfield` is a custom
@@ -327,6 +358,40 @@ function syncSearchValue(view: SidebarState | null = null): void {
 
 function post(message: SidebarToHost): void {
   vscode.postMessage(message);
+}
+
+/** A Browse search carries the sort so grim's first page is ordered by it. */
+function postSearch(query: string): void {
+  post({ type: 'search', query, sort: filters.browse.sort });
+}
+
+/** The sort last re-requested from the host, so a host that does not honour it
+ *  (a stored sort grim never heard of) cannot turn this into a search loop. */
+let requestedSort: SortMode | null = null;
+
+/** While the result is partial (pages still loading, or stopped on a failure),
+ *  grim must hold the order the user picked: sorting only the loaded prefix would
+ *  rank the first page, not the whole catalog. A complete list sorts
+ *  client-side and needs no round trip. */
+function syncServerSort(): void {
+  const paging = state?.paging;
+  if (
+    !state ||
+    !paging ||
+    !resultIsPartial(paging) ||
+    activeTab !== 'browse' ||
+    state.phase !== 'ready' ||
+    state.stale === true ||
+    refreshInFlight
+  ) {
+    return;
+  }
+  if ((paging.sort ?? 'relevance') === filters.browse.sort) {
+    requestedSort = null;
+  } else if (requestedSort !== filters.browse.sort) {
+    requestedSort = filters.browse.sort;
+    postSearch(state.query);
+  }
 }
 
 // --- Viewport reporting (drives the host's details prefetch) ---
@@ -392,41 +457,42 @@ function makeVisibilityObserver(root: Element): IntersectionObserver {
 // scroller the moment it exists (upgradeObserverRoot, wired into the same
 // whenDefined chain the scroll listener uses).
 let visibilityObserver = makeVisibilityObserver(scrollEl);
-// What the current registrations were armed against. Re-arming is only skipped
-// when this is unchanged.
-let observedKey = '';
+// What the current registrations were armed against: the view that drew the
+// rows and the repos observed, in DOM order.
+let observedView = '';
+let observedRepos: string[] = [];
 
-/** Re-arms the observer after a render — but only when the render could have
- *  replaced the row nodes.
+/** Keeps the observer on the rows now in the DOM — but only observes what is new.
  *
- *  The dominant render trigger is the card-meta repost (a landed logo), which
- *  redraws the same rows perhaps 20-40 times during a cold sweep. Re-arming on
- *  those cost an observe() per row plus a full asynchronous re-report, and every
- *  report costs the host one cache read per row — tens of megabytes parsed on
- *  the shared extension host to learn nothing.
+ *  The dominant render triggers are the card-meta repost (a landed logo, 20-40
+ *  per cold sweep) and a background page append. Re-arming on either cost an
+ *  observe() per row plus a full asynchronous re-report, and every report costs
+ *  the host one cache read per row.
  *
- *  The key covers every input that can swap a row's TEMPLATE, because lit tears
- *  the old DOM down and builds new nodes when the template changes at a stable
- *  key: density (card vs compact row), list-vs-tree, grouping, and the tab. It
- *  keys on the whole ViewOptions object rather than naming fields, so it cannot
- *  go stale the next time ViewOptions grows one. Unchanged key means lit's keyed
- *  repeat() kept the very nodes we are already observing — if a list is ever
- *  rendered UNKEYED, this assumption dies with it and the viewport stops
- *  reporting. */
+ *  The view key covers every input that can swap a row's TEMPLATE, because lit
+ *  tears the old DOM down and builds new nodes when the template changes at a
+ *  stable key: density (card vs compact row), list-vs-tree, grouping, and the
+ *  tab. It keys on the whole ViewOptions object rather than naming fields, so it
+ *  cannot go stale the next time ViewOptions grows one. Same view and a list
+ *  that only grew means lit's keyed repeat() kept the very nodes already
+ *  observed — if a list is ever rendered UNKEYED, this assumption dies with it
+ *  and the viewport stops reporting. */
 function observeVisibleRows(): void {
   const rows = [...resultsEl.querySelectorAll<HTMLElement>(ROW_SELECTOR)];
-  const key = `${activeTab}:${JSON.stringify(viewOptions)}:${rows.map((r) => r.dataset.repo ?? '').join('\n')}`;
-  if (key === observedKey) {
-    return;
+  const repos = rows.map((r) => r.dataset.repo ?? '');
+  const view = `${activeTab}:${JSON.stringify(viewOptions)}`;
+  const from = view === observedView ? appendedFrom(observedRepos, repos) : null;
+  observedView = view;
+  observedRepos = repos;
+  if (from === null) {
+    visibilityObserver.disconnect();
+    visibleRepos.clear();
   }
-  observedKey = key;
-  visibilityObserver.disconnect();
-  visibleRepos.clear();
   // ROW_SELECTOR, not '[data-repo]': the latter also matches the install button
   // nested inside a row (7 nodes for 4 rows in the compact golden), and a button
   // can leave the expanded root rect while its row is still inside it — whose
   // exit event then deletes a visible row from the report.
-  for (const el of rows) {
+  for (const el of rows.slice(from ?? 0)) {
     visibilityObserver.observe(el);
   }
 }
@@ -450,7 +516,7 @@ function observeVisibleRows(): void {
 function upgradeObserverRoot(scroller: Element): void {
   visibilityObserver.disconnect();
   visibilityObserver = makeVisibilityObserver(scroller);
-  observedKey = '';
+  observedView = '';
   observeVisibleRows();
 }
 
@@ -629,6 +695,13 @@ root.addEventListener('click', (event) => {
     case 'refresh':
       post({ type: 'refresh' });
       break;
+    case 'retry-load':
+      if (state?.paging?.failed === true) {
+        post({ type: 'retry-load', token: state.paging.token });
+        // The Retry button vanishes on success; focus would fall to the body.
+        resultsEl.querySelector<HTMLElement>('.result-summary')?.focus();
+      }
+      break;
     case 'clear-search': {
       const input = document.getElementById('search') as HTMLInputElement | null;
       if (input) {
@@ -647,7 +720,7 @@ root.addEventListener('click', (event) => {
       }
       persist();
       syncSearchValue();
-      post({ type: 'search', query: '' });
+      postSearch('');
       break;
     }
     case 'init-project':
@@ -688,6 +761,9 @@ root.addEventListener('click', (event) => {
       break;
     }
     case 'toggle-sort-dir': {
+      if (activeTab === 'browse' && resultIsPartial(state?.paging)) {
+        break; // pinned to the field's natural direction while the result is partial
+      }
       const current = activeFilter();
       setActiveFilter({ ...current, dir: current.dir === 'asc' ? 'desc' : 'asc' });
       persist();
@@ -823,6 +899,7 @@ root.addEventListener('change', (event) => {
   setActiveFilter({ ...activeFilter(), sort, dir: NATURAL[sort] });
   persist();
   render();
+  syncServerSort();
   if (sortPickedByPointer) {
     // lit re-renders into the SAME select element, so focus (and the ring)
     // survives the repaint — dropping it has to happen here, after it.
@@ -857,7 +934,7 @@ root.addEventListener('input', (event) => {
   if (searchDebounce) {
     clearTimeout(searchDebounce);
   }
-  searchDebounce = setTimeout(() => post({ type: 'search', query }), 250);
+  searchDebounce = setTimeout(() => postSearch(query), 250);
 });
 
 window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
@@ -892,6 +969,25 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
       postViewFlags();
     }
     render();
+    syncServerSort();
+  } else if (message.type === 'append') {
+    const next = applyAppend(state, message);
+    if (!next || !state) {
+      return;
+    }
+    // The summary flips between loading, failed and done; those need the full
+    // render (search sort control, chips), a plain page of cards does not.
+    const flip =
+      resultIsPartial(state.paging) !== resultIsPartial(next.paging) ||
+      state.paging?.failed !== next.paging?.failed ||
+      state.catalogIncomplete !== next.catalogIncomplete;
+    state = next;
+    if (flip || message.installed) {
+      render();
+      syncServerSort();
+    } else if (activeTab === 'browse') {
+      renderResults(); // the other tabs show no browse cards
+    }
   } else if (message.type === 'busy') {
     // Class only — no render(): the lock is CSS plus the click guard above, and
     // a repaint here would drop any open card menu for no reason.

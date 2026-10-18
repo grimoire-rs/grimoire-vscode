@@ -66,6 +66,8 @@
   "details-deprecated-installed-switch",
   "results-installed-empty",
   "results-browse-compact",
+  "browse-paged-partial",
+  "browse-paged-capped",
   "results-browse-grouped-collapsed",
   "results-browse-grouped-expanded",
   "results-browse-tree-collapsed",

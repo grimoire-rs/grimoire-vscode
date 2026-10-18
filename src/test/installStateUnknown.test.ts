@@ -176,6 +176,9 @@ function makeSidebar(
   } as unknown as ScopeService;
   const catalog = {
     search: async (): Promise<CatalogState> => ({ items: [searchItem()], syncedAt: Date.now() }),
+    knownItems: () => [searchItem()],
+    row: () => null,
+    looked: () => true,
   } as unknown as CatalogService;
   const delegate: SidebarDelegate = {
     openDetails: () => {},
@@ -398,6 +401,9 @@ suite('unknown install state: details panel', () => {
     } as unknown as ScopeService;
     const catalog = {
       state: (): CatalogState => ({ items: [searchItem()], syncedAt: Date.now() }),
+      row: (repo: string): SearchItem | null => [searchItem()].find((i) => i.repo === repo) ?? null,
+      lookup: async (): Promise<SearchItem | null> => null,
+      knownItems: (): SearchItem[] => [searchItem()],
       warm: async (): Promise<void> => {},
     } as unknown as CatalogService;
     const output = vscode.window.createOutputChannel('grimoire-details-test');
@@ -456,6 +462,9 @@ suite('unknown install state: details panel', () => {
     } as unknown as ScopeService;
     const catalog = {
       state: (): CatalogState => ({ items: [searchItem()], syncedAt: Date.now() }),
+      row: (repo: string): SearchItem | null => [searchItem()].find((i) => i.repo === repo) ?? null,
+      lookup: async (): Promise<SearchItem | null> => null,
+      knownItems: (): SearchItem[] => [searchItem()],
       warm: async (): Promise<void> => {},
     } as unknown as CatalogService;
     const output = vscode.window.createOutputChannel('grimoire-details-test');

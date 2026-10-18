@@ -328,8 +328,46 @@ vscode-textfield#search {
   color: var(--vscode-descriptionForeground);
 }
 
+.result-note {
+  padding: 0 12px 4px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+}
+
 .cards {
   flex: 1;
+}
+
+/* Focus lands here after Retry (the button is gone once loading resumes); the
+   region is a status line, not a control, so it takes no outline. */
+.result-summary:focus {
+  outline: none;
+}
+
+.load-error {
+  color: var(--vscode-errorForeground);
+}
+
+.retry {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* Held at its field's natural direction while pages remain. */
+.sort-dir[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .card {
@@ -339,6 +377,11 @@ vscode-textfield#search {
   cursor: pointer;
   position: relative;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.12));
+  /* Off-screen cards skip layout and paint, so a list that grows in the
+     background costs only what is near the viewport; `auto` remembers the
+     measured height once a card has rendered. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 92px;
 }
 
 .card:hover {
@@ -957,6 +1000,8 @@ vscode-progress-bar {
   height: 22px;
   padding: 0 12px;
   cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
 }
 
 .compact-row:hover {
@@ -1201,6 +1246,10 @@ vscode-progress-bar {
 .tree.roomy .compact-row,
 .tree.roomy .tree-node {
   height: 30px;
+}
+
+.tree.roomy .compact-row {
+  contain-intrinsic-size: auto 30px;
 }
 
 .tree.roomy .row-name,
