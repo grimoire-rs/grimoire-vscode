@@ -30,13 +30,12 @@ import {
   mergeEntry,
 } from '../detailsCache';
 import type { CatalogService } from '../catalog';
-import { projectSearchable, type ScopeService, type Snapshot } from '../scopes';
+import { projectSearchable, searchScopeFor, type ScopeService, type Snapshot } from '../scopes';
 import {
   artifactName,
   buildDetailsVM,
   buildShareLink,
   buildSkeletonVM,
-  catalogRowFor,
   computeUpdateAvailable,
   declaredKey,
   findAssetPath,
@@ -210,39 +209,26 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    */
   private readonly votes = new Map<string, { vote: VoteState; up: number | null }>();
 
-  /**
-   * The catalog row each open panel was built from.
-   *
-   * `CatalogService.state().items` is a cache the SIDEBAR owns and replaces
-   * wholesale on every search — a keystroke that narrows the browse, a
-   * `ready` refresh after the view was hidden, or a cold window painting
-   * restored cards before any search has run all leave it without a row this
-   * panel is still showing. Every VM rebuild re-resolved the row from there,
-   * so the row's index-published signals (the rating, the pull count) blinked
-   * out on the second paint while the card that opened the panel — built once,
-   * from the row — kept showing them.
-   *
-   * Remembered per repo and refreshed whenever the shared cache still has it,
-   * so a genuinely updated row still wins and only its disappearance is
-   * absorbed.
-   *
-   * ponytail: unbounded map, one small row per artifact opened in a session.
-   * Give it the panel lifecycle if a session ever opens enough to matter.
-   */
-  private readonly rows = new Map<string, SearchItem>();
-
-  /**
-   * The catalog row for `repo`, sticky across the sidebar replacing its cache.
-   * See {@link rows}.
-   */
+  /** The catalog row for `repo`: the shared cache's, which keeps every row seen
+   *  this session, so a search that narrowed the sidebar cannot blink the
+   *  rating or pull count out. A row no page loaded is fetched on open (see
+   *  buildPipeline). */
   private searchRow(repo: string): SearchItem | null {
-    // Several configured sources can serve one repo, and the rows are NOT
-    // interchangeable — see catalogRowFor, which merges them.
-    const live = catalogRowFor(repo, this.catalog.state().items as never) as SearchItem | null;
-    if (live) {
-      this.rows.set(repo, live);
+    return this.catalog.row(repo);
+  }
+
+  /** Loads the catalog row for `repo` (see {@link CatalogService.warm}), asking
+   *  for it by name when the loaded pages skip it. True when that lookup is what
+   *  produced the row, so a paint made without it should be posted again. The
+   *  scope comes from `snapshot`, not from a sidebar list that may not exist. */
+  private async ensureRow(repo: string, snapshot: Snapshot): Promise<boolean> {
+    const searchable = projectSearchable(snapshot);
+    await this.catalog.warm(searchable);
+    if (this.catalog.row(repo)) {
+      return false;
     }
-    return live ?? this.rows.get(repo) ?? null;
+    const scope = searchScopeFor(snapshot.projectFolder, searchable);
+    return (await this.catalog.lookup(repo, scope)) !== null;
   }
 
   /** Repos the silent `viewer_up` refinement has already been attempted for.
@@ -1091,7 +1077,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       logoUri: docs.logoUri,
       readme: docs.readme,
       changelog: docs.changelog,
-      catalog: this.catalog.state().items as never,
+      catalog: this.catalog.knownItems() as never,
     });
     if (unknown.length > 0) {
       vm.unknownScopes = unknown;
@@ -1195,7 +1181,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     // not be there yet. Alongside the content probes, not before them.
     const [{ describe, fetchValue, fetchError, companion }] = await Promise.all([
       this.resolveContent(repo),
-      this.catalog.warm(projectSearchable(snapshot)),
+      // A repo ranked outside the loaded pages still needs its rating, pull
+      // count and catalog kind.
+      this.ensureRow(repo, snapshot),
     ]);
     const vm = this.assembleVM(repo, snapshot, describe, fetchValue, companion);
     if (fetchError !== null) {
@@ -1543,6 +1531,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       const fresh = await this.scopes.snapshot();
       await this.catalog.warm(projectSearchable(fresh));
       await this.postBuilt(repo, panel, this.vmFromCache(repo, cached, fresh));
+      if (await this.ensureRow(repo, fresh)) {
+        await this.postBuilt(repo, panel, this.vmFromCache(repo, cached, fresh));
+      }
       await this.revalidate(repo, panel, cached, fresh);
       return;
     }
@@ -1552,7 +1543,8 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     await this.catalog.warm(projectSearchable(stale));
     await this.postBuilt(repo, panel, this.vmFromCache(repo, cached, stale));
     const fresh = await this.scopes.snapshot();
-    if (this.installSlice(repo, fresh) !== this.installSlice(repo, stale)) {
+    const looked = await this.ensureRow(repo, fresh);
+    if (looked || this.installSlice(repo, fresh) !== this.installSlice(repo, stale)) {
       await this.postBuilt(repo, panel, this.vmFromCache(repo, cached, fresh));
     }
     await this.revalidate(repo, panel, cached, fresh);

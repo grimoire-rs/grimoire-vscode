@@ -229,7 +229,10 @@ suite('download counts', () => {
       ),
     );
     assert.ok(html.includes('1,416') && html.includes('900'), 'total and the displayed release');
-    assert.ok(!html.includes('400') && !html.includes('1.0.0'), 'older releases stay out of the rail');
+    assert.ok(
+      !html.includes('400') && !html.includes('1.0.0'),
+      'older releases stay out of the rail',
+    );
   });
 
   test('a row with no displayed version leads with the highest release', async () => {
@@ -1148,7 +1151,9 @@ suite('sidebar rendering', () => {
     // for any tab but Installed) and Browse's chips persist across reloads, so
     // filtering here showed "1" on the pill over "Everything is up to date."
     const view = viewForTab(sidebarState({ installedItems: [outdatedCard()] }), 'updates', '');
-    const results = await litHtml(renderSidebarResults(view, { ...DEFAULT_FILTER, kinds: ['rule'] }));
+    const results = await litHtml(
+      renderSidebarResults(view, { ...DEFAULT_FILTER, kinds: ['rule'] }),
+    );
     assert.ok(results.includes('card-delta'), 'the outdated skill survives a rule-only chip');
     assert.ok(!results.includes('Everything is up to date.'), 'not the empty state');
     assert.ok(
@@ -1179,7 +1184,10 @@ suite('sidebar rendering', () => {
     const filters = await litHtml(
       renderSidebarFilters(sidebarState({ mode: 'installed' }), DEFAULT_FILTER),
     );
-    assert.ok(!filters.includes('set-scope'), 'the scope toggle is gone (scope grouping replaced it)');
+    assert.ok(
+      !filters.includes('set-scope'),
+      'the scope toggle is gone (scope grouping replaced it)',
+    );
     assert.ok(filters.includes('data-action="toggle-kind"'), 'Kind chips stay');
   });
 
@@ -1252,7 +1260,7 @@ suite('sidebar split rendering (item 3)', () => {
       asc.includes('<option selected value="rating">'),
       'the picked field is the selected option',
     );
-    assert.ok(asc.includes('value="relevance"'), 'Browse offers grim\'s own ranking');
+    assert.ok(asc.includes('value="relevance"'), "Browse offers grim's own ranking");
     assert.ok(asc.includes('m3 8 4-4 4 4'), 'ascending draws the up arrow over rising bars');
     const desc = await litHtml(
       renderSidebarSearch(sidebarState(), { ...DEFAULT_FILTER, sort: 'rating', dir: 'desc' }),
@@ -2612,9 +2620,7 @@ suite('details rendering', () => {
   });
 
   test('RESOURCES is still omitted when every field is null', async () => {
-    const html = await litHtml(
-      renderDetails(detailsVM({ sourceRepository: null, license: null })),
-    );
+    const html = await litHtml(renderDetails(detailsVM({ sourceRepository: null, license: null })));
     assert.ok(!html.includes('RESOURCES'), 'empty panels are omitted');
   });
 
@@ -2889,5 +2895,127 @@ suite('tree indentation', () => {
     for (let level = 2; level <= MAX_TREE_DEPTH; level++) {
       assert.strictEqual(paddings.get(level), base + level * step, `.d${level} is one step deeper`);
     }
+  });
+});
+
+suite('paged Browse rendering', () => {
+  const paging = {
+    token: 7,
+    loaded: 2,
+    total: 12_000,
+    lowerBound: false,
+    hasMore: true,
+  };
+  const items = [card({ repo: 'reg/a', name: 'a' }), card({ repo: 'reg/b', name: 'b' })];
+  const partial = (overrides: Record<string, unknown> = {}): ReturnType<typeof sidebarState> =>
+    sidebarState({
+      items,
+      registries: [],
+      paging: { ...paging, ...overrides },
+    });
+  const results = async (state: ReturnType<typeof sidebarState>): Promise<string> =>
+    litHtml(renderSidebarResults(state, DEFAULT_FILTER));
+
+  test('a complete result keeps the plain summary and shows no progress', async () => {
+    const done = await results(partial({ total: 2, hasMore: false }));
+    assert.match(done, /2 results in 1 registry/);
+    assert.ok(!done.includes('role="status"'));
+    assert.ok(!done.includes('Loading'));
+  });
+
+  test('a loading result states its progress, quietly, and has no next-page control', async () => {
+    const html = await results(partial());
+    assert.match(
+      html,
+      /<div[^>]*class="result-summary"[^>]*role="status"[^>]*>Loading 2 of 12,000…<\/div>/,
+    );
+    assert.match(html, /aria-live="off"/, 'thirty announcements would be noise');
+    assert.match(html, /aria-busy="true"/);
+    assert.ok(!html.includes('load-more'), 'nothing to press: pages load by themselves');
+    assert.ok(!html.includes('retry'), 'no Retry while nothing has failed');
+  });
+
+  test('a failed load shows an alert and a Retry that keeps the rows', async () => {
+    const html = await results(partial({ failed: true }));
+    assert.match(html, /Stopped at 2 of 12,000\./);
+    assert.match(
+      html,
+      /<span[^>]*role="alert"[^>]*>Could not load the remaining results\.<\/span>/,
+    );
+    assert.match(
+      html,
+      /<button[^>]*class="retry"[^>]*data-action="retry-load"[^>]*>Retry<\/button>|<button[^>]*data-action="retry-load"[^>]*>Retry<\/button>/,
+    );
+    assert.match(html, /aria-live="polite"/, 'a failure is announced');
+    assert.ok(!html.includes('aria-busy="true"'));
+    assert.match(html, /class="card/, 'the loaded rows stay');
+  });
+
+  test('no Retry on a stale restored round or outside the ready phase', async () => {
+    const failed = partial({ failed: true });
+    assert.ok(!(await results({ ...failed, stale: true })).includes('data-action="retry-load"'));
+    assert.ok(
+      !(await results({ ...failed, phase: 'loading' })).includes('data-action="retry-load"'),
+    );
+  });
+
+  test('a complete list whose listing is incomplete keeps the lower-bound summary and note', async () => {
+    const html = await results(partial({ hasMore: false, lowerBound: true, loaded: 2, total: 2 }));
+    assert.match(html, /Showing 2 of 2\+ in 1 registry/);
+    assert.match(html, /aria-live="polite"/);
+    assert.match(html, /<div class="result-note">A registry listing is incomplete/);
+    assert.ok(!html.includes('title="A registry listing'), 'not a hover-only explanation');
+    assert.ok(!html.includes('500'), 'the cap number belongs to grim, not to this page');
+    assert.ok(!html.includes('data-action="retry-load"'));
+    const plain = await results(partial());
+    assert.ok(!plain.includes('result-note'), 'no note without a lower bound');
+  });
+
+  test('chips that hide every loaded row do not claim nothing matches', async () => {
+    const html = await litHtml(
+      renderSidebarResults(partial(), { ...DEFAULT_FILTER, kinds: ['mcp'] }),
+    );
+    assert.match(html, /None of the 2 loaded results match/);
+    assert.match(html, /may be in results that are still loading/);
+    assert.ok(!html.includes('Nothing matches'), 'the unloaded 14,998 may hold one');
+    const failed = await litHtml(
+      renderSidebarResults(partial({ failed: true }), { ...DEFAULT_FILTER, kinds: ['mcp'] }),
+    );
+    assert.match(failed, /None of the 2 loaded results match/);
+    assert.match(failed, /may be in results that did not load/);
+  });
+
+  test('a complete list with every row filtered out still says nothing matches', async () => {
+    const html = await litHtml(
+      renderSidebarResults(partial({ total: 2, hasMore: false }), {
+        ...DEFAULT_FILTER,
+        kinds: ['mcp'],
+      }),
+    );
+    assert.match(html, /Nothing matches/);
+    assert.ok(!html.includes('None of the'));
+  });
+
+  test('kind chips narrow the loaded rows and the summary says so', async () => {
+    const html = await litHtml(
+      renderSidebarResults(partial(), { ...DEFAULT_FILTER, kinds: ['rule'] }),
+    );
+    assert.match(html, /0 shown · Loading 2 of 12,000…/);
+  });
+
+  test('the direction toggle is held while pages remain, and free once loaded', async () => {
+    const search = await litHtml(
+      renderSidebarSearch(partial(), { ...DEFAULT_FILTER, sort: 'rating', dir: 'asc' }),
+    );
+    assert.match(search, /aria-disabled="true"/);
+    assert.match(search, /Loading all results — the order can be reversed once they are loaded/);
+    const failed = await litHtml(
+      renderSidebarSearch(partial({ failed: true }), { ...DEFAULT_FILTER, sort: 'rating' }),
+    );
+    assert.match(failed, /aria-disabled="true"/, 'still pinned: the list is not complete');
+    const free = await litHtml(
+      renderSidebarSearch(partial({ hasMore: false }), { ...DEFAULT_FILTER, sort: 'rating' }),
+    );
+    assert.ok(!free.includes('aria-disabled'));
   });
 });

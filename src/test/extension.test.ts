@@ -17,6 +17,7 @@ import type {
   DetailsVM,
   HostToDetails,
   HostToSidebar,
+  PagingState,
   RevalidateState,
   SidebarState,
 } from '../webview/protocol';
@@ -134,6 +135,27 @@ esac
 if [ "$cmd" = "update" ] && [ -f "${dir}/update-name.json" ]; then
   case "$*" in
     *" -- "*) cat "${dir}/update-name.json"; exit 0 ;;
+  esac
+fi
+# A paged search can be canned per page: --offset N serves search@N.json (and
+# search@N.err on stderr), and a single-repo lookup (--limit 10) serves
+# search-lookup.json. Inert unless those files exist.
+if [ "$cmd" = "search" ]; then
+  case "$*" in
+    *"--limit 10 "*)
+      if [ -f "${dir}/search-lookup.json" ]; then
+        cat "${dir}/search-lookup.json"
+        exit 0
+      fi ;;
+    *--offset*)
+      off=$(printf '%s' "$*" | sed -n 's/.*--offset \\([0-9][0-9]*\\).*/\\1/p')
+      if [ -n "$off" ] && [ -f "${dir}/search@$off.json" ]; then
+        if [ -f "${dir}/search@$off.err" ]; then
+          cat "${dir}/search@$off.err" >&2
+        fi
+        cat "${dir}/search@$off.json"
+        exit 0
+      fi ;;
   esac
 fi
 if [ -f "${dir}/$cmd.json" ]; then
@@ -383,8 +405,14 @@ function fakePanel(): {
  *  asWebviewUri/cspSource to build the HTML shell, onDidDispose to drop the
  *  boot handshake when the view goes away, and onDidReceiveMessage to wire the
  *  (unused here — tests call handleMessage/refresh directly) message channel. */
-function fakeView(): { view: vscode.WebviewView; states: SidebarState[] } {
+function fakeView(): {
+  view: vscode.WebviewView;
+  states: SidebarState[];
+  /** Every message posted, state or not, in order. */
+  posted: HostToSidebar[];
+} {
   const states: SidebarState[] = [];
+  const posted: HostToSidebar[] = [];
   const view = {
     onDidDispose: () => ({ dispose() {} }),
     webview: {
@@ -394,14 +422,18 @@ function fakeView(): { view: vscode.WebviewView; states: SidebarState[] } {
       asWebviewUri: (uri: vscode.Uri) => uri,
       onDidReceiveMessage: () => ({ dispose() {} }),
       postMessage: (message: HostToSidebar) => {
-        if (message.type === 'state') {
-          states.push(message.state);
+        // Serialized at the call, as VS Code does: the host keeps growing the
+        // arrays a state post referenced.
+        const sent = structuredClone(message);
+        posted.push(sent);
+        if (sent.type === 'state') {
+          states.push(sent.state);
         }
         return Promise.resolve(true);
       },
     },
   } as unknown as vscode.WebviewView;
-  return { view, states };
+  return { view, states, posted };
 }
 
 /** Minimal OutputChannel double that captures appendLine calls. */
@@ -6212,6 +6244,342 @@ suite('extension integration', () => {
     );
     const search = argvLines(stub).find((l) => l.startsWith('search') && l.includes('oci-cli-tag'));
     assert.ok(search, 'Browse searched for the clicked tag');
+  });
+
+  suite('paged Browse', () => {
+    const PAGED_GRIM = '0.15.0';
+    const TOTAL = 450;
+
+    /** One canned page: `count` rows from `offset`, with grim's `total`. The
+     *  walker asks for 1000 rows after the first 200, so one file holds the rest. */
+    function cannedPage(offset: number, count: number): void {
+      const items = Array.from({ length: count }, (_, i) =>
+        searchItem(`ghcr.io/grimoire-rs/skills/paged-${offset + i}`),
+      );
+      fs.writeFileSync(
+        path.join(stub.dir, `search@${offset}.json`),
+        JSON.stringify({ items, total: TOTAL, truncated: offset + count < TOTAL }),
+      );
+    }
+
+    function clearPages(): void {
+      for (const name of fs.readdirSync(stub.dir)) {
+        if (name.startsWith('search@') || name === 'search-lookup.json') {
+          fs.rmSync(path.join(stub.dir, name), { force: true });
+        }
+      }
+    }
+
+    const searchLines = (): string[] => argvLines(stub).filter((l) => l.startsWith('search'));
+
+    teardown(clearPages);
+
+    test('a grim without paging gets the unpaged request', async function () {
+      this.timeout(15000);
+      const api = await activateExtension();
+      fs.rmSync(stub.argvLog, { force: true });
+      const { view, states } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      await api.providers.sidebar.refresh();
+      const lines = searchLines();
+      assert.ok(lines.length > 0, 'search ran');
+      assert.ok(
+        lines.every((l) => !l.includes('--limit') && !l.includes('--offset')),
+        `the default 0.11.0 stub must never see paging flags: ${lines.join(' | ')}`,
+      );
+      assert.strictEqual(states.at(-1)?.paging, undefined);
+    });
+
+    /** What a webview would hold after replaying everything posted so far. */
+    function replayed(posted: HostToSidebar[]): { repos: string[]; paging: PagingState | undefined } {
+      let repos: string[] = [];
+      let paging: PagingState | undefined;
+      for (const message of posted) {
+        if (message.type === 'state') {
+          repos = message.state.items.map((c) => c.repo);
+          paging = message.state.paging;
+        } else if (message.type === 'append') {
+          assert.strictEqual(message.offset, repos.length, 'an append continues the list held');
+          repos = repos.concat(message.cards.map((c) => c.repo));
+          paging = message.paging;
+        }
+      }
+      return { repos, paging };
+    }
+
+    test('pages after the first load in the background, offline, and stop at the total', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      cannedPage(0, 200);
+      cannedPage(200, 250);
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      const { view, states, posted } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      try {
+        fs.rmSync(stub.argvLog, { force: true });
+        await api.providers.sidebar.handleMessage({ type: 'ready' });
+        await waitFor(() => replayed(posted).paging?.hasMore === false);
+
+        // The loader may already be running or recent from an earlier test's
+        // refresh, so it is matched by role, never by position.
+        const all = searchLines();
+        const loaders = all.filter((l) => !l.includes('--offline'));
+        const lines = all.filter((l) => l.includes('--offline'));
+        assert.ok(loaders.length <= 1, `at most one online run: ${all.join(' | ')}`);
+        assert.ok(
+          loaders.every((l) => l.startsWith('search --limit 1 ')),
+          `the only online run is the loader: ${all.join(' | ')}`,
+        );
+        // A loader still alive when the list ends costs one more page-one read.
+        assert.ok(lines.length === 2 || lines.length === 3, lines.join(' | '));
+        assert.ok(lines[2] === undefined || lines[2].includes('--offset 0'), lines.join(' | '));
+        assert.ok(lines[0]?.includes('--limit 200 --offset 0'), `page one: ${lines[0]}`);
+        assert.ok(lines[0]?.includes('--offline'), 'page one reads the disk catalog');
+        assert.ok(lines[1]?.includes('--offline'), `later pages are offline: ${lines[1]}`);
+        assert.ok(lines[1]?.includes('--limit 1000 --offset 200'), `page two: ${lines[1]}`);
+        assert.strictEqual(states.at(-1)?.items.length, 200, 'the state carried page one only');
+        const done = replayed(posted);
+        assert.strictEqual(done.repos.length, TOTAL);
+        assert.deepStrictEqual(
+          { loaded: done.paging?.loaded, total: done.paging?.total },
+          { loaded: TOTAL, total: TOTAL },
+        );
+
+        const before = searchLines().length;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.strictEqual(searchLines().length, before, 'a finished list spawns nothing');
+      } finally {
+        await restoreVersion();
+      }
+    });
+
+    test('the Browse sort travels to grim with the search', async function () {
+      this.timeout(20000);
+      const api = await activateExtension();
+      cannedPage(0, 200);
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      const { view } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      try {
+        fs.rmSync(stub.argvLog, { force: true });
+        await api.providers.sidebar.handleMessage({ type: 'search', query: '', sort: 'rating' });
+        assert.ok(
+          searchLines().some((l) => l.includes('--sort rating')),
+          searchLines().join(' | '),
+        );
+        fs.rmSync(stub.argvLog, { force: true });
+        await api.providers.sidebar.handleMessage({
+          type: 'search',
+          query: '',
+          sort: 'bogus' as never,
+        });
+        assert.ok(
+          searchLines().every((l) => !l.includes('--sort')),
+          'an unknown sort is dropped, not forwarded to argv',
+        );
+      } finally {
+        await api.providers.sidebar.handleMessage({ type: 'search', query: '' });
+        await restoreVersion();
+      }
+    });
+
+    test('stderr on a later page marks the results incomplete; a clean page does not', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      cannedPage(0, 200);
+      cannedPage(200, 250);
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      try {
+        const clean = fakeView();
+        api.providers.sidebar.resolveWebviewView(clean.view);
+        await api.providers.sidebar.handleMessage({ type: 'ready' });
+        await waitFor(() => replayed(clean.posted).paging?.hasMore === false);
+        assert.ok(
+          clean.posted.every((m) => m.type !== 'append' || m.catalogIncomplete === undefined),
+          'a clean page 2',
+        );
+        assert.strictEqual(clean.states.at(-1)?.catalogIncomplete, undefined);
+
+        // A changed head makes the next search reload the list behind the one
+        // on screen; the reload's last page warns and the swap carries the mark.
+        const head = path.join(stub.dir, 'search@0.json');
+        const page = JSON.parse(fs.readFileSync(head, 'utf8')) as { items: { repo: string }[] };
+        page.items[0] = { ...page.items[0], repo: 'ghcr.io/grimoire-rs/skills/renamed' };
+        fs.writeFileSync(head, JSON.stringify({ ...page, total: TOTAL, truncated: true }));
+        fs.writeFileSync(path.join(stub.dir, 'search@200.err'), 'WARN source down\n');
+        const warned = fakeView();
+        api.providers.sidebar.resolveWebviewView(warned.view);
+        await api.providers.sidebar.handleMessage({ type: 'ready' });
+        await waitFor(() => warned.states.at(-1)?.catalogIncomplete === true);
+        assert.strictEqual(
+          replayed(warned.posted).repos.includes('ghcr.io/grimoire-rs/skills/renamed'),
+          true,
+          'the reloaded list replaced the old one',
+        );
+      } finally {
+        await restoreVersion();
+      }
+    });
+
+    test('a failing page keeps the loaded rows, stops, and a Retry resumes it', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      cannedPage(0, 200);
+      fs.writeFileSync(
+        path.join(stub.dir, 'search@200.json'),
+        JSON.stringify({ error: { code: 'unavailable', exit: 69, message: 'registry down' } }),
+      );
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      const { view, states, posted } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      try {
+        await api.providers.sidebar.handleMessage({ type: 'ready' });
+        await waitFor(() => replayed(posted).paging?.failed === true);
+        const failed = replayed(posted);
+        assert.strictEqual(states.at(-1)?.phase, 'ready', 'Browse does not drop to the error phase');
+        assert.strictEqual(failed.repos.length, 200);
+        assert.strictEqual(failed.paging?.hasMore, true);
+
+        const calls = searchLines().length;
+        await api.providers.sidebar.handleMessage({
+          type: 'retry-load',
+          token: (failed.paging?.token ?? 0) + 1,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.strictEqual(searchLines().length, calls, 'a token naming no live list spawns nothing');
+
+        cannedPage(200, 250);
+        await api.providers.sidebar.handleMessage({
+          type: 'retry-load',
+          token: failed.paging?.token ?? -1,
+        });
+        await waitFor(() => replayed(posted).paging?.hasMore === false);
+        assert.strictEqual(replayed(posted).repos.length, TOTAL);
+        assert.strictEqual(replayed(posted).paging?.failed, undefined);
+      } finally {
+        await restoreVersion();
+      }
+    });
+
+    test('details for a repo outside the loaded pages looks its row up offline', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      const repo = 'ghcr.io/grimoire-rs/skills/ranked-last';
+      cannedPage(0, 200);
+      fs.writeFileSync(
+        path.join(stub.dir, 'search-lookup.json'),
+        JSON.stringify({
+          items: [
+            searchItem(`${repo}-sibling`),
+            { ...searchItem(repo), rating: { up: 9, url: 'https://forge.example/d/9' } },
+          ],
+          total: 2,
+        }),
+      );
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      const { view } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      try {
+        await api.providers.sidebar.refresh();
+        fs.rmSync(stub.argvLog, { force: true });
+        const vm = await api.providers.details.buildVM(repo);
+        const lookup = searchLines().find((l) => l.includes('--limit 10'));
+        assert.ok(lookup, `a lookup ran: ${searchLines().join(' | ')}`);
+        assert.ok(lookup.includes('--offline'), lookup);
+        assert.ok(lookup.includes(`-- ${repo}`), lookup);
+        assert.strictEqual(vm.rating?.up, 9);
+        // Memoized: opening it again does not spawn a second lookup.
+        await api.providers.details.buildVM(repo);
+        assert.strictEqual(searchLines().filter((l) => l.includes('--limit 10')).length, 1);
+      } finally {
+        await restoreVersion();
+      }
+    });
+
+    test('a warm details panel for a repo outside the loaded pages looks its row up and reposts', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      const dir = isolateCache(api);
+      const repo = 'ghcr.io/grimoire-rs/skills/warm-ranked-last';
+      cannedPage(0, 200);
+      fs.writeFileSync(
+        path.join(stub.dir, 'search-lookup.json'),
+        JSON.stringify({
+          items: [{ ...searchItem(repo), rating: { up: 9, url: 'https://forge.example/d/9' } }],
+          total: 1,
+        }),
+      );
+      // Written just now, so the open skips its own revalidate: only the cached
+      // paint can reach the catalog row.
+      await new DetailsCache(dir).save(repo, {
+        version: CACHE_VERSION,
+        repo,
+        artifactDigest: 'sha256:a',
+        companionDigest: null,
+        savedAt: new Date().toISOString(),
+        describe: null,
+        fetch: null,
+        readme: null,
+        logoUri: null,
+        changelog: null,
+        complete: true,
+      });
+      const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
+      const { view } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      try {
+        await api.providers.sidebar.refresh();
+        fs.rmSync(stub.argvLog, { force: true });
+        const { panel, posts } = fakePanel();
+        await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+        assert.ok(
+          searchLines().some((l) => l.includes('--limit 10') && l.includes(`-- ${repo}`)),
+          `the cached paint looked the row up: ${searchLines().join(' | ')}`,
+        );
+        assert.strictEqual(posts.at(-1)?.rating?.up, 9, 'the repost carries the rating');
+      } finally {
+        await restoreVersion();
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test('an installed artifact outside the loaded pages is enriched after the first paint', async function () {
+      this.timeout(30000);
+      const api = await activateExtension();
+      const repo = 'ghcr.io/grimoire-rs/skills/installed-elsewhere';
+      cannedPage(0, 200);
+      cannedPage(200, 250);
+      fs.writeFileSync(
+        path.join(stub.dir, 'search-lookup.json'),
+        JSON.stringify({
+          items: [{ ...searchItem(repo), description: 'resolved by the lookup' }],
+          total: 1,
+        }),
+      );
+      canned(stub, 'context', contextDoc({ version: PAGED_GRIM, config_exists: true }));
+      canned(stub, 'status', {
+        items: [statusDoc({ name: 'installed-elsewhere', pinned: `${repo}:1.0.0` })],
+      });
+      await api.refresh();
+      const { view, posted } = fakeView();
+      api.providers.sidebar.resolveWebviewView(view);
+      const resolved = (c: { repo: string; description?: string | null }): boolean =>
+        c.repo === repo && c.description === 'resolved by the lookup';
+      try {
+        await api.providers.sidebar.handleMessage({ type: 'ready' });
+        await waitFor(() =>
+          posted.some((m) =>
+            m.type === 'state'
+              ? m.state.installedItems.some(resolved)
+              : m.type === 'append' && (m.installed ?? []).some(resolved),
+          ),
+        );
+      } finally {
+        canned(stub, 'status', { items: [] });
+        canned(stub, 'context', contextDoc());
+        await api.refresh();
+      }
+    });
   });
 });
 

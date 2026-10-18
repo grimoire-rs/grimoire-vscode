@@ -1,7 +1,13 @@
 import * as assert from 'assert';
-import { installedScope, sidebarState } from './fixtures/vms';
+import { card as cardFixture, installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
+  browseSortRequest,
+  formatCount,
+  appendedFrom,
+  applyAppend,
+  pagingSummary,
+  resultIsPartial,
   cardVersion,
   addRegistryPrompt,
   artifactName,
@@ -78,7 +84,15 @@ import {
   type WireSearchItem,
   type WireStatusItem,
 } from '../webview/model';
-import type { CardVM, InstallVM, RegistryVM, RowState, ScopesVM } from '../webview/protocol';
+import type {
+  CardVM,
+  HostToSidebar,
+  InstallVM,
+  RegistryVM,
+  RowState,
+  ScopesVM,
+  SidebarState,
+} from '../webview/protocol';
 
 /** The index two configured entries in these tests both browse. */
 const INDEX = 'https://index.grimoire.rs';
@@ -234,8 +248,14 @@ suite('card building', () => {
   test('a repo listed by two registries yields one card per registry', () => {
     const cards = buildCards(
       [
-        searchItem({ description: 'from the full entry', source: { alias: 'full', locator: INDEX } }),
-        searchItem({ description: 'from the filtered entry', source: { alias: 'mine', locator: INDEX } }),
+        searchItem({
+          description: 'from the full entry',
+          source: { alias: 'full', locator: INDEX },
+        }),
+        searchItem({
+          description: 'from the filtered entry',
+          source: { alias: 'mine', locator: INDEX },
+        }),
       ],
       [],
     );
@@ -732,7 +752,9 @@ suite('filters', () => {
     replacedBy: null,
     installs: [],
     updated,
-    ...(up === null ? {} : { rating: { up, url: 'https://example.test/1', vote: 'unknown' as const } }),
+    ...(up === null
+      ? {}
+      : { rating: { up, url: 'https://example.test/1', vote: 'unknown' as const } }),
     ...(pulls === null ? {} : { downloads: { total: pulls, asOf: null, versions: [] } }),
   });
 
@@ -804,11 +826,16 @@ suite('filters', () => {
   test('every mode is total — no pair compares equal', () => {
     // Two rows identical in every ranked key: the ref tiebreak has to decide,
     // or the order reshuffles on repaint.
-    const rows = [sortCard('same', '2026-01-01T00:00:00Z', 3), sortCard('same', '2026-01-01T00:00:00Z', 3)];
+    const rows = [
+      sortCard('same', '2026-01-01T00:00:00Z', 3),
+      sortCard('same', '2026-01-01T00:00:00Z', 3),
+    ];
     rows[1]!.repo = 'ghcr.io/other/skills/same';
     for (const mode of ['name', 'updated', 'rating', 'downloads'] as const) {
       const forward = sortCards(rows, mode, NATURAL[mode]).map((c) => c.repo);
-      const back = sortCards(rows, mode, NATURAL[mode] === 'asc' ? 'desc' : 'asc').map((c) => c.repo);
+      const back = sortCards(rows, mode, NATURAL[mode] === 'asc' ? 'desc' : 'asc').map(
+        (c) => c.repo,
+      );
       assert.deepStrictEqual(back, [...forward].reverse(), `${mode} reverses whole`);
     }
   });
@@ -1038,7 +1065,7 @@ suite('details view model', () => {
     support: { issues: null, chat: null, contact: null, security: null },
   };
 
-  test('carries grim\'s curated annotations onto the VM', () => {
+  test("carries grim's curated annotations onto the VM", () => {
     const vm = buildDetailsVM({
       repo: 'localhost:5050/grimoire/skills/support-desk',
       searchItem: null,
@@ -1053,7 +1080,10 @@ suite('details view model', () => {
     // grim's `url` is the project page; `repository` stays the source forge.
     assert.strictEqual(vm.homepage, 'https://grimoire.rs');
     assert.strictEqual(vm.sourceRepository, 'https://github.com/grimoire-rs/grimoire');
-    assert.strictEqual(vm.documentation, 'https://grimoire.rs/publishing.html#metadata-descriptive');
+    assert.strictEqual(
+      vm.documentation,
+      'https://grimoire.rs/publishing.html#metadata-descriptive',
+    );
     assert.strictEqual(vm.compatibility, 'claude>=2');
     assert.deepStrictEqual(vm.support, {
       issues: 'https://github.com/grimoire-rs/grimoire/issues',
@@ -1442,7 +1472,10 @@ suite('cardVersion (the browse chip follows what is installed)', () => {
   });
 
   test('not installed → the catalog latest, null when unknown', () => {
-    assert.strictEqual(cardVersion(buildCards([searchItem({ version: '1.5.0' })], [])[0]!), '1.5.0');
+    assert.strictEqual(
+      cardVersion(buildCards([searchItem({ version: '1.5.0' })], [])[0]!),
+      '1.5.0',
+    );
     assert.strictEqual(cardVersion(buildCards([searchItem()], [])[0]!), null);
   });
 });
@@ -1881,8 +1914,9 @@ suite('add-registry deep link', () => {
     // The caller prefixes every reason with "add-registry link ignored" — a
     // link honoured with the derived default must produce no such line.
     const reasons: string[] = [];
-    const link = parseAddRegistryLink('index=https://idx.example.com&alias=ok&scope=nonsense', (r) =>
-      reasons.push(r),
+    const link = parseAddRegistryLink(
+      'index=https://idx.example.com&alias=ok&scope=nonsense',
+      (r) => reasons.push(r),
     );
     assert.ok(link);
     assert.deepStrictEqual(reasons, []);
@@ -2557,7 +2591,9 @@ suite('buildTree', () => {
       const nodes = buildTree(filterCards(treeCards(), filter), { registries: RIG });
       const roots = nodes.map((n) => n.label);
       assert.deepStrictEqual(roots, ['primary', 'acme'], 'group order is the strategy-free one');
-      return nodes[0]?.children.find((n) => n.label === 'skills')?.children.map((n) => n.label) ?? [];
+      return (
+        nodes[0]?.children.find((n) => n.label === 'skills')?.children.map((n) => n.label) ?? []
+      );
     };
     assert.deepStrictEqual(skills({ ...DEFAULT_FILTER, sort: 'name', dir: 'asc' }), [
       'ai-config',
@@ -2641,7 +2677,10 @@ suite('buildTree', () => {
     const cards = buildCards(
       [
         searchItem({ repo, source: { alias: 'full', locator: INDEX } }),
-        searchItem({ repo: 'ghcr.io/grimoire-rs/skills/grim-usage', source: { alias: 'full', locator: INDEX } }),
+        searchItem({
+          repo: 'ghcr.io/grimoire-rs/skills/grim-usage',
+          source: { alias: 'full', locator: INDEX },
+        }),
         searchItem({ repo, source: { alias: 'mine', locator: INDEX } }),
       ],
       [],
@@ -2877,7 +2916,10 @@ suite('support channels', () => {
       contactUrl('ai-platform@example.invalid'),
       'mailto:ai-platform@example.invalid',
     );
-    assert.strictEqual(contactUrl('  ai-platform@example.invalid  '), 'mailto:ai-platform@example.invalid');
+    assert.strictEqual(
+      contactUrl('  ai-platform@example.invalid  '),
+      'mailto:ai-platform@example.invalid',
+    );
   });
 
   test('contactUrl keeps an already-schemed value verbatim', () => {
@@ -2926,5 +2968,162 @@ suite('support channels', () => {
     ]) {
       assert.ok(!isOpenableUrl(url), `must refuse ${url}`);
     }
+  });
+});
+
+suite('paged Browse', () => {
+  const partial = {
+    token: 1,
+    loaded: 200,
+    total: 12_000,
+    lowerBound: false,
+    hasMore: true,
+  };
+
+  test('pagingSummary stays null when the result is paging-free or complete', () => {
+    assert.strictEqual(pagingSummary(undefined, 5, 2), null);
+    const complete = { ...partial, loaded: 40, total: 40, hasMore: false };
+    assert.strictEqual(pagingSummary(complete, 40, 2), null);
+    assert.strictEqual(
+      pagingSummary({ ...complete, loaded: 39 }, 39, 2),
+      null,
+      'rows dropped as duplicates are not a partial result',
+    );
+  });
+
+  test('pagingSummary reports the loading progress', () => {
+    assert.strictEqual(pagingSummary(partial, 200, 2), 'Loading 200 of 12,000…');
+    assert.strictEqual(
+      pagingSummary({ ...partial, loaded: 1_200 }, 1_200, 1),
+      'Loading 1,200 of 12,000…',
+    );
+  });
+
+  test('pagingSummary marks a lower bound with a plus', () => {
+    assert.strictEqual(
+      pagingSummary({ ...partial, lowerBound: true }, 200, 2),
+      'Loading 200 of 12,000+…',
+    );
+    const capped = { ...partial, loaded: 500, total: 500, hasMore: false, lowerBound: true };
+    assert.strictEqual(pagingSummary(capped, 500, 1), 'Showing 500 of 500+ in 1 registry');
+    assert.strictEqual(pagingSummary(capped, 500, 2), 'Showing 500 of 500+ in 2 registries');
+  });
+
+  test('pagingSummary names the filter when chips narrow the loaded rows', () => {
+    assert.strictEqual(pagingSummary(partial, 12, 2), '12 shown · Loading 200 of 12,000…');
+    const capped = { ...partial, lowerBound: true };
+    assert.strictEqual(pagingSummary(capped, 0, 2), '0 shown · Loading 200 of 12,000+…');
+    const doneCapped = { ...capped, hasMore: false, loaded: 500, total: 500 };
+    assert.strictEqual(pagingSummary(doneCapped, 12, 2), '12 of 500 loaded · 500+ total');
+  });
+
+  test('pagingSummary says where a failed load stopped', () => {
+    const failed = { ...partial, loaded: 3_200, total: 9_800, failed: true as const };
+    assert.strictEqual(pagingSummary(failed, 3_200, 2), 'Stopped at 3,200 of 9,800.');
+    assert.strictEqual(pagingSummary(failed, 40, 2), '40 shown · Stopped at 3,200 of 9,800.');
+  });
+
+  test('formatCount groups thousands the same way everywhere', () => {
+    assert.strictEqual(formatCount(12_000), '12,000');
+    assert.strictEqual(formatCount(7), '7');
+  });
+
+  test('browseSortRequest pins the direction while pages remain', () => {
+    const reversed = { sort: 'rating' as const, dir: 'asc' as const };
+    assert.deepStrictEqual(browseSortRequest(reversed, partial), {
+      sort: 'rating',
+      dir: 'desc',
+      dirDisabled: true,
+    });
+    assert.deepStrictEqual(browseSortRequest(reversed, { hasMore: false }), {
+      sort: 'rating',
+      dir: 'asc',
+      dirDisabled: false,
+    });
+    assert.deepStrictEqual(browseSortRequest(reversed, undefined), {
+      sort: 'rating',
+      dir: 'asc',
+      dirDisabled: false,
+    });
+    assert.strictEqual(
+      browseSortRequest({ sort: 'relevance', dir: 'desc' }, partial).dir,
+      'asc',
+      'relevance is grim order',
+    );
+  });
+
+  test('a result is partial exactly while pages remain', () => {
+    const failedPaging = { ...partial, failed: true as const };
+    assert.strictEqual(resultIsPartial(partial), true);
+    assert.strictEqual(resultIsPartial(failedPaging), true);
+    assert.strictEqual(resultIsPartial({ ...partial, hasMore: false }), false);
+    assert.strictEqual(resultIsPartial(undefined), false);
+  });
+
+  suite('applyAppend', () => {
+    const card = (repo: string): CardVM => cardFixture({ repo });
+    const base = (): SidebarState =>
+      sidebarState({ phase: 'ready', items: [card('a'), card('b')], paging: partial });
+    const append = (
+      overrides: Partial<Extract<HostToSidebar, { type: 'append' }>> = {},
+    ): Extract<HostToSidebar, { type: 'append' }> => ({
+      type: 'append',
+      token: 1,
+      offset: 2,
+      cards: [card('c')],
+      paging: { ...partial, loaded: 3 },
+      ...overrides,
+    });
+
+    test('joins the new cards to the end and replaces the paging', () => {
+      const state = base();
+      const next = applyAppend(state, append());
+      assert.deepStrictEqual(
+        next?.items.map((c) => c.repo),
+        ['a', 'b', 'c'],
+      );
+      assert.strictEqual(next?.paging?.loaded, 3);
+      assert.strictEqual(state.items.length, 2, 'the painted state is not mutated');
+    });
+
+    test('replaces the installed set only when the message carries one', () => {
+      const installed = [card('i')];
+      assert.strictEqual(applyAppend(base(), append())?.installedItems.length, 0);
+      assert.deepStrictEqual(applyAppend(base(), append({ installed }))?.installedItems, installed);
+    });
+
+    test('carries the incomplete-results mark a page raised', () => {
+      assert.strictEqual(applyAppend(base(), append())?.catalogIncomplete, undefined);
+      assert.strictEqual(
+        applyAppend(base(), append({ catalogIncomplete: true }))?.catalogIncomplete,
+        true,
+      );
+    });
+
+    test('drops a message for another list, another length or a state that cannot take it', () => {
+      assert.strictEqual(applyAppend(base(), append({ token: 2 })), null, 'wrong token');
+      assert.strictEqual(applyAppend(base(), append({ offset: 1 })), null, 'wrong offset');
+      assert.strictEqual(applyAppend(base(), append({ offset: 3 })), null, 'wrong offset');
+      assert.strictEqual(applyAppend({ ...base(), phase: 'loading' }, append()), null);
+      assert.strictEqual(applyAppend(sidebarState({ phase: 'ready', items: [] }), append()), null);
+      assert.strictEqual(applyAppend(null, append()), null);
+    });
+  });
+
+  suite('appendedFrom', () => {
+    test('an extended list resumes observing at the first new row', () => {
+      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'b', 'c', 'd']), 2);
+      assert.strictEqual(appendedFrom([], ['a']), 0);
+    });
+
+    test('an unchanged list has nothing new to observe', () => {
+      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'b']), 2);
+    });
+
+    test('a list that does not extend the observed one re-arms from scratch', () => {
+      assert.strictEqual(appendedFrom(['a', 'b'], ['b', 'a']), null, 'reordered');
+      assert.strictEqual(appendedFrom(['a', 'b'], ['a']), null, 'shrunk');
+      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'x', 'b']), null, 'row inserted mid-list');
+    });
   });
 });

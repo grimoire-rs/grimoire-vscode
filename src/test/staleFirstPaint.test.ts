@@ -209,6 +209,9 @@ function makeSidebar(
       }
       return { items: [searchItem()], syncedAt: Date.now() };
     },
+    knownItems: () => [searchItem()],
+    row: () => null,
+    looked: () => true,
   } as unknown as CatalogService;
   const delegate: SidebarDelegate = {
     openDetails: () => {},

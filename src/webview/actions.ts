@@ -50,6 +50,8 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   'toggle-tags': false,
   'set-tab': false,
   refresh: false,
+  // Resumes the background page load after a failure; reads local data only.
+  'retry-load': false,
   'clear-search': false,
   'search-tag': false,
   'show-grim-info': false,

@@ -471,6 +471,39 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
   const treeView = { ...compactView, mode: 'tree' as const };
   const treeIds = new Set(collectNodeIds(buildTree(viewCards, { registries: viewRegistries })));
   add('results-browse-compact', r.renderSidebarResults(viewState, DEFAULT_FILTER, compactView));
+  // --- paged Browse: a partial result with a next page, and a capped one ---
+  const pagedState = (paging: NonNullable<SidebarState['paging']>): SidebarState => ({
+    ...viewState,
+    paging,
+  });
+  add(
+    'browse-paged-partial',
+    r.renderSidebarResults(
+      pagedState({
+        token: 1,
+        loaded: viewCards.length,
+        total: 12_000,
+        lowerBound: false,
+        hasMore: true,
+      }),
+      DEFAULT_FILTER,
+      compactView,
+    ),
+  );
+  add(
+    'browse-paged-capped',
+    r.renderSidebarResults(
+      pagedState({
+        token: 1,
+        loaded: viewCards.length,
+        total: viewCards.length,
+        lowerBound: true,
+        hasMore: false,
+      }),
+      DEFAULT_FILTER,
+      compactView,
+    ),
+  );
   add(
     'results-browse-grouped-collapsed',
     r.renderSidebarResults(viewState, DEFAULT_FILTER, groupedView),

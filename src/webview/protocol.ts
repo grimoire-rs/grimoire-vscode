@@ -2,7 +2,38 @@
 // dependency-free (no vscode / DOM imports) so both sides and the tests can
 // import it.
 
+import type { SortMode } from './model';
+
 export type Scope = 'project' | 'global';
+
+/** Rows the FIRST page asks for, so it paints fast. Matches the sidebar's
+ *  persisted card cap, so restoring the last round needs no second page. */
+export const SEARCH_PAGE_SIZE = 200;
+
+/** Rows each background page after the first asks for (~2 MB of grim output).
+ *  Every page spawns grim, which re-ranks the cached catalog whatever the page
+ *  size, so fewer, larger pages finish sooner; much past this one JSON.parse
+ *  stalls the shared extension host. */
+export const BACKGROUND_PAGE_SIZE = 1_000;
+
+/** Where a paged Browse list stands. `token` identifies the search that owns
+ *  the list, so an append or retry aimed at a replaced list is dropped. */
+export interface PagingState {
+  token: number;
+  loaded: number;
+  /** Every match grim counted. A lower bound when {@link lowerBound}. */
+  total: number;
+  /** `total` undercounts: the catalog is still being built, or a registry
+   *  listing could not be read to the end. */
+  lowerBound: boolean;
+  /** Pages remain: the host is still loading them, or stopped on {@link failed}. */
+  hasMore: boolean;
+  /** A page failed and the host stopped loading; the rows already loaded stay. */
+  failed?: true;
+  /** The sort grim was asked for; the webview re-searches when its own Browse
+   *  sort differs while pages remain. Absent means grim's relevance order. */
+  sort?: SortMode;
+}
 
 export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle';
 
@@ -244,11 +275,16 @@ export interface SidebarState {
    *  browsing works, it just is not the whole catalog. Only presence matters —
    *  grim's text goes to the output channel, which the footer chip points at. */
   catalogIncomplete?: boolean;
+  /** Present only while Browse is paged (grim 0.15+); absent means the whole
+   *  result is loaded. */
+  paging?: PagingState;
 }
 
 export type SidebarToHost =
   | { type: 'ready' }
-  | { type: 'search'; query: string }
+  | { type: 'search'; query: string; sort?: SortMode }
+  /** Resume loading the Browse list owned by `token` after a failed page. */
+  | { type: 'retry-load'; token: number }
   | { type: 'refresh' }
   | { type: 'install'; ref: string; scope: Scope }
   | { type: 'uninstall'; kind: string; name: string; scope: Scope }
@@ -296,6 +332,21 @@ export type SidebarToHost =
 
 export type HostToSidebar =
   | { type: 'state'; state: SidebarState }
+  /** The next rows of the Browse list `token` names, for a webview that already
+   *  holds `offset` of them. Only new cards ride it, so a 30,000-row list costs
+   *  one post per row instead of the whole list per page. `installed` is
+   *  present only when the Installed set changed. A webview whose list is not
+   *  exactly `offset` rows long ignores it; the next full `state` heals. */
+  | {
+      type: 'append';
+      token: number;
+      offset: number;
+      cards: CardVM[];
+      installed?: CardVM[];
+      paging: PagingState;
+      /** Mirrors {@link SidebarState.catalogIncomplete}, which a page's stderr can raise. */
+      catalogIncomplete?: true;
+    }
   /** A mutating grim run started (title) or the last one settled (null) —
    *  ANYWHERE in the extension, not just from this view. Every action control
    *  goes inert meanwhile: grim serializes on its own lock, so a second install
