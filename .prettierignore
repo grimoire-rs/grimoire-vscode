@@ -7,3 +7,7 @@ src/test/fixtures/goldens/
 
 # Derived from Conventional Commit subjects through cliff.toml (git-cliff).
 CHANGELOG.md
+
+# Recorded grim stdout replayed by versionMix.test.ts and catalog tests; bytes are
+# the evidence, so they are never reformatted.
+src/test/fixtures/grim/

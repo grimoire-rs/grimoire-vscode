@@ -446,12 +446,11 @@ export type GrimResult<T> =
       /** grim's stderr on a SUCCESSFUL run, trimmed, when it wrote any.
        *
        *  grim degrades a source it cannot read to a tracing WARN and still
-       *  exits 0 — `grim search` against a catalog file written by a newer grim
-       *  drops that whole registry from `items` and says so on stderr alone. A
-       *  consumer reading only stdout cannot tell that from "no results", which
-       *  is exactly how an older grim produced an empty (or silently truncated)
-       *  browse list. Presence is the whole signal; nothing here parses the
-       *  text. Absent when stderr was empty. */
+       *  exits 0. A grim whose search envelope reports per-source `ok` and
+       *  `capped` says which source on stdout, and stderr is then just a log
+       *  (see {@link incompleteSources}); an older one leaves a dropped
+       *  registry or the 500-repository cap visible on stderr alone. Nothing
+       *  here parses the text. Absent when stderr was empty. */
       warnings?: string;
     }
   | { ok: false; kind: 'not-found' }
@@ -636,6 +635,58 @@ export function refusedNames(value: unknown): string[] {
     }
   }
   return names;
+}
+
+/** The sources a `grim search` answer is known to be missing rows from, one
+ *  line each, `[]` when it is complete.
+ *
+ *  grim ≥ 0.14.1 lists `sources: [{alias, locator, ok, error}]` in the
+ *  envelope, and 0.15.0 adds `capped`: a source with `ok === false` did not
+ *  load, a `capped === true` one stopped listing early. Once sources carry
+ *  `capped`, stderr is only a log, so it is ignored. A grim whose sources lack
+ *  it (0.14.1 to 0.14.3) reports the 500-repository cap on stderr alone, and
+ *  one without `sources` (before 0.14.1) reports a dropped registry there too:
+ *  for those, stderr is a line as well.
+ *  `ignoreCapped` is for a read that raced a build in progress, where a capped
+ *  checkpoint is the build's, not the source's. Strict `=== false` / `=== true`
+ *  throughout: an absent or odd field says nothing. Pure; exported for tests. */
+export function incompleteSources(
+  env: unknown,
+  warnings: string | undefined,
+  options: { ignoreCapped?: boolean } = {},
+): string[] {
+  const sources =
+    typeof env === 'object' && env !== null
+      ? (env as Record<string, unknown>)['sources']
+      : undefined;
+  const stderr = warnings !== undefined && warnings !== '' ? [warnings] : [];
+  if (!Array.isArray(sources)) {
+    return stderr;
+  }
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value !== '' ? value : undefined;
+  const lines: string[] = [];
+  let listed = 0;
+  let reportsCapped = false;
+  for (const entry of sources) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const source = entry as Record<string, unknown>;
+    listed += 1;
+    reportsCapped ||= 'capped' in source;
+    const why =
+      source['ok'] === false
+        ? (text(source['error']) ?? 'did not load')
+        : source['capped'] === true && options.ignoreCapped !== true
+          ? 'listing incomplete'
+          : undefined;
+    if (why !== undefined) {
+      lines.push(`${text(source['alias']) ?? text(source['locator']) ?? 'unnamed source'}: ${why}`);
+    }
+  }
+  // grim-polyfill<0.15.0: grim 0.14.1 to 0.14.3 list sources without `capped` and report the 500-repository cap on stderr alone
+  return listed > 0 && !reportsCapped ? [...lines, ...stderr] : lines;
 }
 
 /** Adds flags to an argv the builders below may have ended with a `--`

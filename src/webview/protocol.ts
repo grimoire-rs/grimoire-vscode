@@ -267,13 +267,14 @@ export interface SidebarState {
    *  preferred (resolveExecutable prefers it), so the download changes nothing
    *  and the banner offers "Show grim Info" instead. Absent when not known. */
   installStateUnknownOrigin?: GrimOrigin;
-  /** Set when the catalog search SUCCEEDED but grim warned on stderr — it
-   *  dropped a source it could not read and still exited 0 with a truncated
-   *  (possibly empty) `items`. The results on screen are therefore incomplete
-   *  by an unknown amount. Distinct from {@link error} (no results at all) and
-   *  from {@link installStateUnknown} (results fine, install state is not):
-   *  browsing works, it just is not the whole catalog. Only presence matters —
-   *  grim's text goes to the output channel, which the footer chip points at. */
+  /** Set when the catalog search SUCCEEDED but a registry could not be read in
+   *  full — grim reports a source that did not load, or one whose listing
+   *  stopped early, and still exits 0 with a truncated (possibly empty)
+   *  `items`. The results on screen are therefore incomplete by an unknown
+   *  amount. Distinct from {@link error} (no results at all) and from
+   *  {@link installStateUnknown} (results fine, install state is not): browsing
+   *  works, it just is not the whole catalog. Only presence matters — the
+   *  source lines go to the output channel, which the footer chip points at. */
   catalogIncomplete?: boolean;
   /** Present only while Browse is paged (grim 0.15+); absent means the whole
    *  result is loaded. */
@@ -325,9 +326,9 @@ export type SidebarToHost =
    *  grim, or a non-too-old failure). */
   | { type: 'showGrimInfo' }
   /** Footer "Incomplete results" — opens the Grimoire output channel, where the
-   *  warning grim wrote to stderr while still exiting 0 was logged. That text is
-   *  the only record of WHICH source was dropped, so the chip points at it
-   *  rather than trying to restate it in the footer. */
+   *  sources that could not be read in full were logged. That text is the only
+   *  record of WHICH source it was, so the chip points at it rather than trying
+   *  to restate it in the footer. */
   | { type: 'showOutput' };
 
 export type HostToSidebar =
@@ -344,8 +345,9 @@ export type HostToSidebar =
       cards: CardVM[];
       installed?: CardVM[];
       paging: PagingState;
-      /** Mirrors {@link SidebarState.catalogIncomplete}, which a page's stderr can raise. */
-      catalogIncomplete?: true;
+      /** The verdict after this page, for {@link SidebarState.catalogIncomplete}:
+       *  `true` raises the mark, `false` takes it down, absent leaves it. */
+      catalogIncomplete?: boolean;
     }
   /** A mutating grim run started (title) or the last one settled (null) —
    *  ANYWHERE in the extension, not just from this view. Every action control

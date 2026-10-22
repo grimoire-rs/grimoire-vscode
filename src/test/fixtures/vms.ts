@@ -417,6 +417,12 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     'footer-ready',
     r.renderSidebarFooter(sidebarState({ items: buildCards([searchItem()], []) })),
   );
+  add(
+    'footer-incomplete',
+    r.renderSidebarFooter(
+      sidebarState({ items: buildCards([searchItem()], []), catalogIncomplete: true }),
+    ),
+  );
   add('footer-error', r.renderSidebarFooter(sidebarState({ phase: 'error', error: 'boom' })));
   add('footer-loading-empty', r.renderSidebarFooter(sidebarState({ phase: 'loading' })));
   add('refreshing-footer-with-host', r.renderRefreshingFooter('ghcr.io'));

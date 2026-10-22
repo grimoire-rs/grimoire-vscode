@@ -6,9 +6,9 @@
 import * as assert from 'assert';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import type { CatalogService, CatalogState, LoadResult } from '../catalog';
+import { CatalogService, type CatalogState, type LoadResult } from '../catalog';
 import type { CachedCardMeta } from '../detailsCache';
-import type { ContextInfo, SearchItem } from '../grim';
+import type { ContextInfo, GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
 import type { HostToSidebar, PagingState, SidebarState } from '../webview/protocol';
@@ -81,8 +81,10 @@ interface Controls {
   /** The list completes right after a search took its snapshot, as a page that
    *  was already in flight does when it lands mid-refresh. */
   landAfterSnapshot: boolean;
-  /** The search reports a partial catalog (stderr warnings). */
+  /** The search reports a partial catalog (a source that did not load). */
   warn: boolean;
+  /** The incomplete lines the nth `loadNext` call (1-based) reports, if any. */
+  pageIncomplete: ((call: number) => string[] | undefined) | undefined;
   loadNextCalls: number;
   inFlight: number;
   maxInFlight: number;
@@ -103,6 +105,7 @@ function pagedCatalog(
     reload: false,
     landAfterSnapshot: false,
     warn: false,
+    pageIncomplete: undefined,
     loadNextCalls: 0,
     inFlight: 0,
     maxInFlight: 0,
@@ -111,13 +114,16 @@ function pagedCatalog(
     paged
       ? { token, loaded: items.length, total, lowerBound: false, hasMore: items.length < total }
       : undefined;
+  // The real catalog joins the loader's lines into every page's verdict, so a
+  // source that stays down is reported by each page, not by the first alone.
+  const warned = ['down: registry unreachable'];
   const state = (): CatalogState => {
     const current = paging();
     return {
       items: items.slice(),
       syncedAt: 1,
       ...(current ? { paging: current } : {}),
-      ...(controls.warn ? { warnings: 'registry unreachable' } : {}),
+      ...(controls.warn ? { incomplete: warned } : {}),
     };
   };
   const catalog = {
@@ -154,17 +160,20 @@ function pagedCatalog(
           controls.failWith = {};
           return { error };
         }
+        const incomplete =
+          controls.pageIncomplete?.(controls.loadNextCalls) ?? (controls.warn ? warned : undefined);
+        const verdict = incomplete ? { incomplete } : {};
         if (shadow) {
           shadow.items = [...shadow.items, row(shadow.items.length)];
           if (shadow.items.length < total) {
-            return {};
+            return verdict;
           }
           ({ items, token } = { items: shadow.items, token: shadow.token });
           shadow = null;
-          return { swapped: true };
+          return { swapped: true, ...verdict };
         }
         items = [...items, row(items.length)];
-        return {};
+        return verdict;
       } finally {
         controls.inFlight -= 1;
       }
@@ -176,13 +185,70 @@ function pagedCatalog(
   return { catalog, controls };
 }
 
+/** A grim whose loader is held and whose first page lists three rows with one
+ *  source down (the mark), and whose every later page read fails. The real
+ *  catalog over it ends up reconciling the finished list against a grim that
+ *  keeps failing. `cap` bounds the reads: a caller that keeps asking parks on
+ *  the one past it, so a runaway shows as a count instead of hanging the host. */
+function brokenAfterLoader(cap: number): {
+  catalog: CatalogService;
+  reads: () => number;
+  endLoader: () => void;
+} {
+  let reads = 0;
+  let endLoader: () => void = () => {};
+  const down = { alias: 'down', locator: 'x', ok: false, error: 'unreachable', capped: false };
+  const scopes = {
+    projectFolder: () => undefined,
+    grimVersion: async () => '0.15.0',
+    run: <T>(args: string[]): Promise<GrimResult<T>> => {
+      if (args.includes('--limit') && args[args.indexOf('--limit') + 1] === '1') {
+        return new Promise((resolve) => {
+          endLoader = () => resolve({ ok: true, value: { items: [] } } as GrimResult<T>);
+        });
+      }
+      reads += 1;
+      if (reads === 1) {
+        const value: SearchEnvelope = {
+          items: [row(0), row(1), row(2)],
+          total: 3,
+          sources: [down],
+        };
+        return Promise.resolve({ ok: true, value } as GrimResult<T>);
+      }
+      if (reads > cap) {
+        return new Promise(() => {});
+      }
+      return Promise.resolve({
+        ok: false,
+        kind: 'error',
+        code: 'failure',
+        exitCode: 1,
+        message: 'boom',
+      });
+    },
+  } as unknown as ScopeService;
+  return {
+    catalog: new CatalogService(scopes, 1),
+    reads: () => reads,
+    endLoader: () => endLoader(),
+  };
+}
+
 function makeSidebar(
   snapshots: Snapshot[],
-  options: { total?: number; paged?: boolean } = {},
+  options: {
+    total?: number;
+    paged?: boolean;
+    /** The real catalog over a scripted grim, in place of the paging double. */
+    catalog?: CatalogService;
+  } = {},
 ): {
   provider: SidebarProvider;
   posted: HostToSidebar[];
   controls: Controls;
+  /** Every line the provider wrote to its output channel. */
+  lines: string[];
   /** The webview is disposed: VS Code does this to a hidden view. */
   dispose: () => void;
   /** A fresh webview resolves for the same provider. */
@@ -200,7 +266,8 @@ function makeSidebar(
     projectFolder: () => undefined,
     projectSearchableProbe: async () => false,
   } as unknown as ScopeService;
-  const { catalog, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true);
+  const { catalog: double, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true);
+  const catalog = options.catalog ?? double;
   const delegate: SidebarDelegate = {
     openDetails: () => {},
     installGrim: async () => {},
@@ -221,6 +288,7 @@ function makeSidebar(
     },
   } as unknown as vscode.Memento;
   const posted: HostToSidebar[] = [];
+  const lines: string[] = [];
   let onDispose: () => void = () => {};
   const view = {
     viewType: 'grimoire.sidebar',
@@ -251,7 +319,7 @@ function makeSidebar(
     scopes,
     catalog,
     delegate,
-    vscode.window.createOutputChannel('grimoire-paged-test'),
+    { appendLine: (line: string) => lines.push(line) } as unknown as vscode.OutputChannel,
     memento,
   );
   provider.resolveWebviewView(view);
@@ -259,6 +327,7 @@ function makeSidebar(
     provider,
     posted,
     controls,
+    lines,
     dispose: () => onDispose(),
     resolveAgain: () => provider.resolveWebviewView(view),
   };
@@ -300,20 +369,27 @@ async function until(check: () => boolean, what: string): Promise<void> {
 }
 
 /** What a webview would hold after replaying every message in order. */
-function replay(posted: HostToSidebar[]): { repos: string[]; paging: PagingState | undefined } {
+function replay(posted: HostToSidebar[]): {
+  repos: string[];
+  paging: PagingState | undefined;
+  incomplete: boolean;
+} {
   let repos: string[] = [];
   let paging: PagingState | undefined;
+  let incomplete = false;
   for (const message of posted) {
     if (message.type === 'state') {
       repos = message.state.items.map((c) => c.repo);
       paging = message.state.paging;
+      incomplete = message.state.catalogIncomplete === true;
     } else if (message.type === 'append') {
       assert.strictEqual(message.offset, repos.length, 'an append continues exactly the list held');
       repos = repos.concat(message.cards.map((c) => c.repo));
       paging = message.paging;
+      incomplete = message.catalogIncomplete === true;
     }
   }
-  return { repos, paging };
+  return { repos, paging, incomplete };
 }
 
 suite('paged sidebar: background page walker', () => {
@@ -421,6 +497,84 @@ suite('paged sidebar: background page walker', () => {
       sent.every((a) => a.cards.length > 0),
       'no empty append is posted just because the warning is still set',
     );
+  });
+
+  test('a partial catalog is logged once per distinct set, not on every refresh', async () => {
+    const { provider, posted, controls, lines } = makeSidebar([healthy()]);
+    const logged = (): string[] => lines.filter((l) => l.startsWith('sidebar: incomplete results'));
+    controls.warn = true;
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, true);
+    await provider.handleMessage({ type: 'search', query: 'x' });
+    await provider.handleMessage({ type: 'search', query: 'y' });
+    assert.deepStrictEqual(logged(), ['sidebar: incomplete results — down: registry unreachable']);
+    controls.warn = false;
+    await provider.handleMessage({ type: 'search', query: 'z' });
+    await until(() => !replay(posted).incomplete, 'the mark to clear');
+    controls.warn = true; // the same source failing again is a new episode
+    await provider.handleMessage({ type: 'search', query: 'w' });
+    assert.strictEqual(logged().length, 2);
+  });
+
+  test('a later page that reports an incomplete source lights the footer and is logged', async () => {
+    const { provider, posted, controls, lines } = makeSidebar([healthy()]);
+    controls.pageIncomplete = () => ['hub: listing incomplete'];
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, true, 'the appends carry the mark');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('sidebar: incomplete results')),
+      ['sidebar: incomplete results — hub: listing incomplete'],
+      'three pages said it; the log says it once',
+    );
+  });
+
+  test('a page that read a complete catalog takes the mark down', async () => {
+    const { provider, posted, controls } = makeSidebar([healthy()]);
+    controls.pageIncomplete = (call) => (call === 1 ? ['hub: listing incomplete'] : undefined);
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, false);
+    assert.ok(
+      appends(posted).some((a) => a.catalogIncomplete === true),
+      'the first page lit it',
+    );
+  });
+
+  test('a reconcile that fails ends the walk after one read, keeping the rows and the mark', async () => {
+    const grim = brokenAfterLoader(20);
+    const { provider, posted, lines } = makeSidebar([healthy()], { catalog: grim.catalog });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).repos.length === 3, 'the first page');
+    assert.strictEqual(
+      replay(posted).incomplete,
+      true,
+      'precondition: the first page lit the mark',
+    );
+    assert.strictEqual(
+      replay(posted).paging?.hasMore,
+      true,
+      'precondition: the loader keeps it open',
+    );
+    grim.endLoader();
+    await until(() => grim.reads() >= 2, 'the reconcile to read');
+    // A walker that asks again does it without yielding, so a few turns are
+    // enough for it to run into the cap.
+    for (let turn = 0; turn < 5; turn++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.strictEqual(grim.reads(), 2, 'the first page and one failed reconcile, no retry loop');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('sidebar: loading results failed')),
+      ['sidebar: loading results failed: boom'],
+      'the failure is logged once',
+    );
+    const held = replay(posted);
+    assert.strictEqual(held.repos.length, 3, 'the rows loaded stay');
+    assert.strictEqual(held.incomplete, true, 'the failed read cleared nothing');
+    assert.strictEqual(held.paging?.hasMore, false, 'the footer stops waiting');
+    assert.strictEqual(held.paging?.failed, undefined, 'nothing to retry: the list is whole');
   });
 
   test('a failed page keeps the rows, posts paging.failed and stops the walker', async () => {

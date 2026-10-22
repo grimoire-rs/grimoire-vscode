@@ -1021,7 +1021,8 @@ suite('extension integration', () => {
     // (no banner, no version gate) whose catalog cache was written by a newer
     // grim still exits 0 — with the rows from the sources it could read and a
     // WARN naming the ones it dropped. The list looks healthy and is silently
-    // short. stderr is the only evidence, so presence of it is the signal.
+    // short. This envelope names no sources (a grim that predates the per-source
+    // status), so stderr is the only evidence and presence of it is the signal.
     const undo = cannedStderr(
       stub,
       'search',
@@ -1094,6 +1095,36 @@ suite('extension integration', () => {
       undo();
       await api.providers.sidebar.refresh();
       assert.strictEqual(states.at(-1)?.catalogIncomplete, undefined, 'and cleared again');
+    } finally {
+      undo();
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a grim that reports its sources: stderr alone lights nothing, a source that is not ok does', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // `capped` is what marks a grim whose stderr is only a log (0.15.0).
+    const hub = { alias: 'hub', locator: 'http://hub', ok: true, error: null, capped: false };
+    const down = {
+      alias: 'down',
+      locator: 'http://down',
+      ok: false,
+      error: 'index fetch failed',
+      capped: false,
+    };
+    const undo = cannedStderr(stub, 'search', 'DEBUG grim: an unrelated line\n');
+    const items = [searchItem('ghcr.io/grimoire-rs/skills/sourced')];
+    try {
+      canned(stub, 'search', { items, sources: [hub] });
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.phase, 'ready');
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, undefined, 'stderr is not a verdict');
+      canned(stub, 'search', { items, sources: [hub, down] });
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, true, 'a source that did not load');
     } finally {
       undo();
       canned(stub, 'search', { items: [] });
@@ -6252,13 +6283,18 @@ suite('extension integration', () => {
 
     /** One canned page: `count` rows from `offset`, with grim's `total`. The
      *  walker asks for 1000 rows after the first 200, so one file holds the rest. */
-    function cannedPage(offset: number, count: number): void {
+    function cannedPage(offset: number, count: number, sources?: unknown[]): void {
       const items = Array.from({ length: count }, (_, i) =>
         searchItem(`ghcr.io/grimoire-rs/skills/paged-${offset + i}`),
       );
       fs.writeFileSync(
         path.join(stub.dir, `search@${offset}.json`),
-        JSON.stringify({ items, total: TOTAL, truncated: offset + count < TOTAL }),
+        JSON.stringify({
+          items,
+          total: TOTAL,
+          truncated: offset + count < TOTAL,
+          ...(sources ? { sources } : {}),
+        }),
       );
     }
 
@@ -6383,11 +6419,21 @@ suite('extension integration', () => {
       }
     });
 
-    test('stderr on a later page marks the results incomplete; a clean page does not', async function () {
+    test('a later page that reports a source that is not ok marks the results incomplete; stderr alone does not', async function () {
       this.timeout(30000);
       const api = await activateExtension();
-      cannedPage(0, 200);
-      cannedPage(200, 250);
+      const hub = { alias: 'hub', locator: 'http://hub', ok: true, error: null, capped: false };
+      const down = {
+        alias: 'down',
+        locator: 'http://down',
+        ok: false,
+        error: 'boom',
+        capped: false,
+      };
+      cannedPage(0, 200, [hub]);
+      cannedPage(200, 250, [hub]);
+      // grim logs on stderr all the time; once it reports sources that is noise.
+      fs.writeFileSync(path.join(stub.dir, 'search@200.err'), 'DEBUG an unrelated line\n');
       const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
       try {
         const clean = fakeView();
@@ -6395,18 +6441,19 @@ suite('extension integration', () => {
         await api.providers.sidebar.handleMessage({ type: 'ready' });
         await waitFor(() => replayed(clean.posted).paging?.hasMore === false);
         assert.ok(
-          clean.posted.every((m) => m.type !== 'append' || m.catalogIncomplete === undefined),
-          'a clean page 2',
+          clean.posted.every((m) => m.type !== 'append' || m.catalogIncomplete !== true),
+          'a clean page 2, stderr or not',
         );
         assert.strictEqual(clean.states.at(-1)?.catalogIncomplete, undefined);
 
         // A changed head makes the next search reload the list behind the one
-        // on screen; the reload's last page warns and the swap carries the mark.
+        // on screen; the reload's last page reports a dead source and the swap
+        // carries the mark.
         const head = path.join(stub.dir, 'search@0.json');
         const page = JSON.parse(fs.readFileSync(head, 'utf8')) as { items: { repo: string }[] };
         page.items[0] = { ...page.items[0], repo: 'ghcr.io/grimoire-rs/skills/renamed' };
         fs.writeFileSync(head, JSON.stringify({ ...page, total: TOTAL, truncated: true }));
-        fs.writeFileSync(path.join(stub.dir, 'search@200.err'), 'WARN source down\n');
+        cannedPage(200, 250, [hub, down]);
         const warned = fakeView();
         api.providers.sidebar.resolveWebviewView(warned.view);
         await api.providers.sidebar.handleMessage({ type: 'ready' });

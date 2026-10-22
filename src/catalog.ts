@@ -3,6 +3,7 @@
 // for the "Cached catalog · synced Nm ago" footer, and pages a large Browse
 // out of that disk catalog while one background grim run (the loader) builds it.
 import {
+  incompleteSources,
   searchArgs,
   type GrimResult,
   type SearchEnvelope,
@@ -43,12 +44,12 @@ export interface CatalogState {
   syncedAt: number | null;
   error?: string;
   grimMissing?: boolean;
-  /** grim wrote to stderr while still exiting 0 — it dropped a source it could
-   *  not read and reported nothing about it in the envelope. The results here
-   *  are therefore incomplete by an unknown amount, which is a different claim
-   *  from `error` (no results at all) and from a clean empty list. Only its
-   *  presence is used; the text goes to the output channel. */
-  warnings?: string;
+  /** A source grim could not read in full, one line each (see
+   *  incompleteSources). The results here are therefore missing rows by an
+   *  unknown amount, which is a different claim from `error` (no results at
+   *  all) and from a clean empty list. Present only when non-empty; only that
+   *  is used to mark the list, and the lines go to the output channel. */
+  incomplete?: string[];
   /** Absent on the unpaged path (grim before 0.15.0), where `items` is the
    *  whole result. */
   paging?: PagingState;
@@ -58,12 +59,14 @@ export interface LoadResult {
   /** The list this page was for is gone; nothing was appended. */
   superseded?: true;
   error?: string;
-  /** The failed page belonged to a reload the view is not showing, which is now
-   *  dropped; the list on screen is unaffected. */
+  /** The failed read left the list on screen as it is: a page of a reload the
+   *  view is not showing (now dropped), or the re-read that settles a finished
+   *  list (given up on, not retried). */
   shadow?: true;
   /** The last page of a reload landed and it replaced the list on screen. */
   swapped?: true;
-  warnings?: string;
+  /** The state's verdict after this page; see {@link CatalogState.incomplete}. */
+  incomplete?: string[];
 }
 
 /** The paging facts one envelope adds to a list. */
@@ -193,6 +196,10 @@ async function settleOr(p: Promise<unknown>, ms: number): Promise<void> {
 
 const pageOf = (env: SearchEnvelope): SearchItem[] => (Array.isArray(env.items) ? env.items : []);
 
+/** The `incomplete` key, present only when there is a line to carry. */
+const verdictOf = (lines: string[]): { incomplete?: string[] } =>
+  lines.length > 0 ? { incomplete: lines } : {};
+
 export class CatalogService {
   /** The whole result on the unpaged path; a paged list lives in {@link browse}. */
   private items: SearchItem[] = [];
@@ -228,7 +235,10 @@ export class CatalogService {
    *  page and a long deadline; every page is read from disk meanwhile. */
   private readonly loaders = new Map<Scope, Promise<GrimResult<SearchEnvelope>>>();
   /** When each scope's last loader settled, and what it said. */
-  private readonly loaderLast = new Map<Scope, { at: number; error?: string; warnings?: string }>();
+  private readonly loaderLast = new Map<
+    Scope,
+    { at: number; error?: string; incomplete?: string[] }
+  >();
 
   constructor(
     private readonly scopes: ScopeService,
@@ -397,9 +407,11 @@ export class CatalogService {
       // The loader failed and left nothing to show: that is the search's error.
       return { items: this.items, syncedAt: this.syncedAt, error: loaded.error };
     }
-    // The loader's stderr stands for the disk catalog until the next loader runs.
-    const warned = result.warnings ?? loaded?.warnings;
-    const warnings = warned !== undefined ? { warnings: warned } : {};
+    const incomplete = verdictOf(
+      paged
+        ? this.pagedVerdict(scope, result.value, result.warnings)
+        : incompleteSources(result.value, result.warnings),
+    );
     const unsettled = paged && (this.loaders.has(scope) || options.refresh === true);
     const fresh = paged
       ? newBrowse(generation, query, sort, scope, options, page, result.value, unsettled)
@@ -413,7 +425,7 @@ export class CatalogService {
         items: fresh ? fresh.items : page,
         syncedAt: this.syncedAt,
         ...(fresh ? { paging: this.pagingFor(fresh) } : {}),
-        ...warnings,
+        ...incomplete,
       };
     }
     this.items = fresh ? [] : page;
@@ -428,7 +440,17 @@ export class CatalogService {
     }
     this.feed(page);
     this.syncedAt = Date.now();
-    return { ...this.state(), ...warnings };
+    return { ...this.state(), ...incomplete };
+  }
+
+  /** What a paged read says is incomplete: its own sources (capped ignored while
+   *  the loader builds, when the disk it read is a checkpoint) joined with the
+   *  scope's last loader, whose verdict stands for the disk catalog until the
+   *  next one settles — an `--offline` read after a failed refresh reports the
+   *  dead source ok, so only the loader knows. */
+  private pagedVerdict(scope: Scope, env: SearchEnvelope, warnings: string | undefined): string[] {
+    const own = incompleteSources(env, warnings, { ignoreCapped: this.loaders.has(scope) });
+    return [...new Set([...own, ...(this.loaderLast.get(scope)?.incomplete ?? [])])];
   }
 
   /** Starts the scope's loader unless one runs or a recent one succeeded; grim's
@@ -454,9 +476,7 @@ export class CatalogService {
           at: Date.now(),
           ...(!result.ok
             ? { error: result.kind === 'error' ? result.message : 'grim not found' }
-            : result.warnings !== undefined
-              ? { warnings: result.warnings }
-              : {}),
+            : verdictOf(incompleteSources(result.value, result.warnings))),
         });
         return result;
       });
@@ -573,7 +593,7 @@ export class CatalogService {
     b.lowerBound = m.lowerBound;
     b.done = m.done;
     this.feed(page);
-    const warnings = result.warnings !== undefined ? { warnings: result.warnings } : {};
+    const incomplete = verdictOf(this.pagedVerdict(b.scope, result.value, result.warnings));
     if (this.next === b && b.done) {
       // The reload's rows are the catalog now: what remembered rows and lookups
       // held of the list it replaces must not outlive it.
@@ -581,9 +601,9 @@ export class CatalogService {
       this.next = null;
       this.forget();
       this.feed(b.items);
-      return { swapped: true, ...warnings };
+      return { swapped: true, ...incomplete };
     }
-    return warnings;
+    return incomplete;
   }
 
   /** Reads the list again once the loader has ended: rows it added may sit
@@ -597,7 +617,14 @@ export class CatalogService {
       settled: true,
       ...(refresh || reload ? { reload: true as const } : {}),
     });
-    return state.warnings !== undefined ? { warnings: state.warnings } : {};
+    if (state.error !== undefined || state.grimMissing === true) {
+      // Not retried: nothing changed in `b`, so `hasMore` would stay true and
+      // the walker would spawn the failing read again at once, for ever. The
+      // list on screen stands; the next search or refresh reads it afresh.
+      b.unsettled = false;
+      return { error: state.error ?? 'grim not found', shadow: true };
+    }
+    return state.incomplete !== undefined ? { incomplete: state.incomplete } : {};
   }
 
   /** Drops every remembered row and lookup. */

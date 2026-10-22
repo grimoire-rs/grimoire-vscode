@@ -1,0 +1,10 @@
+{
+  "ref": "ghcr.io/acme/skills/pkg-001",
+  "action": "up",
+  "up": 1,
+  "url": "https://github.com/acme/index/discussions/1",
+  "provider": "github",
+  "host": "api.github.com",
+  "host_source": "default",
+  "viewer_up": null
+}

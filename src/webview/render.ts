@@ -621,26 +621,26 @@ function renderFooter(state: SidebarState): TemplateResult {
   if (state.catalogIncomplete !== true) {
     return html`<div class="footer"><span class="codicon codicon-cloud"></span>${body}</div>`;
   }
-  // grim answered the search but warned while doing it: the catalog cache for a
-  // registry could not be read, so it was dropped and the rows above are a
+  // grim answered the search, but a registry could not be read in full: a
+  // source did not load, or its listing stopped early, so the rows above are a
   // subset of the catalog by an unknown amount. Nothing else on screen says so —
-  // the exit code was 0 and the envelope names no failure.
+  // the exit code was 0 and `items` looks like any other list.
   //
   // It takes over the line the footer already has rather than adding one: the
   // cloud IS the catalog-cache status glyph, so a warning in its place says
   // "this cache is not what it should be" without a second row appearing and
   // disappearing under the results. The whole line is the click target (a real
   // button, so Enter and Space work) and carries the explanation on hover; the
-  // output channel it opens is the only place the dropped registry is named.
+  // output channel it opens is the only place the registry is named.
   //
   // It does not blink: {@link SidebarState.catalogIncomplete} is a last-known
   // verdict stamped onto every post, including the `phase:'loading'` one that
-  // opens the next round, and only a search that SUCCEEDS with no warning takes
-  // it down. A refetch in flight is not evidence the registry came back.
+  // opens the next round, and only a search that SUCCEEDS with every source read
+  // in full takes it down. A refetch in flight is not evidence the registry came back.
   return html`<button
   class="footer footer-alert"
   data-action="show-output"
-  title="The catalog cache could not be read for every registry, so these results may be missing artifacts. Click to see which."
+  title="A registry could not be read in full, so these results may be missing artifacts. Click to see which."
 ><span class="codicon codicon-warning"></span>${body}</button>`;
 }
 

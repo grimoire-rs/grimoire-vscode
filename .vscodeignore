@@ -16,6 +16,7 @@ tsconfig*.json
 .prettierrc.json
 .npmrc
 .gitignore
+.gitattributes
 .editorconfig
 
 AGENTS.md

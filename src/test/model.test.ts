@@ -3100,6 +3100,15 @@ suite('paged Browse', () => {
       );
     });
 
+    test('a page that read a complete catalog takes the mark down; one that says nothing leaves it', () => {
+      const flagged = { ...base(), catalogIncomplete: true };
+      assert.strictEqual(
+        applyAppend(flagged, append({ catalogIncomplete: false }))?.catalogIncomplete,
+        undefined,
+      );
+      assert.strictEqual(applyAppend(flagged, append())?.catalogIncomplete, true);
+    });
+
     test('drops a message for another list, another length or a state that cannot take it', () => {
       assert.strictEqual(applyAppend(base(), append({ token: 2 })), null, 'wrong token');
       assert.strictEqual(applyAppend(base(), append({ offset: 1 })), null, 'wrong offset');

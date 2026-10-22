@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "data",
+    "exit": 65,
+    "message": "'ghcr.io/acme/skills/pkg-007' carries no rating; the index it comes from publishes no vote target for it"
+  }
+}

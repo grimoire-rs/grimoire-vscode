@@ -1059,13 +1059,20 @@ export function applyAppend(
   ) {
     return null;
   }
-  return {
+  const next: SidebarState = {
     ...state,
     items: state.items.concat(message.cards),
     paging: message.paging,
     ...(message.installed ? { installedItems: message.installed } : {}),
-    ...(message.catalogIncomplete ? { catalogIncomplete: true } : {}),
   };
+  // The page's verdict replaces the mark both ways; a message that says nothing
+  // leaves it.
+  if (message.catalogIncomplete === true) {
+    next.catalogIncomplete = true;
+  } else if (message.catalogIncomplete === false) {
+    delete next.catalogIncomplete;
+  }
+  return next;
 }
 
 /** Where to resume observing rows after a render: the index of the first row
