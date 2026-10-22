@@ -79,9 +79,9 @@ const MAX_PERSISTED_CARDS = 200;
  *  list is the `visible` report, which supersedes this within a frame or two. */
 const SEED_SWEEP = 24;
 
-/** Sanity ceiling on the webview's viewport report. A tall sidebar of compact
- *  rows plus the observer's 400px margin reports on the order of 100 repos, so
- *  this is far above any real viewport — it exists so a webview that ever posted
+/** Sanity ceiling on the webview's viewport report. The webview reports the
+ *  rows it renders — the viewport plus 400px either side, at most 200 rows — so
+ *  this is far above any real viewport. It exists so a webview that ever posted
  *  a pathological list could not turn it into that many grim spawns, not to
  *  reinstate the fixed top-K the viewport sweep replaced. */
 const MAX_VISIBLE_REPOS = 500;
@@ -1134,33 +1134,41 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.postChunks(round.paging, offset, cards, installed);
   }
 
-  /** Posts `cards` as appends of at most MAX_POST_CARDS, so no message makes the
-   *  webview or this host handle a huge list at once. Every chunk but the last
-   *  claims more is coming, so the webview shows the list as still loading until
-   *  the last one carries the real paging and `installed`. At least one append
-   *  goes out, because a paging or installed change can arrive with no cards. */
+  /** Posts `cards` (and, when given, the Installed set) as appends whose arrays
+   *  hold at most MAX_POST_CARDS rows, so no message makes the webview or this
+   *  host handle a huge list at once. Every chunk carries the real paging, if
+   *  the list has any; all but the last are marked `more`, so the webview paints
+   *  once, on the last. The Installed set rides the last chunks: it replaces the
+   *  set in the first of them and continues it after, `installedFrom` rows in
+   *  when the state already holds the head of it. At least one append goes out,
+   *  because a paging or installed change can arrive with no cards. */
   private postChunks(
-    paging: PagingState,
+    paging: PagingState | undefined,
     offset: number,
     cards: CardVM[],
     installed?: CardVM[],
+    installedFrom = 0,
   ): void {
-    let from = 0;
-    do {
-      const chunk = cards.slice(from, from + MAX_POST_CARDS);
-      const end = from + chunk.length;
-      const last = end >= cards.length;
+    const parts = (rows: number): number => Math.ceil(rows / MAX_POST_CARDS);
+    const installedParts = installed ? Math.max(parts(installed.length), 1) : 0;
+    const total = Math.max(parts(cards.length), installedParts, 1);
+    for (let i = 0; i < total; i++) {
+      const inInstalled = i - (total - installedParts);
+      const rows =
+        installed && inInstalled >= 0
+          ? installed.slice(inInstalled * MAX_POST_CARDS, (inInstalled + 1) * MAX_POST_CARDS)
+          : undefined;
+      const at = installedFrom + inInstalled * MAX_POST_CARDS;
       this.post({
         type: 'append',
-        token: paging.token,
-        offset: offset + from,
-        cards: chunk,
-        ...(last && installed ? { installed } : {}),
-        paging: last ? paging : { ...paging, loaded: offset + end, hasMore: true },
+        offset: offset + Math.min(i * MAX_POST_CARDS, cards.length),
+        cards: cards.slice(i * MAX_POST_CARDS, (i + 1) * MAX_POST_CARDS),
+        ...(paging ? { token: paging.token, paging } : {}),
+        ...(rows ? { installed: rows, ...(at > 0 ? { installedOffset: at } : {}) } : {}),
         catalogIncomplete: this.lastCatalogIncomplete,
+        ...(i < total - 1 ? { more: true as const } : {}),
       });
-      from = end;
-    } while (from < cards.length);
+    }
   }
 
   /** Looks up the catalog row of installed artifacts the loaded pages lack. */
@@ -1368,11 +1376,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }): void {
     const snap = partial.snapshot;
     this.postedCatalogIncomplete = this.lastCatalogIncomplete;
-    // ponytail: without paging (grim < 0.15.0) the list posts whole, since an
-    // append needs a paging token. grim caps each source at 500 rows there, so
-    // the post grows only with the number of configured sources.
-    const overflow = partial.paging && partial.items.length > MAX_POST_CARDS ? partial.paging : null;
-    const paging = overflow ? { ...overflow, loaded: MAX_POST_CARDS, hasMore: true } : partial.paging;
+    // A list past the bound posts as a head state plus appends, whether or not
+    // grim pages it: the bound is about the size of one message.
+    const overflow =
+      partial.items.length > MAX_POST_CARDS || partial.installed.length > MAX_POST_CARDS;
     const projectName = snap?.projectFolder
       ? (snap.projectFolder.split(/[\\/]/).pop() ?? null)
       : null;
@@ -1383,7 +1390,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       mode: 'browse',
       query: this.query,
       items: overflow ? partial.items.slice(0, MAX_POST_CARDS) : partial.items,
-      installedItems: partial.installed,
+      installedItems: overflow ? partial.installed.slice(0, MAX_POST_CARDS) : partial.installed,
       scopes: {
         projectOpen: snap?.projectFolder !== undefined,
         // snap can be undefined here (posted before a snapshot exists, e.g. the
@@ -1396,8 +1403,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.stale === true ? { stale: true } : {}),
-      ...(paging ? { paging } : {}),
+      ...(partial.paging ? { paging: partial.paging } : {}),
       ...(this.lastCatalogIncomplete ? { catalogIncomplete: true } : {}),
+      round: this.refreshGen,
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
       // repost alike. One source, so no post can silently drop it.
@@ -1413,9 +1421,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         : {}),
     };
-    this.post({ type: 'state', state });
+    this.post({ type: 'state', state, ...(overflow ? { more: true as const } : {}) });
     if (overflow) {
-      this.postChunks(overflow, MAX_POST_CARDS, partial.items.slice(MAX_POST_CARDS));
+      const moreInstalled = partial.installed.slice(MAX_POST_CARDS);
+      this.postChunks(
+        partial.paging,
+        state.items.length,
+        partial.items.slice(MAX_POST_CARDS),
+        moreInstalled.length > 0 ? moreInstalled : undefined,
+        state.installedItems.length,
+      );
     }
   }
 }

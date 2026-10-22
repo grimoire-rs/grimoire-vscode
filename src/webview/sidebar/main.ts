@@ -10,42 +10,46 @@ import '@vscode-elements/elements/dist/vscode-scrollable/index.js';
 import { render as litRender, type TemplateResult } from 'lit-html';
 import { isMutating } from '../actions';
 import { armBrokenImages } from '../brokenImage';
-import type {
-  CardVM,
-  HostToSidebar,
-  SidebarState,
-  SidebarToHost,
-  ViewAction,
-} from '../protocol';
+import type { CardVM, HostToSidebar, SidebarState, SidebarToHost, ViewAction } from '../protocol';
 import {
-  appendedFrom,
   CardFilter,
   DEFAULT_FILTER,
   DEFAULT_INSTALLED_FILTER,
   DEFAULT_VIEW,
   NATURAL,
-  applyAppend,
   browseSortRequest,
   buildTree,
   collectNodeIds,
   cycleGroup,
   defaultScope,
   filterCards,
+  foldHostPost,
   footerTickRenders,
   groupCards,
   groupKeyFor,
   installedCards,
   keepPaintedOnLoading,
+  measuredHeights,
+  navTarget,
   resultIsPartial,
+  revealScrollTop,
+  rowIndexByKey,
+  rowOffset,
   toggleKinds,
   topLevelIds,
+  treeKeyAction,
   viewForTab,
+  viewportReport,
+  windowRows,
+  type FlatRow,
   type GroupContext,
   type SidebarTab,
+  type StagedPosts,
   type SortMode,
   type ViewOptions,
 } from '../model';
 import {
+  prepareResults,
   renderCard,
   renderCardContextMenu,
   renderCardMenu,
@@ -56,6 +60,7 @@ import {
   renderSidebarResults,
   renderSidebarSearch,
   renderSidebarTabs,
+  type PreparedResults,
 } from '../render';
 
 interface PersistedState {
@@ -308,31 +313,35 @@ function render(): void {
   litRender(renderSidebarTabs(view), tabsEl);
   syncSearchValue(view);
   litRender(renderSidebarFilters(view, activeFilter()), filtersEl);
-  litRender(renderSidebarResults(view, activeFilter(), viewOptions, expanded), resultsEl);
+  renderResults();
   litRender(renderSidebarFooter(view), footerEl);
-  observeVisibleRows();
   if (focusPending) {
     focusPending = false;
     (document.getElementById('search') as HTMLInputElement | null)?.focus();
   }
 }
 
-/** The results region alone, for a page of cards appended to the painted list.
- *  Unlike render() it leaves an open card menu in place. */
+/** The results region alone: render() calls it, and so does a Browse post that
+ *  needs no full render (an appended page or a replacing state) and the
+ *  Installed name filter. Unlike render() it leaves an open card menu in place.
+ *  Re-derives the rows, so every data, view or filter change comes through
+ *  here; a scroll does not. */
 function renderResults(): void {
   if (!state) {
     return;
   }
-  litRender(
-    renderSidebarResults(
-      viewForTab(state, activeTab, installedQuery),
-      activeFilter(),
-      viewOptions,
-      expanded,
-    ),
-    resultsEl,
-  );
-  observeVisibleRows();
+  const view = viewForTab(state, activeTab, installedQuery);
+  // Heights are per row key, but a key means a different template (and so a
+  // different height) under another tab, density, mode or grouping.
+  const layout = `${activeTab}:${JSON.stringify(viewOptions)}`;
+  if (layout !== heightsLayout) {
+    heightsLayout = layout;
+    rowHeights.clear();
+  }
+  const prepared = prepareResults(view, activeFilter(), viewOptions, expanded);
+  results = { tab: view, prepared, index: rowIndexByKey(prepared.rows) };
+  measureScroll();
+  paintResults();
 }
 
 // Renders the search region on every render() (lit's own dirty-check makes an
@@ -394,15 +403,37 @@ function syncServerSort(): void {
   }
 }
 
-// --- Viewport reporting (drives the host's details prefetch) ---
+// --- Results windowing and viewport reporting ---
 
-// One shared observer over every row/card in the results region. rootMargin
-// reaches a screenful past the viewport in both directions so a logo is already
-// on its way by the time the row is scrolled into place — which only holds once
-// the root is the element that actually clips (see upgradeObserverRoot below).
-const VISIBLE_MARGIN = '400px';
+// Only the rows near the scroll position are in the DOM (render.ts / model.ts
+// windowRows); the rest are spacers sized from the row heights below. The
+// rendered window is also what the host's details prefetch follows.
 const VISIBLE_DEBOUNCE_MS = 300;
-const visibleRepos = new Set<string>();
+/** Render passes after one paint while measured heights keep moving. Heights
+ *  are deterministic per row, so this ends in one or two; the cap only stops a
+ *  pathological layout from looping. */
+const MAX_PAINT_PASSES = 3;
+/** Sub-pixel layout noise below this is not a height change. */
+const HEIGHT_EPSILON = 0.5;
+
+/** What the last data change derived; scroll renders reuse it. */
+let results: { tab: SidebarState; prepared: PreparedResults; index: Map<string, number> } | null =
+  null;
+/** Measured row pitch by row key (see measureRows). */
+const rowHeights = new Map<string, number>();
+let heightsLayout = '';
+let focusKey: string | undefined;
+// The shadow scroller once it exists; before that the list reads as scrolled to
+// the top in a window-high viewport.
+let scroller: HTMLElement | null = null;
+let listScrollTop = 0;
+let viewportPx = window.innerHeight;
+let listWidth = -1;
+let paintedWindow = { start: -1, end: -1, pin: -1 };
+let windowFrame: number | undefined;
+let windowForced = false;
+let visibleRepos: string[] = [];
+let reportedKey: string | null = null;
 let visibleTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Trailing-edge debounce: report the viewport once scrolling SETTLES.
@@ -422,102 +453,221 @@ function scheduleVisiblePost(): void {
   }
   visibleTimer = setTimeout(() => {
     visibleTimer = undefined;
-    // Load-bearing, not a tidy-up: observeVisibleRows() clears the set before
-    // the observer refills it, so a timer that survives a re-arm can fire in
-    // between. Skipping the empty post makes that a no-op instead of a report
-    // that says "nothing is visible" — which the host would consume, spending
-    // the one-shot force flag an explicit refresh had just armed.
-    if (visibleRepos.size > 0) {
-      post({ type: 'visible', repos: [...visibleRepos] });
+    // Load-bearing, not a tidy-up: an empty list is "nothing painted", not "nothing
+    // visible" — posting it would make the host consume the one-shot force flag
+    // an explicit refresh had just armed.
+    if (visibleRepos.length > 0) {
+      post({ type: 'visible', repos: visibleRepos });
     }
   }, VISIBLE_DEBOUNCE_MS);
 }
 
-function makeVisibilityObserver(root: Element): IntersectionObserver {
-  return new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        const repo = (entry.target as HTMLElement).dataset.repo;
-        if (repo === undefined) {
-          continue;
-        }
-        if (entry.isIntersecting) {
-          visibleRepos.add(repo);
-        } else {
-          visibleRepos.delete(repo);
-        }
-      }
-      scheduleVisiblePost();
-    },
-    { root, rootMargin: VISIBLE_MARGIN },
+/** The artifact rows now in the DOM — the window, overscan included — go to the
+ *  host when that set changed. ROW_SELECTOR, not '[data-repo]': the latter also
+ *  matches the install button nested inside a row. */
+function reportVisible(): void {
+  const repos = [
+    ...new Set(
+      [...resultsEl.querySelectorAll<HTMLElement>(ROW_SELECTOR)].flatMap((row) =>
+        row.dataset['repo'] ? [row.dataset['repo']] : [],
+      ),
+    ),
+  ];
+  const { key, report } = viewportReport(reportedKey, repos, state?.round);
+  if (!report) {
+    return;
+  }
+  reportedKey = key;
+  visibleRepos = repos;
+  scheduleVisiblePost();
+}
+
+/** Where the list is scrolled to, relative to its own top: the summary line and
+ *  anything above the list scroll too, so the scroller's scrollTop is not it.
+ *  Every windowed layout (Browse and Installed) renders inside `.cards`. */
+function measureScroll(): void {
+  if (!scroller) {
+    return;
+  }
+  viewportPx = scroller.clientHeight;
+  const cards = resultsEl.querySelector('.cards');
+  listScrollTop = cards
+    ? scroller.getBoundingClientRect().top - cards.getBoundingClientRect().top
+    : 0;
+}
+
+/** Scrolls the shadow scroller and the component's own mirror of it together:
+ *  vscode-scrollable writes `.scrollTop` back from `scrollPos` on its next
+ *  render, and its wheel handler adds to `scrollPos`, so a bare `scrollTop` write
+ *  would be undone by the next wheel tick. */
+function scrollListTo(top: number): void {
+  if (scroller) {
+    scroller.scrollTop = top;
+    scrollEl.scrollPos = scroller.scrollTop;
+  }
+}
+
+function rowElement(key: string): HTMLElement | undefined {
+  return [...resultsEl.querySelectorAll<HTMLElement>('[data-key]')].find(
+    (el) => el.getAttribute('data-key') === key,
   );
 }
 
-// Starts on the host so early renders report at all; upgraded to the shadow
-// scroller the moment it exists (upgradeObserverRoot, wired into the same
-// whenDefined chain the scroll listener uses).
-let visibilityObserver = makeVisibilityObserver(scrollEl);
-// What the current registrations were armed against: the view that drew the
-// rows and the repos observed, in DOM order.
-let observedView = '';
-let observedRepos: string[] = [];
-
-/** Keeps the observer on the rows now in the DOM — but only observes what is new.
- *
- *  The dominant render triggers are the card-meta repost (a landed logo, 20-40
- *  per cold sweep) and a background page append. Re-arming on either cost an
- *  observe() per row plus a full asynchronous re-report, and every report costs
- *  the host one cache read per row.
- *
- *  The view key covers every input that can swap a row's TEMPLATE, because lit
- *  tears the old DOM down and builds new nodes when the template changes at a
- *  stable key: density (card vs compact row), list-vs-tree, grouping, and the
- *  tab. It keys on the whole ViewOptions object rather than naming fields, so it
- *  cannot go stale the next time ViewOptions grows one. Same view and a list
- *  that only grew means lit's keyed repeat() kept the very nodes already
- *  observed — if a list is ever rendered UNKEYED, this assumption dies with it
- *  and the viewport stops reporting. */
-function observeVisibleRows(): void {
-  const rows = [...resultsEl.querySelectorAll<HTMLElement>(ROW_SELECTOR)];
-  const repos = rows.map((r) => r.dataset.repo ?? '');
-  const view = `${activeTab}:${JSON.stringify(viewOptions)}`;
-  const from = view === observedView ? appendedFrom(observedRepos, repos) : null;
-  observedView = view;
-  observedRepos = repos;
-  if (from === null) {
-    visibilityObserver.disconnect();
-    visibleRepos.clear();
+/** Records the vertical pitch of every rendered row — to the next row's top, so
+ *  any gap or margin counts — and reports whether any moved from what the
+ *  windower assumed, plus how far rows wholly above the viewport grew or shrank
+ *  (the scroll correction that keeps what the reader looks at in place). */
+function measureRows(): { changed: boolean; shift: number } {
+  const rows = results?.prepared.rows;
+  const index = results?.index;
+  const els = [...resultsEl.querySelectorAll<HTMLElement>('[data-key]')];
+  // A hidden view lays out as zeros; recording them would poison the heights.
+  if (!results || !rows || !index || els.length === 0 || scroller?.clientHeight === 0) {
+    return { changed: false, shift: 0 };
   }
-  // ROW_SELECTOR, not '[data-repo]': the latter also matches the install button
-  // nested inside a row (7 nodes for 4 rows in the compact golden), and a button
-  // can leave the expanded root rect while its row is still inside it — whose
-  // exit event then deletes a visible row from the report.
-  for (const el of rows.slice(from ?? 0)) {
-    visibilityObserver.observe(el);
-  }
+  const tops = els.map((el) => el.getBoundingClientRect());
+  const before = measuredHeights(rows, viewOptions, rowHeights);
+  let changed = false;
+  let shift = 0;
+  let offset = -1;
+  let prev = -2;
+  els.forEach((el, i) => {
+    const key = el.getAttribute('data-key') ?? '';
+    const at = index.get(key);
+    const rect = tops[i];
+    const next = tops[i + 1];
+    if (at === undefined || !rect) {
+      return;
+    }
+    // A pinned row is followed by a spacer, not by its list neighbour: restart
+    // the running offset there, and never measure its pitch across the spacer.
+    offset = at === prev + 1 ? offset : rowOffset(before, at);
+    prev = at;
+    const old = before[at] ?? 0;
+    const adjacent = next && index.get(els[i + 1]?.getAttribute('data-key') ?? '') === at + 1;
+    const pitch = next && adjacent ? next.top - rect.top : rect.height;
+    if (pitch > 0) {
+      rowHeights.set(key, pitch);
+      if (Math.abs(pitch - old) > HEIGHT_EPSILON) {
+        changed = true;
+      }
+      if (offset + old <= listScrollTop) {
+        shift += pitch - old;
+      }
+    }
+    offset += old;
+  });
+  return { changed, shift };
 }
 
-/** Moves the observer onto the element that actually clips.
- *
- *  `scrollEl` is the <vscode-scrollable> HOST, and the host does not scroll:
- *  its shadow `.scrollable-container` is the `overflow: auto` box. Per the
- *  IntersectionObserver algorithm the intersection rect is clipped by every
- *  ancestor clip between target and root BEFORE the root rect is expanded by
- *  rootMargin, and that shadow container is such an ancestor — so with the host
- *  as root the 400px lookahead was silently worth 0px and rows reported only
- *  once genuinely on screen. (The spec later added `scrollMargin` for exactly
- *  this case; it needs Chromium 128, which is precisely our floor, so it has no
- *  margin of safety and is not used.)
- *
- *  A root cannot be changed after construction, so this rebuilds the observer.
- *  Keeping the host as the initial root means a component that ever renames or
- *  drops '.scrollable-container' degrades to today's behaviour rather than to
- *  no viewport reporting at all. */
-function upgradeObserverRoot(scroller: Element): void {
-  visibilityObserver.disconnect();
-  visibilityObserver = makeVisibilityObserver(scroller);
-  observedView = '';
-  observeVisibleRows();
+/** The rows the results region draws at the current scroll position: the window
+ *  plus the pinned focus row (-1 when the focused row is inside the window or
+ *  there is none). */
+function currentWindow(rows: FlatRow[]): { start: number; end: number; pin: number } {
+  const { start, end, pin } = windowRows(
+    measuredHeights(rows, viewOptions, rowHeights),
+    listScrollTop,
+    viewportPx,
+    undefined,
+    undefined,
+    results?.index.get(focusKey ?? '') ?? -1,
+  );
+  return { start, end, pin: pin?.index ?? -1 };
+}
+
+/** Draws the results region from the cached rows around the current scroll
+ *  position, then sizes the spacers and measures what rendered. A measured
+ *  height that differs from its estimate re-draws once, so the spacers and the
+ *  window follow the real heights. */
+function paintResults(): void {
+  if (!state || !results) {
+    return;
+  }
+  // Read before any pass renders: a render that shrinks the list lets the browser
+  // clamp scrollTop at the bottom, and a negative shift on top of that clamp
+  // would be applied twice.
+  const top = scroller?.scrollTop ?? 0;
+  let shift = 0;
+  for (let pass = 0; pass < MAX_PAINT_PASSES; pass++) {
+    const { tab, prepared } = results;
+    paintedWindow = currentWindow(prepared.rows);
+    const focused = resultsEl.contains(document.activeElement);
+    litRender(
+      renderSidebarResults(tab, activeFilter(), viewOptions, expanded, {
+        scrollTop: listScrollTop,
+        viewport: viewportPx,
+        heights: rowHeights,
+        focusKey,
+        prepared,
+      }),
+      resultsEl,
+    );
+    // Inline style is blocked by the CSP; the CSSOM is not.
+    for (const spacer of resultsEl.querySelectorAll<HTMLElement>('.win-spacer')) {
+      spacer.style.height = `${spacer.dataset['px'] ?? 0}px`;
+    }
+    // The roving stop is pinned, so lit keeps its node; this only catches a
+    // render that still disposed or moved it, which drops focus to the body.
+    if (focused && !resultsEl.contains(document.activeElement) && focusKey !== undefined) {
+      rowElement(focusKey)?.focus({ preventScroll: true });
+    }
+    const measured = measureRows();
+    shift += measured.shift;
+    if (!measured.changed) {
+      break;
+    }
+  }
+  if (scroller && Math.abs(shift) > HEIGHT_EPSILON) {
+    scrollListTo(top + shift);
+    measureScroll();
+  }
+  reportVisible();
+}
+
+/** Re-windows on the next frame — one pass per frame however fast the scroll
+ *  events arrive. `force` repaints even when the window is unchanged (a width
+ *  change reflows every row). */
+function scheduleWindow(force = false): void {
+  windowForced ||= force;
+  if (windowFrame !== undefined) {
+    return;
+  }
+  windowFrame = requestAnimationFrame(() => {
+    windowFrame = undefined;
+    const forced = windowForced;
+    windowForced = false;
+    measureScroll();
+    if (!results || results.prepared.rows.length === 0) {
+      return;
+    }
+    const { start, end, pin } = currentWindow(results.prepared.rows);
+    if (
+      forced ||
+      start !== paintedWindow.start ||
+      end !== paintedWindow.end ||
+      pin !== paintedWindow.pin
+    ) {
+      paintResults();
+    }
+  });
+}
+
+/** Wires the shadow scroller in: scroll position, viewport and width. */
+function attachScroller(el: HTMLElement): void {
+  scroller = el;
+  new ResizeObserver(() => {
+    // Card heights depend on the width, but the measured map stays: clearing it
+    // sends every row above the reader back to the 92 px estimate, and a reader
+    // deep in a long list lands on another row. The forced repaint re-measures
+    // what renders, and the shift correction keeps those rows in place.
+    const width = el.clientWidth;
+    const widthChanged = width !== listWidth;
+    if (widthChanged) {
+      listWidth = width;
+    }
+    scheduleWindow(widthChanged);
+  }).observe(el);
+  scheduleWindow(true);
 }
 
 /** Mirrors the three booleans the title bar's `when` clauses key on, so its
@@ -590,6 +740,24 @@ function applyViewAction(action: ViewAction): void {
 // behind its lock.
 let busy: string | null = null;
 
+/** Opens a closed group header or tree node, closes an open one. */
+function toggleNode(node: string): void {
+  if (expanded.has(node)) {
+    expanded.delete(node);
+  } else {
+    expanded.add(node);
+  }
+  persist();
+  // The expand/collapse-all button flips with the first and last open node.
+  postViewFlags();
+  render();
+}
+
+/** The shared PREVIEW panel: what a bare row click and Enter or Space on a focused row open. */
+function openPreview(repo: string): void {
+  post({ type: 'openDetails', repo, mode: 'preview' });
+}
+
 root.addEventListener('click', (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
   const card = (event.target as HTMLElement).closest<HTMLElement>(ROW_SELECTOR);
@@ -603,7 +771,7 @@ root.addEventListener('click', (event) => {
     // host-side, and the dblclick then promotes the already-open preview in
     // place. Dismissing a menu with a click doesn't open anything.
     if (repo && !menuWasOpen) {
-      post({ type: 'openDetails', repo, mode: 'preview' });
+      openPreview(repo);
     }
     return;
   }
@@ -735,21 +903,11 @@ root.addEventListener('click', (event) => {
     case 'show-output':
       post({ type: 'showOutput' });
       break;
-    case 'toggle-node': {
+    case 'toggle-node':
       // A twisty on a group header or tree node. The only view control still in
       // the webview — it belongs to the row, not to the view.
-      const node = target.dataset['node'] ?? '';
-      if (expanded.has(node)) {
-        expanded.delete(node);
-      } else {
-        expanded.add(node);
-      }
-      persist();
-      // The expand/collapse-all button flips with the first and last open node.
-      postViewFlags();
-      render();
+      toggleNode(target.dataset['node'] ?? '');
       break;
-    }
     case 'toggle-kind': {
       const current = activeFilter();
       setActiveFilter({
@@ -829,6 +987,102 @@ document.addEventListener('keydown', (event) => {
   closeCardMenu();
 });
 
+// Roving focus: the row last focused holds the one tabindex=0, so Tab enters the
+// list there. Re-rendering carries the new stop (lit owns tabindex; poking the
+// DOM instead would leave its dirty-check stale).
+resultsEl.addEventListener('focusin', (event) => {
+  const key = (event.target as HTMLElement).closest('[data-key]')?.getAttribute('data-key');
+  if (key && key !== focusKey) {
+    focusKey = key;
+    paintResults();
+  }
+});
+
+/** Moves the roving focus to row `to` of the flattened list, rendered or not:
+ *  scrolls it into the window, paints, then focuses it. */
+function focusRowAt(to: number): void {
+  const target = results?.prepared.rows[to];
+  if (!results || !target) {
+    return;
+  }
+  const heights = measuredHeights(results.prepared.rows, viewOptions, rowHeights);
+  measureScroll();
+  if (scroller) {
+    const listTop = scroller.scrollTop - listScrollTop;
+    scrollListTo(
+      to === 0
+        ? 0
+        : listTop +
+            revealScrollTop(rowOffset(heights, to), heights[to] ?? 0, listScrollTop, viewportPx),
+    );
+    measureScroll();
+  }
+  focusKey = target.key;
+  paintResults();
+  const el = rowElement(target.key);
+  if (el && scroller) {
+    // The scroll above was aimed with estimates; the paint measured the real
+    // heights, so settle the target against its actual box.
+    const box = scroller.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    const clippedTop = rect.top - box.top;
+    scrollListTo(
+      scroller.scrollTop +
+        (clippedTop < 0 || rect.height >= box.height
+          ? clippedTop
+          : Math.max(rect.bottom - box.bottom, 0)),
+    );
+  }
+  el?.focus({ preventScroll: true });
+}
+
+// Rows outside the window are not in the DOM, so native Tab and scrollIntoView
+// cannot reach them: arrow keys walk the whole flattened list instead, scrolling
+// the target into the window before focusing it.
+resultsEl.addEventListener('keydown', (event) => {
+  const row =
+    event.target instanceof HTMLElement && event.target.hasAttribute('data-key')
+      ? event.target
+      : null;
+  const key = row?.getAttribute('data-key');
+  if (!row || !key || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+    return;
+  }
+  // A card or compact row is a div; group headers and tree nodes are buttons
+  // and keep their native Enter/Space. Space is claimed here too: left alone it
+  // scrolls the list a page.
+  const repo = row.matches(ROW_SELECTOR) ? row.dataset['repo'] : undefined;
+  if ((event.key === 'Enter' || event.key === ' ') && repo) {
+    event.preventDefault();
+    closeCardMenu();
+    closeContextMenu();
+    openPreview(repo);
+    return;
+  }
+  const at = results?.index.get(key);
+  if (!results || at === undefined) {
+    return;
+  }
+  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+    const action = treeKeyAction(results.prepared.rows, at, event.key);
+    if (action) {
+      event.preventDefault();
+      if (action.kind === 'focus') {
+        focusRowAt(action.index);
+      } else {
+        toggleNode(action.id);
+      }
+    }
+    return;
+  }
+  const heights = measuredHeights(results.prepared.rows, viewOptions, rowHeights);
+  const to = navTarget(heights, at, event.key, viewportPx);
+  if (to !== null) {
+    event.preventDefault();
+    focusRowAt(to);
+  }
+});
+
 // A click anywhere OUTSIDE this webview — an editor tab, another view, the
 // workbench chrome — never reaches the click handler above (it lands in a
 // different frame entirely), so an open menu would keep floating over a view
@@ -855,19 +1109,22 @@ window.addEventListener('blur', () => {
 // reaching into it.
 customElements.whenDefined('vscode-scrollable').then(() =>
   scrollEl.updateComplete.then(() => {
-    const scroller = scrollEl.shadowRoot?.querySelector('.scrollable-container');
-    if (scroller) {
-      scroller.addEventListener(
+    // Pinned against the installed component by the render.test.ts test
+    // "vscode-scrollable still ships the .scrollable-container main.ts selects".
+    const container = scrollEl.shadowRoot?.querySelector<HTMLElement>('.scrollable-container');
+    if (container) {
+      container.addEventListener(
         'scroll',
         () => {
           closeContextMenu();
           closeCardMenu();
+          scheduleWindow();
         },
         { passive: true },
       );
       // Same element, same reason it was hunted down here: it is the one that
-      // clips, so it is also the only correct IntersectionObserver root.
-      upgradeObserverRoot(scroller);
+      // clips, so it is also the one whose scroll position windows the list.
+      attachScroller(container);
     } else {
       scrollEl.addEventListener('vsc-scrollable-scroll', () => {
         closeContextMenu();
@@ -920,9 +1177,8 @@ root.addEventListener('input', (event) => {
     installedQuery = query;
     persist();
     if (state) {
-      const view = viewForTab(state, activeTab, installedQuery);
-      syncSearchValue(view);
-      litRender(renderSidebarResults(view, activeFilter(), viewOptions, expanded), resultsEl);
+      syncSearchValue(viewForTab(state, activeTab, installedQuery));
+      renderResults();
     }
     return;
   }
@@ -937,16 +1193,63 @@ root.addEventListener('input', (event) => {
   searchDebounce = setTimeout(() => postSearch(query), 250);
 });
 
+/** Rows of a Browse list the host sent in pieces (`more`), held until the last
+ *  piece lands so the DOM and the scroll position only ever see the whole list. */
+let staged: StagedPosts | null = null;
+
+/** The full repaint a replaced list gets: a ready/error state landing (the
+ *  loading flash over painted results is handled before this, see below). */
+function paintState(next: SidebarState): void {
+  clearTimeout(loadingFooterTimeout);
+  refreshInFlight = false;
+  state = next;
+  // seedExpanded needs cards, and there are none until the first state lands
+  // — so a tree or grouping restored from the stored preference (or from a
+  // persisted state whose expanded set was empty) gets its top level opened
+  // HERE. Once per webview: re-seeding on every refresh would reopen a top
+  // level the user deliberately collapsed.
+  if (!seeded) {
+    seeded = true;
+    seedExpanded();
+    postViewFlags();
+  }
+  render();
+  syncServerSort();
+}
+
+/** The repaint a grown list gets, judged against the list last on screen. */
+function paintAppended(next: SidebarState): void {
+  if (!state) {
+    return;
+  }
+  // The summary flips between loading, failed and done; those need the full
+  // render (search sort control, chips), a plain page of cards does not. A new
+  // `installedItems` array means the run carried an installed set.
+  const flip =
+    resultIsPartial(state.paging) !== resultIsPartial(next.paging) ||
+    state.paging?.failed !== next.paging?.failed ||
+    state.catalogIncomplete !== next.catalogIncomplete ||
+    state.installedItems !== next.installedItems;
+  state = next;
+  if (flip) {
+    render();
+    syncServerSort();
+  } else if (activeTab === 'browse') {
+    renderResults(); // the other tabs show no browse cards
+  }
+}
+
 window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
   const message = event.data;
-  if (message.type === 'state') {
+  if (message.type === 'state' || message.type === 'append') {
     // A refresh's loading state over painted results doesn't wipe them (no
     // skeleton flash): keep the current DOM and, if the reload is still
     // running a second later, swap only the footer to the refreshing line —
     // anything faster never shows it, so a quick refresh doesn't flicker the
     // status line. A ready/error state arriving first cancels the pending
     // swap; the render() it triggers repaints the footer in full.
-    if (keepPaintedOnLoading(state, message.state)) {
+    if (message.type === 'state' && keepPaintedOnLoading(state, message.state)) {
+      staged = null;
       clearTimeout(loadingFooterTimeout);
       refreshInFlight = true;
       const loadingState = message.state;
@@ -955,38 +1258,10 @@ window.addEventListener('message', (event: MessageEvent<HostToSidebar>) => {
       }, 1000);
       return;
     }
-    clearTimeout(loadingFooterTimeout);
-    refreshInFlight = false;
-    state = message.state;
-    // seedExpanded needs cards, and there are none until the first state lands
-    // — so a tree or grouping restored from the stored preference (or from a
-    // persisted state whose expanded set was empty) gets its top level opened
-    // HERE. Once per webview: re-seeding on every refresh would reopen a top
-    // level the user deliberately collapsed.
-    if (!seeded) {
-      seeded = true;
-      seedExpanded();
-      postViewFlags();
-    }
-    render();
-    syncServerSort();
-  } else if (message.type === 'append') {
-    const next = applyAppend(state, message);
-    if (!next || !state) {
-      return;
-    }
-    // The summary flips between loading, failed and done; those need the full
-    // render (search sort control, chips), a plain page of cards does not.
-    const flip =
-      resultIsPartial(state.paging) !== resultIsPartial(next.paging) ||
-      state.paging?.failed !== next.paging?.failed ||
-      state.catalogIncomplete !== next.catalogIncomplete;
-    state = next;
-    if (flip || message.installed) {
-      render();
-      syncServerSort();
-    } else if (activeTab === 'browse') {
-      renderResults(); // the other tabs show no browse cards
+    const folded = foldHostPost(staged, state, message);
+    staged = folded.staged;
+    if (folded.commit) {
+      (folded.commit.fromState ? paintState : paintAppended)(folded.commit.state);
     }
   } else if (message.type === 'busy') {
     // Class only — no render(): the lock is CSS plus the click guard above, and

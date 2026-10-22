@@ -17,8 +17,9 @@ export const SEARCH_PAGE_SIZE = 200;
  *  bounds the JSON.parse stall in the shared extension host. */
 export const BACKGROUND_PAGE_SIZE = 2_500;
 
-/** The most cards one host-to-webview message carries, so a long list reaches
- *  the webview in pieces and neither side handles it in one huge message. */
+/** The most rows of any one array (cards, installed) a host-to-webview message
+ *  carries, so a long list reaches the webview in pieces and neither side
+ *  handles it in one huge message. */
 export const MAX_POST_CARDS = 1_000;
 
 /** Where a paged Browse list stands. `token` identifies the search that owns
@@ -281,6 +282,10 @@ export interface SidebarState {
    *  works, it just is not the whole catalog. Only presence matters — the
    *  source lines go to the output channel, which the footer chip points at. */
   catalogIncomplete?: boolean;
+  /** Which refresh this state belongs to. Every refresh starts a new round, a
+   *  logo repost keeps the current one, so the webview re-reports its visible
+   *  rows once per refresh (model.ts viewportReport). */
+  round?: number;
   /** Present only while Browse is paged (grim 0.15+); absent means the whole
    *  result is loaded. */
   paging?: PagingState;
@@ -313,8 +318,8 @@ export type SidebarToHost =
    *  scope (each installed row has its own entry). */
   | { type: 'switch'; oldKind: string; oldName: string; replacedBy: string; scope: Scope }
   | { type: 'pin'; ref: string }
-  /** The repos whose rows are on screen right now (plus a margin), debounced,
-   *  re-sent after every render and while scrolling. Drives the details
+  /** The repos of the rows the windowed list renders right now (the viewport
+   *  plus a margin), debounced, sent whenever that set changes. Drives the details
    *  prefetch: the sweep follows the viewport instead of a fixed top-K, so
    *  scrolling into row 200 fills its logo the same as row 1. Advisory only —
    *  the host filters by cache freshness and the queue is idempotent. */
@@ -337,24 +342,38 @@ export type SidebarToHost =
   | { type: 'showOutput' };
 
 export type HostToSidebar =
-  | { type: 'state'; state: SidebarState }
+  /** `more` marks the head of a list too long for one message: the rest follows
+   *  as `append`s, and the webview paints nothing until the last of them lands
+   *  (see foldHostPost). The state carries the REAL paging of the whole list, so
+   *  a reader never sees a half-sent list claim to be partial. */
+  | { type: 'state'; state: SidebarState; more?: true }
   /** The next rows of the Browse list `token` names, for a webview that already
    *  holds `offset` of them. Only new cards ride it, so a 30,000-row list costs
    *  one post per row instead of the whole list per page. `installed` is
    *  present only when the Installed set changed. A webview whose list is not
    *  exactly `offset` rows long ignores it; the next full `state` heals. No
-   *  message carries more than {@link MAX_POST_CARDS} cards: a longer list
-   *  arrives as a `state` plus appends. */
+   *  array of a message holds more than {@link MAX_POST_CARDS} rows: a longer
+   *  run is a `state` plus appends, or appends alone for a page past the limit,
+   *  each carrying the real paging. `more` marks all but the last message of
+   *  such a run: the webview stages it and renders once, on the last. A list
+   *  that is not paged (grim before 0.15.0) has no token and no paging: its
+   *  appends continue the unpaged `state` they follow. */
   | {
       type: 'append';
-      token: number;
+      token?: number;
       offset: number;
       cards: CardVM[];
+      /** Replaces the Installed set, or with `installedOffset` continues it. */
       installed?: CardVM[];
-      paging: PagingState;
+      /** `installed` continues the first `installedOffset` rows already held,
+       *  when the set is too long for one message; absent, it replaces them. */
+      installedOffset?: number;
+      paging?: PagingState;
       /** The verdict after this page, for {@link SidebarState.catalogIncomplete}:
        *  `true` raises the mark, `false` takes it down, absent leaves it. */
       catalogIncomplete?: boolean;
+      /** The next message continues this one; do not render yet. */
+      more?: true;
     }
   /** A mutating grim run started (title) or the last one settled (null) —
    *  ANYWHERE in the extension, not just from this view. Every action control

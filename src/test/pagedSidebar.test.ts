@@ -11,7 +11,7 @@ import type { CachedCardMeta } from '../detailsCache';
 import type { ContextInfo, GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import { applyAppend } from '../webview/model';
+import { foldHostPost, type StagedPosts } from '../webview/model';
 import {
   MAX_POST_CARDS,
   type HostToSidebar,
@@ -45,6 +45,25 @@ function healthy(): Snapshot {
     grimMissing: false,
     global: { context: context(), status: [], declared: {} },
   };
+}
+
+/** A healthy global scope with `count` installed skills, none in the catalog. */
+function withInstalled(count: number): Snapshot {
+  const base = healthy();
+  const status = Array.from({ length: count }, (_, n) => ({
+    kind: 'skill',
+    name: `inst-${n}`,
+    source: 'direct',
+    pinned: `ghcr.io/grimoire-rs/skills/inst-${n}:1.0.0`,
+    state: 'installed',
+    outputs: [],
+    clients_missing: [],
+    clients_extra: [],
+    deprecated: null,
+    replaced_by: null,
+    update_available: null,
+  }));
+  return { ...base, global: { ...base.global, status } } as unknown as Snapshot;
 }
 
 /** `grim status` failed for the global scope: browsing works, install state is unknown. */
@@ -391,28 +410,38 @@ async function until(check: () => boolean, what: string): Promise<void> {
   assert.fail(`timed out waiting for ${what}`);
 }
 
-/** What a webview would hold after replaying every message in order. */
+/** What a webview would hold after replaying every message in order: the real
+ *  fold, so the host and the webview cannot disagree here as they do not there. */
 function replay(posted: HostToSidebar[]): {
   repos: string[];
   paging: PagingState | undefined;
   incomplete: boolean;
 } {
-  let repos: string[] = [];
-  let paging: PagingState | undefined;
-  let incomplete = false;
+  const webview: { rendered: SidebarState | null; staged: StagedPosts | null } = {
+    rendered: null,
+    staged: null,
+  };
   for (const message of posted) {
-    if (message.type === 'state') {
-      repos = message.state.items.map((c) => c.repo);
-      paging = message.state.paging;
-      incomplete = message.state.catalogIncomplete === true;
-    } else if (message.type === 'append') {
-      assert.strictEqual(message.offset, repos.length, 'an append continues exactly the list held');
-      repos = repos.concat(message.cards.map((c) => c.repo));
-      paging = message.paging;
-      incomplete = message.catalogIncomplete === true;
+    if (message.type !== 'state' && message.type !== 'append') {
+      continue;
     }
+    if (message.type === 'append') {
+      const held = webview.staged?.state ?? webview.rendered;
+      assert.strictEqual(
+        message.offset,
+        held?.items.length,
+        'an append continues exactly the list held',
+      );
+    }
+    const folded = foldHostPost(webview.staged, webview.rendered, message);
+    webview.staged = folded.staged;
+    webview.rendered = folded.commit?.state ?? webview.rendered;
   }
-  return { repos, paging, incomplete };
+  return {
+    repos: webview.rendered?.items.map((c) => c.repo) ?? [],
+    paging: webview.rendered?.paging,
+    incomplete: webview.rendered?.catalogIncomplete === true,
+  };
 }
 
 suite('paged sidebar: background page walker', () => {
@@ -432,7 +461,28 @@ suite('paged sidebar: background page walker', () => {
       [0, 1, 2, 3].map((n) => `${PAGE}${n}`),
     );
     assert.strictEqual(replay(posted).paging?.loaded, 4);
-    assert.ok(sent.every((a) => a.paging.token === last(posted).paging?.token));
+    assert.ok(sent.every((a) => a.paging?.token === last(posted).paging?.token));
+  });
+
+  test('each refresh stamps its round on the state; a repost of the same round keeps it', async () => {
+    const { provider, posted } = makeSidebar([healthy(), healthy()]);
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    const rounds = (): (number | undefined)[] =>
+      states(posted)
+        .filter((st) => st.phase === 'ready')
+        .map((st) => st.round);
+
+    const first = rounds();
+    assert.ok(first.length > 0 && first.every((r) => typeof r === 'number'), `${first}`);
+    await provider.repostCardMeta();
+    assert.deepStrictEqual(new Set(rounds()).size, 1, 'a logo repost is the same round');
+
+    await provider.refresh();
+    await until(() => new Set(rounds()).size === 2, 'a second round');
+    const [one, two] = [...new Set(rounds())];
+    assert.notStrictEqual(one, two, 'a refresh is a new round');
+    assert.strictEqual(rounds().at(-1), two);
   });
 
   test('a round whose install state is unknown still loads its pages', async () => {
@@ -462,7 +512,7 @@ suite('paged sidebar: background page walker', () => {
     const after = appends(posted.slice(afterState));
     assert.ok(after.length > 0);
     assert.ok(
-      after.every((a) => a.paging.token === newToken),
+      after.every((a) => a.paging?.token === newToken),
       'only the new list grows',
     );
     assert.deepStrictEqual(
@@ -712,27 +762,51 @@ function cardsIn(message: HostToSidebar): number {
   return message.type === 'append' ? message.cards.length : 0;
 }
 
-/** What the webview ends up holding: a state replaces it, and every append must
- *  continue it exactly as applyAppend demands. */
-function fold(posted: HostToSidebar[]): SidebarState {
+/** The largest row array a host message carries, whichever field holds it. */
+function rowsIn(message: HostToSidebar): number {
+  if (message.type === 'state') {
+    return Math.max(message.state.items.length, message.state.installedItems.length);
+  }
+  return message.type === 'append'
+    ? Math.max(message.cards.length, message.installed?.length ?? 0)
+    : 0;
+}
+
+/** What the webview ends up holding, folding every post the way main.ts does.
+ *  Each step must stage or commit: a post that does neither continued nothing. */
+function fold(
+  posted: HostToSidebar[],
+  onStep?: (step: ReturnType<typeof foldHostPost>) => void,
+): { held: SidebarState; commits: StagedPosts[] } {
+  let staged: StagedPosts | null = null;
   let held: SidebarState | null = null;
+  const commits: StagedPosts[] = [];
   for (const message of posted) {
-    if (message.type === 'state') {
-      held = message.state;
-    } else if (message.type === 'append') {
-      held = applyAppend(held, message);
-      assert.ok(held, `the append at offset ${message.offset} continues the list held`);
+    if (message.type !== 'state' && message.type !== 'append') {
+      continue;
+    }
+    const step = foldHostPost(staged, held, message);
+    onStep?.(step);
+    assert.ok(
+      step.staged || step.commit,
+      `${message.type}${message.type === 'append' ? ` at offset ${message.offset}` : ''} continues the list held`,
+    );
+    staged = step.staged;
+    if (step.commit) {
+      held = step.commit.state;
+      commits.push(step.commit);
     }
   }
+  assert.strictEqual(staged, null, 'the last post closes its run');
   assert.ok(held, 'a state was posted');
-  return held;
+  return { held, commits };
 }
 
 const reposUpTo = (count: number): string[] =>
   Array.from({ length: count }, (_, n) => `${PAGE}${n}`);
 
 suite('paged sidebar: chunked posts', () => {
-  test('a first state of 2,600 cards posts a full state, then appends that complete it', async () => {
+  test('a first state of 2,600 cards posts a head state, then appends that complete it', async () => {
     const { provider, posted } = makeSidebar([healthy()], { total: 2_600, first: 2_600 });
     await provider.handleMessage({ type: 'ready' });
 
@@ -750,31 +824,32 @@ suite('paged sidebar: chunked posts', () => {
       ],
     );
     const token = last(posted).paging?.token;
-    assert.ok(sent.every((a) => a.token === token && a.paging.token === token));
+    assert.ok(sent.every((a) => a.token === token && a.paging?.token === token));
+    const real = { token, loaded: 2_600, total: 2_600, lowerBound: false, hasMore: false };
     assert.deepStrictEqual(
-      [last(posted).paging, ...sent.map((a) => a.paging)].map((p) => [p?.loaded, p?.hasMore]),
-      [
-        [1_000, true],
-        [2_000, true],
-        [2_600, false],
-      ],
-      'every chunk but the last claims more is coming',
+      [last(posted).paging, ...sent.map((a) => a.paging)],
+      [real, real, real],
+      'every chunk carries the real paging, never a partial one',
     );
-    assert.deepStrictEqual(sent[1]?.paging, {
-      token,
-      loaded: 2_600,
-      total: 2_600,
-      lowerBound: false,
-      hasMore: false,
-    });
+    assert.deepStrictEqual(
+      posted
+        .filter((m) => m.type === 'append' || (m.type === 'state' && m.state.phase === 'ready'))
+        .map((m) => (m.type === 'state' || m.type === 'append' ? m.more : undefined)),
+      [true, true, undefined],
+      'only the last message of the run omits more',
+    );
 
-    const held = fold(posted);
+    const { held, commits } = fold(posted);
+    assert.strictEqual(
+      commits.filter((c) => c.state.phase === 'ready').length,
+      1,
+      'the run paints once',
+    );
     assert.deepStrictEqual(
       held.items.map((c) => c.repo),
       reposUpTo(2_600),
     );
-    assert.strictEqual(held.paging?.loaded, 2_600);
-    assert.strictEqual(held.paging?.hasMore, false);
+    assert.deepStrictEqual(held.paging, real);
   });
 
   test('a walker page of 2,500 rows posts appends of at most 1,000, installed on the last', async () => {
@@ -800,12 +875,13 @@ suite('paged sidebar: chunked posts', () => {
       ],
     );
     assert.deepStrictEqual(
-      sent.map((a) => [a.paging.loaded, a.paging.hasMore]),
+      sent.map((a) => [a.paging?.loaded, a.paging?.hasMore, a.more]),
       [
-        [1_200, true],
-        [2_200, true],
-        [2_700, false],
+        [2_700, false, true],
+        [2_700, false, true],
+        [2_700, false, undefined],
       ],
+      'the real paging on every chunk; only the last omits more',
     );
     assert.deepStrictEqual(
       sent.map((a) => a.installed !== undefined),
@@ -813,7 +889,17 @@ suite('paged sidebar: chunked posts', () => {
       'the installed set arrives once, with the last chunk',
     );
 
-    const held = fold(posted);
+    const { held, commits } = fold(posted);
+    assert.deepStrictEqual(
+      commits
+        .filter((c) => c.state.phase === 'ready')
+        .map((c) => [c.fromState, c.state.items.length]),
+      [
+        [true, 200],
+        [false, 2_700],
+      ],
+      'the first state paints, then the page paints once, as a grown list',
+    );
     assert.deepStrictEqual(
       held.items.map((c) => c.repo),
       reposUpTo(2_700),
@@ -845,7 +931,7 @@ suite('paged sidebar: chunked posts', () => {
     const ready = states(after).filter((st) => st.phase === 'ready');
     assert.strictEqual(ready.length, 2, 'the refresh state, then the swap');
     assert.ok(ready.every((st) => st.items.length === MAX_POST_CARDS));
-    const held = fold(after);
+    const { held } = fold(after);
     assert.deepStrictEqual(
       held.items.map((c) => c.repo),
       reposUpTo(2_600),
@@ -862,9 +948,55 @@ suite('paged sidebar: chunked posts', () => {
     assert.strictEqual(last(posted).items.length, 1_000);
     assert.deepStrictEqual(appends(posted), []);
     assert.strictEqual(last(posted).paging?.hasMore, false);
+    assert.ok(
+      posted.every((m) => m.type !== 'state' || m.more === undefined),
+      'a list that fits one message is not staged',
+    );
   });
 
-  test('a grim that cannot page posts its capped list whole', async () => {
+  test('a completed 2,600-card round re-posted for logos never says partial, at any step', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      total: 2_600,
+      first: 200,
+      page: 2_400,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+
+    const before = posted.length;
+    await provider.repostCardMeta();
+    const repost = posted.slice(before);
+    assert.ok(
+      repost.length >= 3,
+      `the whole round was re-posted: ${repost.map(cardsIn).join(', ')}`,
+    );
+    assert.ok(repost.every((m) => cardsIn(m) <= MAX_POST_CARDS));
+
+    // At no point, staged or committed, may a step of the repost claim pages remain.
+    const partialSteps: string[] = [];
+    const { held, commits } = fold(repost, (step) => {
+      for (const part of [step.staged, step.commit]) {
+        if (part && part.state.paging?.hasMore !== false) {
+          partialSteps.push(
+            `${part.state.items.length} rows, hasMore ${part.state.paging?.hasMore}`,
+          );
+        }
+      }
+    });
+    assert.deepStrictEqual(partialSteps, [], 'no staged or committed step is partial');
+    assert.deepStrictEqual(
+      commits.map((c) => [c.fromState, c.state.items.length]),
+      [[true, 2_600]],
+      'the repost replaces the list in one paint',
+    );
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a grim that cannot page chunks its list by size all the same', async () => {
     const { provider, posted } = makeSidebar([healthy()], {
       paged: false,
       total: 1_500,
@@ -872,7 +1004,68 @@ suite('paged sidebar: chunked posts', () => {
     });
     await provider.handleMessage({ type: 'ready' });
 
-    assert.strictEqual(last(posted).items.length, 1_500);
-    assert.deepStrictEqual(appends(posted), []);
+    assert.ok(
+      posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} rows: ${posted.map(rowsIn).join(', ')}`,
+    );
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length, a.more]),
+      [[1_000, 500, undefined]],
+    );
+    assert.ok(
+      sent.every((a) => a.token === undefined && a.paging === undefined),
+      'there is no list to name: a chunk continues the head state it follows',
+    );
+    const { held, commits } = fold(posted);
+    assert.strictEqual(commits.filter((c) => c.state.phase === 'ready').length, 1, 'one paint');
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(1_500),
+    );
+    assert.strictEqual(held.paging, undefined, 'the list is not partial');
+  });
+
+  test('the installed set is bounded too, on a grim that pages and on one that cannot', async () => {
+    for (const paged of [false, true]) {
+      const { provider, posted } = makeSidebar([withInstalled(2_100)], {
+        paged,
+        total: 1_200,
+        first: paged ? 200 : 1_200,
+        page: 1_000,
+      });
+      await provider.handleMessage({ type: 'ready' });
+      await until(() => replay(posted).paging?.hasMore !== true, 'the list to complete');
+
+      assert.ok(
+        posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+        `paged ${paged}: no post over ${MAX_POST_CARDS} rows: ${posted.map(rowsIn).join(', ')}`,
+      );
+      const { held } = fold(posted);
+      assert.strictEqual(held.items.length, 1_200, `paged ${paged}: every card`);
+      assert.strictEqual(held.installedItems.length, 2_100, `paged ${paged}: every installed row`);
+      assert.strictEqual(
+        new Set(held.installedItems.map((c) => c.repo)).size,
+        2_100,
+        `paged ${paged}: no installed row twice`,
+      );
+    }
+  });
+
+  test('an installed set alone over the bound still posts in parts', async () => {
+    const { provider, posted } = makeSidebar([withInstalled(1_300)], {
+      paged: false,
+      total: 10,
+      first: 10,
+    });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.ok(
+      posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+      posted.map(rowsIn).join(', '),
+    );
+    const { held } = fold(posted);
+    assert.strictEqual(held.items.length, 10);
+    assert.strictEqual(held.installedItems.length, 1_300);
   });
 });

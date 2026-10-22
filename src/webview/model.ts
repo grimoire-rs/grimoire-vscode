@@ -681,7 +681,10 @@ function readSource(raw: WireSearchItem['source']): CardSource | undefined {
   if (!raw || typeof raw.locator !== 'string' || raw.locator === '') {
     return undefined;
   }
-  return { alias: typeof raw.alias === 'string' && raw.alias !== '' ? raw.alias : null, locator: raw.locator };
+  return {
+    alias: typeof raw.alias === 'string' && raw.alias !== '' ? raw.alias : null,
+    locator: raw.locator,
+  };
 }
 
 /** Cards for installed artifacts only (Installed view) — includes artifacts not in the catalog. */
@@ -850,7 +853,8 @@ function updatedAt(card: CardVM): number | null {
 }
 
 const byName = (a: CardVM, b: CardVM): number =>
-  a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' }) || a.repo.localeCompare(b.repo);
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'accent' }) ||
+  a.repo.localeCompare(b.repo);
 const byUpdated = (a: CardVM, b: CardVM): number => descending(updatedAt(a), updatedAt(b));
 const byRating = (a: CardVM, b: CardVM): number =>
   descending(a.rating?.up ?? null, b.rating?.up ?? null);
@@ -1059,11 +1063,20 @@ export function applyAppend(
   ) {
     return null;
   }
+  const held = message.installedOffset ?? 0;
+  if (held > 0 && state.installedItems.length !== held) {
+    return null; // continues an Installed set this webview does not hold
+  }
   const next: SidebarState = {
     ...state,
     items: state.items.concat(message.cards),
-    paging: message.paging,
-    ...(message.installed ? { installedItems: message.installed } : {}),
+    ...(message.paging ? { paging: message.paging } : {}),
+    ...(message.installed
+      ? {
+          installedItems:
+            held > 0 ? state.installedItems.concat(message.installed) : message.installed,
+        }
+      : {}),
   };
   // The page's verdict replaces the mark both ways; a message that says nothing
   // leaves it.
@@ -1075,15 +1088,56 @@ export function applyAppend(
   return next;
 }
 
-/** Where to resume observing rows after a render: the index of the first row
- *  `next` adds, or null when `next` does not simply extend `prev` and every row
- *  must be re-observed. Equal lists return `prev.length` (nothing to do).
- *  Pure. */
-export function appendedFrom(prev: readonly string[], next: readonly string[]): number | null {
-  if (next.length < prev.length) {
-    return null;
+/** A host post that carries Browse rows: a whole `state`, or an `append`. */
+export type HostListPost = Extract<HostToSidebar, { type: 'state' | 'append' }>;
+
+/** A run of host posts staged but not yet painted. `fromState` is whether the
+ *  run began with a `state` (a replaced list) or an `append` (a grown one): the
+ *  two repaint differently. */
+export interface StagedPosts {
+  state: SidebarState;
+  fromState: boolean;
+}
+
+/** Folds one `state`/`append` post into the run being staged. A post marked
+ *  `more` continues in the next and paints nothing; the run commits on the first
+ *  post without it, so a list sent in pieces paints once, whole, with its real
+ *  paging and the reader's scroll position intact. `rendered` is the state on
+ *  screen, which an append run grows. A `state` starts a fresh run and discards
+ *  any staged one, since it replaces the list outright. Pure. */
+export function foldHostPost(
+  staged: StagedPosts | null,
+  rendered: SidebarState | null,
+  message: HostListPost,
+): { staged: StagedPosts | null; commit?: StagedPosts } {
+  let next: StagedPosts;
+  if (message.type === 'state') {
+    next = { state: message.state, fromState: true };
+  } else {
+    const grown = applyAppend(staged?.state ?? rendered, message);
+    if (!grown) {
+      // A staged append run never painted, so dropping it leaves the screen as
+      // it was. A staged state run already replaced the list host-side:
+      // dropping it would leave the old list painted under the new query.
+      return staged?.fromState ? { staged: null, commit: staged } : { staged: null };
+    }
+    next = { state: grown, fromState: staged?.fromState ?? false };
   }
-  return prev.every((repo, i) => next[i] === repo) ? prev.length : null;
+  return message.more ? { staged: next } : { staged: null, commit: next };
+}
+
+/** Whether the rows now on screen go to the host as the viewport, and the key
+ *  that dedups the next call. A refresh bumps `round` (SidebarState.round), so
+ *  the same rows are reported again once per refresh: the host's one-shot force
+ *  flag, armed by that refresh, would otherwise never meet a `visible` message
+ *  for a list that did not scroll. */
+export function viewportReport(
+  reported: string | null,
+  repos: readonly string[],
+  round: number | undefined,
+): { key: string; report: boolean } {
+  const key = `${round ?? ''}\n${repos.join('\n')}`;
+  return { key, report: key !== reported };
 }
 
 // --- Logo placeholder ---
@@ -1467,6 +1521,395 @@ export function topLevelIds(nodes: TreeNode[]): string[] {
   return nodes.filter((n) => !n.card).map((n) => n.id);
 }
 
+// --- Row windowing: the flattened row list and the pure windower ---
+
+/** One rendered line of the Browse/Installed list. Tree and group modes flatten
+ *  into the same list, headers included, so a single windower serves every
+ *  layout. `key` is unique across the whole list and doubles as the lit
+ *  `repeat()` key and the DOM `data-key`. It may hold a NUL (see {@link cardKey}),
+ *  so read it back with `getAttribute`, never from parsed markup.
+ *
+ *  `setsize`/`posinset` are the ARIA numbers: the whole list for a flat one, the
+ *  group's cards for a grouped one, the siblings at that level for a tree, or
+ *  -1 (unknown) while Browse pages remain. `level` is a tree row's
+ *  `aria-level` (`depth + 1`). */
+export type FlatRow =
+  | {
+      type: 'card';
+      key: string;
+      card: CardVM;
+      /** The scope/registry group it is listed under (grouped lists only). */
+      group?: CardGroup;
+      /** Set on tree leaves only. */
+      depth?: number;
+      level?: number;
+      setsize: number;
+      posinset: number;
+    }
+  | { type: 'group'; key: string; group: CardGroup; open: boolean }
+  | {
+      type: 'node';
+      key: string;
+      node: TreeNode;
+      depth: number;
+      level: number;
+      open: boolean;
+      setsize: number;
+      posinset: number;
+    };
+
+/** The rows `listBody` drew before windowing, in the same order: group headers
+ *  included, the children of a collapsed group or node left out. Pure. */
+export function flattenRows(
+  cards: CardVM[],
+  tab: SidebarTab,
+  view: ViewOptions,
+  context: GroupContext,
+  expanded: ReadonlySet<string>,
+  sizeUnknown = false,
+): FlatRow[] {
+  const rows: FlatRow[] = [];
+  // ARIA wants -1 when the set is still growing; a loaded count that climbs
+  // page by page would announce a size that is wrong by the time it is read.
+  const sized = (n: number): number => (sizeUnknown ? -1 : n);
+  if (view.mode === 'tree') {
+    flattenTree(buildTree(cards, context), expanded, 0, rows, sized);
+    return rows;
+  }
+  const key = groupKeyFor(tab, view);
+  if (key === 'none') {
+    cards.forEach((card, i) => {
+      rows.push({
+        type: 'card',
+        key: cardKey(card),
+        card,
+        setsize: sized(cards.length),
+        posinset: i + 1,
+      });
+    });
+    return rows;
+  }
+  for (const group of groupCards(cards, key, context)) {
+    const open = expanded.has(group.id);
+    rows.push({ type: 'group', key: `g:${group.id}`, group, open });
+    if (!open) {
+      continue;
+    }
+    group.cards.forEach((card, i) => {
+      rows.push({
+        type: 'card',
+        // Per group: an artifact installed in both scopes lands in both.
+        key: `${group.id}:${cardKey(card)}`,
+        card,
+        group,
+        setsize: sized(group.cards.length),
+        posinset: i + 1,
+      });
+    });
+  }
+  return rows;
+}
+
+function flattenTree(
+  nodes: TreeNode[],
+  expanded: ReadonlySet<string>,
+  depth: number,
+  rows: FlatRow[],
+  sized: (n: number) => number,
+): void {
+  nodes.forEach((node, i) => {
+    const place = { depth, level: depth + 1, setsize: sized(nodes.length), posinset: i + 1 };
+    if (node.card) {
+      rows.push({ type: 'card', key: node.id, card: node.card, ...place });
+      return;
+    }
+    const open = expanded.has(node.id);
+    rows.push({ type: 'node', key: node.id, node, open, ...place });
+    if (open) {
+      flattenTree(node.children, expanded, depth + 1, rows, sized);
+    }
+  });
+}
+
+// Estimated row heights, in px. The fixed ones mirror sidebar.css (render.test.ts
+// pins each against it): a wrong estimate only mis-sizes a spacer until the row
+// is measured, but a drifted one makes every scrollbar jump.
+/** A comfortable card has no fixed height in CSS; this is its guess until it
+ *  renders and is measured. */
+const CARD_ROW_PX = 92;
+/** `.compact-row`, `.group-header` and `.tree-node` height. */
+const ROW_PX = 22;
+/** `.tree.roomy .compact-row` and `.tree.roomy .tree-node` height. */
+const ROOMY_ROW_PX = 30;
+
+/** What a row is assumed to measure before it has rendered. Comfortable density
+ *  scales the tree (`.tree.roomy`) rather than swapping its rows for cards. */
+export function estimatedRowHeight(row: FlatRow, view: ViewOptions): number {
+  if (row.type === 'group') {
+    return ROW_PX;
+  }
+  const treeRow = row.type === 'node' || row.depth !== undefined;
+  if (treeRow) {
+    return view.density === 'comfortable' ? ROOMY_ROW_PX : ROW_PX;
+  }
+  return view.density === 'comfortable' ? CARD_ROW_PX : ROW_PX;
+}
+
+function sumHeights(heights: readonly number[], from: number, to: number): number {
+  let sum = 0;
+  for (let i = from; i < to; i++) {
+    sum += heights[i] ?? 0;
+  }
+  return sum;
+}
+
+/** The summed height of the rows above `index` (the whole list for an index at
+ *  or past the end). */
+export function rowOffset(heights: readonly number[], index: number): number {
+  return sumHeights(heights, 0, Math.min(index, heights.length));
+}
+
+export interface RowWindow {
+  /** First rendered row. */
+  start: number;
+  /** One past the last rendered row. */
+  end: number;
+  /** Total height of the rows above `start` / from `end` on: the spacers. */
+  before: number;
+  after: number;
+  /** The first row reaching into the viewport (the leading overscan sits
+   *  before it): where a roving tab stop belongs when nothing is focused. */
+  firstVisible: number;
+  /** Set only when the pinned row lies outside `[start, end)`: that row stays
+   *  mounted, so scrolling away from it does not drop focus. Three spacers
+   *  replace `before`/`after`, in DOM order: `above`, the pinned row, `gap`, the
+   *  window, `below` when it sits above the window; `above`, the window, `gap`,
+   *  the pinned row, `below` when it sits below. */
+  pin?: { index: number; above: number; gap: number; below: number };
+}
+
+/** The rows to put in the DOM: those crossing `[scrollTop - overscan,
+ *  scrollTop + viewport + overscan]`, at most `maxRows` of them. A `scrollTop`
+ *  past the end clamps so the last rows show; a negative one reads as 0. Over
+ *  the cap, the overscan above the viewport is dropped first so the cap never
+ *  cuts the rows the user is looking at. O(n) — 20,000 rows is microseconds.
+ *  A viewport taller than `maxRows` rows leaves its bottom blank (ponytail
+ *  note at the cap). `pin` is the row holding focus: outside the window it is
+ *  kept as one extra row (see {@link RowWindow.pin}). Pure. */
+export function windowRows(
+  heights: readonly number[],
+  scrollTop: number,
+  viewport: number,
+  overscanPx = 400,
+  maxRows = 200,
+  pin = -1,
+): RowWindow {
+  const count = heights.length;
+  const whole = sumHeights(heights, 0, count);
+  const top = Math.min(Math.max(scrollTop, 0), Math.max(whole - viewport, 0));
+  const lo = top - overscanPx;
+  const hi = top + viewport + overscanPx;
+  let start = count;
+  let firstVisible = count;
+  let end = count;
+  let offset = 0;
+  for (let i = 0; i < count; i++) {
+    const bottom = offset + (heights[i] ?? 0);
+    if (start === count && bottom > lo) {
+      start = i;
+    }
+    if (firstVisible === count && bottom > top) {
+      firstVisible = i;
+    }
+    if (start !== count && offset >= hi) {
+      end = i;
+      break;
+    }
+    offset = bottom;
+  }
+  // ponytail: the cap counts rows, not pixels, so a viewport taller than 200
+  // rows (22 px compact rows past ~4,400 px) shows spacer where rows 201+ would
+  // be. Ceiling is 200 rows; upgrade path: cap on summed height instead.
+  if (end - start > maxRows) {
+    start = Math.max(start, firstVisible);
+    end = Math.min(end, start + maxRows);
+  }
+  const before = sumHeights(heights, 0, start);
+  const after = whole - before - sumHeights(heights, start, end);
+  const window = { start, end, before, after, firstVisible };
+  if (pin < 0 || pin >= count || (pin >= start && pin < end)) {
+    return window;
+  }
+  const height = heights[pin] ?? 0;
+  if (pin < start) {
+    const above = sumHeights(heights, 0, pin);
+    return { ...window, pin: { index: pin, above, gap: before - above - height, below: after } };
+  }
+  const gap = sumHeights(heights, end, pin);
+  return { ...window, pin: { index: pin, above: before, gap, below: after - gap - height } };
+}
+
+/** Each row's height as the windower sees it: the pitch measured once the row
+ *  has rendered, else its estimate. Pure. */
+export function measuredHeights(
+  rows: readonly FlatRow[],
+  view: ViewOptions,
+  measured?: ReadonlyMap<string, number>,
+): number[] {
+  return rows.map((row) => measured?.get(row.key) ?? estimatedRowHeight(row, view));
+}
+
+/** Row key to position in the flattened list, for the keyboard and the measurer. */
+export function rowIndexByKey(rows: readonly FlatRow[]): Map<string, number> {
+  return new Map(rows.map((row, i) => [row.key, i]));
+}
+
+const ROW_NAV_KEYS: ReadonlySet<string> = new Set([
+  'ArrowDown',
+  'ArrowUp',
+  'Home',
+  'End',
+  'PageDown',
+  'PageUp',
+]);
+
+/** The row containing the offset `px` (the nearest end for one outside the list). */
+function rowAt(heights: readonly number[], px: number): number {
+  let bottom = 0;
+  for (let i = 0; i < heights.length; i++) {
+    bottom += heights[i] ?? 0;
+    if (bottom > px) {
+      return i;
+    }
+  }
+  return Math.max(heights.length - 1, 0);
+}
+
+/** Where a navigation key moves the roving focus, as an index into the whole
+ *  flattened list; null for any other key (or an empty list). Home and End span
+ *  the list, not the window. A page key moves about `viewport` px, never less
+ *  than one row and never past either end. Pure. */
+export function navTarget(
+  heights: readonly number[],
+  current: number,
+  key: string,
+  viewport: number,
+): number | null {
+  if (!ROW_NAV_KEYS.has(key) || heights.length === 0) {
+    return null;
+  }
+  const last = heights.length - 1;
+  const at = Math.min(Math.max(current, 0), last);
+  switch (key) {
+    case 'ArrowDown':
+      return Math.min(at + 1, last);
+    case 'ArrowUp':
+      return Math.max(at - 1, 0);
+    case 'Home':
+      return 0;
+    case 'End':
+      return last;
+    case 'PageDown':
+      return Math.min(Math.max(rowAt(heights, rowOffset(heights, at) + viewport), at + 1), last);
+    default:
+      return Math.max(Math.min(rowAt(heights, rowOffset(heights, at) - viewport), at - 1), 0);
+  }
+}
+
+/** The accessible name of a windowed card or compact row. `aria-label` replaces
+ *  the row's content for naming, so everything a sighted reader gets from the
+ *  badge, the version and the action must be said here: name, kind, deprecation,
+ *  then the install state with its version and, when one exists, the update
+ *  target. `install` is the one the row shows (defaults to the effective one);
+ *  with `stateKnown` false the installs are not trustworthy and nothing is
+ *  claimed about them. Pure. */
+export function rowLabel(
+  card: CardVM,
+  stateKnown: boolean,
+  install: InstallVM | undefined = effectiveInstall(card.installs),
+): string {
+  const parts = [card.name];
+  if (card.kind) {
+    parts.push(card.kind);
+  }
+  if (card.state === 'deprecated') {
+    parts.push('deprecated');
+  }
+  if (stateKnown) {
+    parts.push(
+      install ? (install.version ? `installed ${install.version}` : 'installed') : 'not installed',
+    );
+    if (card.installs.some((i) => i.updateAvailable)) {
+      parts.push(card.latestVersion ? `update to ${card.latestVersion}` : 'update available');
+    }
+  }
+  return parts.join(', ');
+}
+
+/** What ArrowRight/ArrowLeft do on a tree row (the WAI-ARIA tree pattern):
+ *  open or close the node `id`, or move the roving focus to `index`. */
+export type TreeKeyAction =
+  { kind: 'expand' | 'collapse'; id: string } | { kind: 'focus'; index: number };
+
+/** The tree-pattern answer to a horizontal arrow on the tree row at `index` of a
+ *  flattened tree. Right: open a collapsed node, else move to its first child;
+ *  nothing on a leaf. Left: close an open node, else move to the nearest
+ *  preceding row one level up; nothing at the top level. Null for any other
+ *  key, an index outside the list, or a row that is not part of a tree (a group
+ *  header, a flat-list card). Pure. */
+export function treeKeyAction(
+  rows: readonly FlatRow[],
+  index: number,
+  key: string,
+): TreeKeyAction | null {
+  const row = rows[index];
+  const level = row && row.type !== 'group' ? row.level : undefined;
+  if (!row || level === undefined || (key !== 'ArrowRight' && key !== 'ArrowLeft')) {
+    return null;
+  }
+  const node = row.type === 'node' ? row : undefined;
+  if (key === 'ArrowRight') {
+    if (!node) {
+      return null;
+    }
+    if (!node.open) {
+      return { kind: 'expand', id: node.node.id };
+    }
+    const child = rows[index + 1];
+    return child && child.type !== 'group' && (child.level ?? 0) > level
+      ? { kind: 'focus', index: index + 1 }
+      : null;
+  }
+  if (node?.open) {
+    return { kind: 'collapse', id: node.node.id };
+  }
+  for (let i = index - 1; i >= 0; i--) {
+    const above = rows[i];
+    if (above && above.type !== 'group' && above.level === level - 1) {
+      return { kind: 'focus', index: i };
+    }
+  }
+  return null;
+}
+
+/** The scrollTop that brings a row at `top` (height `height`) fully into a
+ *  viewport scrolled to `scrollTop`, moving as little as possible. A row taller
+ *  than the viewport aligns its top. Pure. */
+export function revealScrollTop(
+  top: number,
+  height: number,
+  scrollTop: number,
+  viewport: number,
+): number {
+  if (top < scrollTop) {
+    return top;
+  }
+  if (top + height > scrollTop + viewport) {
+    return Math.min(top, top + height - viewport);
+  }
+  return scrollTop;
+}
+
 // --- Card menus (gear + right-click context menu share one builder) ---
 
 /** Bundle members can't be uninstalled directly — the display name(s) for the
@@ -1829,8 +2272,7 @@ export function addRegistryPrompt(
       'your GLOBAL grimoire.toml (~/.grimoire) — the page asked for global scope, so this ' +
       'applies to every project on this machine, not just the one you have open';
   } else {
-    where =
-      'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
+    where = 'your GLOBAL grimoire.toml — no folder is open, so there is no project config to write';
   }
   const filters = patternClause('Include', link.include) + patternClause('Exclude', link.exclude);
   const filterNote = filters
