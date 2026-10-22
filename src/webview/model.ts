@@ -638,7 +638,9 @@ export function readDownloads(raw: WireSearchItem['downloads']): DownloadsVM | n
   return { total: raw.total, asOf, versions };
 }
 
-export function readRating(raw: WireSearchItem['rating']): RatingVM | null {
+export function readRating(
+  raw: { up?: unknown; url?: unknown } | null | undefined,
+): RatingVM | null {
   if (!raw || typeof raw.url !== 'string' || raw.url === '') {
     return null;
   }
