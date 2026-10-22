@@ -4,7 +4,13 @@
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CatalogService, LOADER_TIMEOUT_MS, SEARCH_PAGE_SIZE, mergePage } from '../catalog';
+import {
+  BACKGROUND_PAGE_SIZE,
+  CatalogService,
+  LOADER_TIMEOUT_MS,
+  SEARCH_PAGE_SIZE,
+  mergePage,
+} from '../catalog';
 import type { GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService } from '../scopes';
 
@@ -374,33 +380,47 @@ suite('catalog paging', () => {
   });
 
   test('loadNext continues offline at the next offset in background-sized pages', async () => {
+    const PAGE = BACKGROUND_PAGE_SIZE;
+    const limit = String(PAGE);
+    const total = 200 + 2 * PAGE + 250;
     const { scopes, resolveNext, argv } = deferredScopes('0.15.0');
     const catalog = new CatalogService(scopes);
     const search = catalog.search('');
     await flush();
-    resolveNext(rows(0, 200), { total: 2_450 })();
+    resolveNext(rows(0, 200), { total })();
     await search;
     assert.strictEqual(catalog.hasMore(), true);
 
     const second = catalog.loadNext();
     await flush();
-    resolveNext(rows(200, 1_000), { total: 2_450 })();
+    resolveNext(rows(200, PAGE), { total })();
     assert.deepStrictEqual(await second, {});
-    assert.deepStrictEqual(argv[1], ['search', '--offline', '--limit', '1000', '--offset', '200']);
+    assert.deepStrictEqual(argv[1], ['search', '--offline', '--limit', limit, '--offset', '200']);
 
     const third = catalog.loadNext();
     await flush();
-    resolveNext(rows(1_200, 1_000), { total: 2_450 })();
+    resolveNext(rows(200 + PAGE, PAGE), { total })();
     await third;
-    assert.deepStrictEqual(argv[2], ['search', '--offline', '--limit', '1000', '--offset', '1200']);
+    assert.deepStrictEqual(argv[2], [
+      'search',
+      '--offline',
+      '--limit',
+      limit,
+      '--offset',
+      String(200 + PAGE),
+    ]);
     const fourth = catalog.loadNext();
     await flush();
-    resolveNext(rows(2_200, 250), { total: 2_450 })();
+    resolveNext(rows(200 + 2 * PAGE, 250), { total })();
     await fourth;
-    assert.strictEqual(catalog.state().items.length, 2_450);
+    assert.strictEqual(catalog.state().items.length, total);
     assert.strictEqual(catalog.paging()?.hasMore, false);
     assert.strictEqual(catalog.hasMore(), false);
-    assert.strictEqual(catalog.row('reg/r2449')?.repo, 'reg/r2449', 'pages feed the row index');
+    assert.strictEqual(
+      catalog.row(`reg/r${total - 1}`)?.repo,
+      `reg/r${total - 1}`,
+      'pages feed the row index',
+    );
 
     assert.strictEqual((await catalog.loadNext()).superseded, true);
     assert.strictEqual(argv.length, 4, 'a finished list spawns nothing');
@@ -421,18 +441,18 @@ suite('catalog paging', () => {
       '--sort',
       'name',
       '--limit',
-      '1000',
+      String(BACKGROUND_PAGE_SIZE),
       '--offset',
       '200',
     ]);
-    resolveNext(rows(200, 1_000), { total: 9_000 })();
+    resolveNext(rows(200, BACKGROUND_PAGE_SIZE), { total: 9_000 })();
     await more;
   });
 
   test('a long chain of pages completes with no duplicates and no gaps, past any row ceiling', async () => {
     const stub = deferredScopes('0.15.0');
     const catalog = new CatalogService(stub.scopes);
-    const TOTAL = 25_200;
+    const TOTAL = SEARCH_PAGE_SIZE + 10 * BACKGROUND_PAGE_SIZE;
     const search = catalog.search('');
     await flush();
     serve(stub, TOTAL);
@@ -446,7 +466,7 @@ suite('catalog paging', () => {
     const offsets = stub.argv.map((args) => Number(args[args.indexOf('--offset') + 1]));
     assert.deepStrictEqual(
       offsets,
-      Array.from({ length: 26 }, (_, i) => (i === 0 ? 0 : 200 + (i - 1) * 1_000)),
+      Array.from({ length: 11 }, (_, i) => (i === 0 ? 0 : 200 + (i - 1) * BACKGROUND_PAGE_SIZE)),
     );
     assert.deepStrictEqual(
       catalog.rowsFrom(0).map((i) => i.repo),
@@ -526,10 +546,12 @@ suite('catalog paging', () => {
 
     test('a changed total reloads in the background and swaps in on the last page', async () => {
       const { stub, catalog } = await loadedList(1_200, 1_200);
+      // Two background pages, so the reload swaps in on the second.
+      const grown = SEARCH_PAGE_SIZE + BACKGROUND_PAGE_SIZE + 250;
       const token = catalog.paging()?.token;
       const again = catalog.search('q');
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       const state = await again;
       assert.strictEqual(state.items.length, 1_200, 'the old list stays on screen');
       assert.strictEqual(state.paging?.token, token);
@@ -538,16 +560,16 @@ suite('catalog paging', () => {
 
       const page = catalog.loadNext();
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       assert.deepStrictEqual(await page, {});
       assert.strictEqual(catalog.state().items.length, 1_200, 'still the old list mid-reload');
       assert.strictEqual(catalog.paging()?.token, token);
 
       const last = catalog.loadNext();
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       assert.deepStrictEqual(await last, { swapped: true });
-      assert.strictEqual(catalog.state().items.length, 1_450);
+      assert.strictEqual(catalog.state().items.length, grown);
       assert.notStrictEqual(catalog.paging()?.token, token);
       assert.strictEqual(catalog.hasMore(), false);
     });
@@ -1402,25 +1424,31 @@ suite('catalog reloads', () => {
 
   test('a repeat of the search that started a reload keeps that reload', async () => {
     const { stub, catalog } = await loadedList(1_200);
+    // Pages remain after the first background one, so there is a reload to keep.
+    const grown = SEARCH_PAGE_SIZE + 2 * BACKGROUND_PAGE_SIZE;
     const first = catalog.search('q');
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await first;
     const page = catalog.loadNext();
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await page;
     const loaded = stub.argv.length;
     const repeat = catalog.search('q'); // a watcher refresh while the reload loads
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await repeat;
     assert.strictEqual(stub.argv.length, loaded + 1, 'one page-one read, no restart');
     const next = catalog.loadNext();
     await flush();
     const args = stub.argv[stub.argv.length - 1] ?? [];
-    assert.strictEqual(args[args.indexOf('--offset') + 1], '1200', 'the reload carries on');
-    serve(stub, 1_450);
+    assert.strictEqual(
+      args[args.indexOf('--offset') + 1],
+      String(SEARCH_PAGE_SIZE + BACKGROUND_PAGE_SIZE),
+      'the reload carries on',
+    );
+    serve(stub, grown);
     await next;
   });
 
@@ -1497,5 +1525,80 @@ suite('catalog output overflow', () => {
     await flush();
     failNext('boom')();
     assert.strictEqual((await search).error, 'boom');
+  });
+});
+
+// A 20,000-row browse from the recorded 0.15.0 row: the call count bounds the
+// spawn overhead, the page size bounds the JSON.parse stall in the extension host.
+suite('catalog at 20,000 rows', () => {
+  const TOTAL = 20_000;
+  const MAX_CALLS = 10;
+  const MAX_PAGE_BYTES = 5 * 1024 * 1024;
+
+  test('a full browse takes at most 10 grim calls and no page prints over 5 MiB', async () => {
+    const text = fs.readFileSync(path.join(RECORDED, 'search-page-first.json'), 'utf8');
+    const recorded = JSON.parse(text) as { items: SearchItem[]; sources: unknown };
+    assert.strictEqual(
+      JSON.stringify(recorded, null, 2) + '\n',
+      text,
+      'the measure below is what grim prints',
+    );
+    const template = recorded.items[0] as SearchItem;
+    const catalogRows = Array.from({ length: TOTAL }, (_, n) => ({
+      ...template,
+      repo: template.repo.replace('pkg-000', `pkg-${String(n).padStart(3, '0')}`),
+    }));
+
+    const calls: string[][] = [];
+    const pageBytes: number[] = [];
+    const scopes = {
+      projectFolder: () => undefined,
+      grimVersion: () => Promise.resolve('0.15.0'),
+      run: <T>(args: string[]): Promise<GrimResult<T>> => {
+        calls.push(args);
+        if (isLoader(args)) {
+          const settled: GrimResult<SearchEnvelope> = {
+            ok: true,
+            value: { items: [], sources: recorded.sources },
+          };
+          return Promise.resolve(settled as GrimResult<T>);
+        }
+        const offset = Number(args[args.indexOf('--offset') + 1]);
+        const limit = Number(args[args.indexOf('--limit') + 1]);
+        const items = catalogRows.slice(offset, offset + limit);
+        const envelope = {
+          items,
+          sources: recorded.sources,
+          total: TOTAL,
+          truncated: offset + items.length < TOTAL,
+        };
+        pageBytes.push(Buffer.byteLength(JSON.stringify(envelope, null, 2)));
+        const page: GrimResult<SearchEnvelope> = { ok: true, value: envelope };
+        return Promise.resolve(page as GrimResult<T>);
+      },
+    } as unknown as ScopeService;
+
+    const catalog = new CatalogService(scopes);
+    await catalog.search('');
+    for (let i = 0; catalog.hasMore(); i++) {
+      assert.ok(i < 30, 'the walk ends');
+      assert.deepStrictEqual(await catalog.loadNext(), {});
+    }
+
+    const repos = catalog.rowsFrom(0).map((item) => item.repo);
+    assert.deepStrictEqual(
+      repos,
+      catalogRows.map((item) => item.repo),
+      'every row loaded once, in order',
+    );
+    assert.strictEqual(catalog.paging()?.loaded, TOTAL);
+    assert.ok(
+      calls.length <= MAX_CALLS,
+      `${calls.length} grim calls: ${calls.map((a) => a.join(' ')).join(' | ')}`,
+    );
+    assert.ok(
+      pageBytes.every((bytes) => bytes <= MAX_PAGE_BYTES),
+      `a page printed over 5 MiB: ${pageBytes.join(', ')}`,
+    );
   });
 });

@@ -10,11 +10,16 @@ export type Scope = 'project' | 'global';
  *  persisted card cap, so restoring the last round needs no second page. */
 export const SEARCH_PAGE_SIZE = 200;
 
-/** Rows each background page after the first asks for (~2 MB of grim output).
- *  Every page spawns grim, which re-ranks the cached catalog whatever the page
- *  size, so fewer, larger pages finish sooner; much past this one JSON.parse
- *  stalls the shared extension host. */
-export const BACKGROUND_PAGE_SIZE = 1_000;
+/** Rows each background page after the first asks for. Every page spawns grim,
+ *  which re-ranks the cached catalog whatever the page size, so fewer, larger
+ *  pages finish sooner: a 20,000-row browse takes 10 calls (loader, first page,
+ *  eight of these). A page stays under 5 MiB of output (~2 KB a row), which
+ *  bounds the JSON.parse stall in the shared extension host. */
+export const BACKGROUND_PAGE_SIZE = 2_500;
+
+/** The most cards one host-to-webview message carries, so a long list reaches
+ *  the webview in pieces and neither side handles it in one huge message. */
+export const MAX_POST_CARDS = 1_000;
 
 /** Where a paged Browse list stands. `token` identifies the search that owns
  *  the list, so an append or retry aimed at a replaced list is dropped. */
@@ -337,7 +342,9 @@ export type HostToSidebar =
    *  holds `offset` of them. Only new cards ride it, so a 30,000-row list costs
    *  one post per row instead of the whole list per page. `installed` is
    *  present only when the Installed set changed. A webview whose list is not
-   *  exactly `offset` rows long ignores it; the next full `state` heals. */
+   *  exactly `offset` rows long ignores it; the next full `state` heals. No
+   *  message carries more than {@link MAX_POST_CARDS} cards: a longer list
+   *  arrives as a `state` plus appends. */
   | {
       type: 'append';
       token: number;

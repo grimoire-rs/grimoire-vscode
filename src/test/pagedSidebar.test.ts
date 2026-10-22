@@ -11,7 +11,13 @@ import type { CachedCardMeta } from '../detailsCache';
 import type { ContextInfo, GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import type { HostToSidebar, PagingState, SidebarState } from '../webview/protocol';
+import { applyAppend } from '../webview/model';
+import {
+  MAX_POST_CARDS,
+  type HostToSidebar,
+  type PagingState,
+  type SidebarState,
+} from '../webview/protocol';
 
 type Append = Extract<HostToSidebar, { type: 'append' }>;
 
@@ -90,12 +96,24 @@ interface Controls {
   maxInFlight: number;
 }
 
-/** A catalog that pages: each search starts a new list of one row, and each
- *  accepted loadNext appends one more, up to `total`. Either call can be held. */
+/** Rows a search starts a list with, and rows each accepted loadNext adds. */
+interface Sizes {
+  first: number;
+  page: number;
+}
+
+/** A catalog that pages: each search starts a new list of `first` rows (one by
+ *  default), and each accepted loadNext appends `page` more, up to `total`.
+ *  Either call can be held. */
 function pagedCatalog(
   total: number,
   paged: boolean,
+  { first, page }: Sizes,
 ): { catalog: CatalogService; controls: Controls } {
+  const rowsAt = (from: number): SearchItem[] =>
+    Array.from({ length: Math.max(0, Math.min(page, total - from)) }, (_, i) => row(from + i));
+  const firstRows = (): SearchItem[] =>
+    Array.from({ length: Math.min(first, total) }, (_, n) => row(n));
   let items: SearchItem[] = [];
   let token = 0;
   let shadow: { items: SearchItem[]; token: number } | null = null;
@@ -130,11 +148,11 @@ function pagedCatalog(
     search: async (): Promise<CatalogState> => {
       await controls.hold.search;
       if (controls.reload && items.length >= total) {
-        shadow = { items: [row(0)], token: token + 1 };
+        shadow = { items: firstRows(), token: token + 1 };
         return state();
       }
       token += 1;
-      items = [row(0)];
+      items = firstRows();
       const snapshot = state();
       if (controls.landAfterSnapshot) {
         items = Array.from({ length: total }, (_, n) => row(n));
@@ -164,7 +182,7 @@ function pagedCatalog(
           controls.pageIncomplete?.(controls.loadNextCalls) ?? (controls.warn ? warned : undefined);
         const verdict = incomplete ? { incomplete } : {};
         if (shadow) {
-          shadow.items = [...shadow.items, row(shadow.items.length)];
+          shadow.items = [...shadow.items, ...rowsAt(shadow.items.length)];
           if (shadow.items.length < total) {
             return verdict;
           }
@@ -172,7 +190,7 @@ function pagedCatalog(
           shadow = null;
           return { swapped: true, ...verdict };
         }
-        items = [...items, row(items.length)];
+        items = [...items, ...rowsAt(items.length)];
         return verdict;
       } finally {
         controls.inFlight -= 1;
@@ -240,6 +258,8 @@ function makeSidebar(
   options: {
     total?: number;
     paged?: boolean;
+    first?: number;
+    page?: number;
     /** The real catalog over a scripted grim, in place of the paging double. */
     catalog?: CatalogService;
   } = {},
@@ -266,7 +286,10 @@ function makeSidebar(
     projectFolder: () => undefined,
     projectSearchableProbe: async () => false,
   } as unknown as ScopeService;
-  const { catalog: double, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true);
+  const { catalog: double, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true, {
+    first: options.first ?? 1,
+    page: options.page ?? 1,
+  });
   const catalog = options.catalog ?? double;
   const delegate: SidebarDelegate = {
     openDetails: () => {},
@@ -678,5 +701,178 @@ suite('paged sidebar: background page walker', () => {
     assert.strictEqual(swapped.items.length, 4);
     assert.strictEqual(swapped.paging?.hasMore, false);
     assert.notStrictEqual(swapped.paging?.token, token);
+  });
+});
+
+/** The cards a host message carries, whichever way it carries them. */
+function cardsIn(message: HostToSidebar): number {
+  if (message.type === 'state') {
+    return message.state.items.length;
+  }
+  return message.type === 'append' ? message.cards.length : 0;
+}
+
+/** What the webview ends up holding: a state replaces it, and every append must
+ *  continue it exactly as applyAppend demands. */
+function fold(posted: HostToSidebar[]): SidebarState {
+  let held: SidebarState | null = null;
+  for (const message of posted) {
+    if (message.type === 'state') {
+      held = message.state;
+    } else if (message.type === 'append') {
+      held = applyAppend(held, message);
+      assert.ok(held, `the append at offset ${message.offset} continues the list held`);
+    }
+  }
+  assert.ok(held, 'a state was posted');
+  return held;
+}
+
+const reposUpTo = (count: number): string[] =>
+  Array.from({ length: count }, (_, n) => `${PAGE}${n}`);
+
+suite('paged sidebar: chunked posts', () => {
+  test('a first state of 2,600 cards posts a full state, then appends that complete it', async () => {
+    const { provider, posted } = makeSidebar([healthy()], { total: 2_600, first: 2_600 });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.ok(
+      posted.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${posted.map(cardsIn).join(', ')}`,
+    );
+    assert.strictEqual(last(posted).items.length, MAX_POST_CARDS);
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length]),
+      [
+        [1_000, 1_000],
+        [2_000, 600],
+      ],
+    );
+    const token = last(posted).paging?.token;
+    assert.ok(sent.every((a) => a.token === token && a.paging.token === token));
+    assert.deepStrictEqual(
+      [last(posted).paging, ...sent.map((a) => a.paging)].map((p) => [p?.loaded, p?.hasMore]),
+      [
+        [1_000, true],
+        [2_000, true],
+        [2_600, false],
+      ],
+      'every chunk but the last claims more is coming',
+    );
+    assert.deepStrictEqual(sent[1]?.paging, {
+      token,
+      loaded: 2_600,
+      total: 2_600,
+      lowerBound: false,
+      hasMore: false,
+    });
+
+    const held = fold(posted);
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.strictEqual(held.paging?.loaded, 2_600);
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a walker page of 2,500 rows posts appends of at most 1,000, installed on the last', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      total: 2_700,
+      first: 200,
+      page: 2_500,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+
+    assert.ok(
+      posted.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${posted.map(cardsIn).join(', ')}`,
+    );
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length]),
+      [
+        [200, 1_000],
+        [1_200, 1_000],
+        [2_200, 500],
+      ],
+    );
+    assert.deepStrictEqual(
+      sent.map((a) => [a.paging.loaded, a.paging.hasMore]),
+      [
+        [1_200, true],
+        [2_200, true],
+        [2_700, false],
+      ],
+    );
+    assert.deepStrictEqual(
+      sent.map((a) => a.installed !== undefined),
+      [false, false, true],
+      'the installed set arrives once, with the last chunk',
+    );
+
+    const held = fold(posted);
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_700),
+    );
+    assert.strictEqual(held.paging?.loaded, 2_700);
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a swap of 2,600 rows posts as chunks of at most 1,000 and rebuilds the new list', async () => {
+    const { provider, posted, controls } = makeSidebar([healthy()], {
+      total: 2_600,
+      first: 1,
+      page: 2_599,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    const token = replay(posted).paging?.token;
+
+    controls.reload = true;
+    const before = posted.length;
+    await provider.refresh();
+    await until(() => replay(posted).paging?.token !== token, 'the swap');
+
+    const after = posted.slice(before);
+    assert.ok(
+      after.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${after.map(cardsIn).join(', ')}`,
+    );
+    const ready = states(after).filter((st) => st.phase === 'ready');
+    assert.strictEqual(ready.length, 2, 'the refresh state, then the swap');
+    assert.ok(ready.every((st) => st.items.length === MAX_POST_CARDS));
+    const held = fold(after);
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.notStrictEqual(held.paging?.token, token);
+    assert.strictEqual(held.paging?.loaded, 2_600);
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a list of exactly 1,000 cards posts as one message, as before', async () => {
+    const { provider, posted } = makeSidebar([healthy()], { total: 1_000, first: 1_000 });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.strictEqual(last(posted).items.length, 1_000);
+    assert.deepStrictEqual(appends(posted), []);
+    assert.strictEqual(last(posted).paging?.hasMore, false);
+  });
+
+  test('a grim that cannot page posts its capped list whole', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      paged: false,
+      total: 1_500,
+      first: 1_500,
+    });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.strictEqual(last(posted).items.length, 1_500);
+    assert.deepStrictEqual(appends(posted), []);
   });
 });

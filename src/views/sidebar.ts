@@ -41,16 +41,17 @@ import {
   type ScopeStatus,
   type SortMode,
 } from '../webview/model';
-import type {
-  CardVM,
-  GrimOrigin,
-  HostToSidebar,
-  PagingState,
-  RegistryVM,
-  SidebarState,
-  SidebarToHost,
-  ViewAction,
-  ViewOptions,
+import {
+  MAX_POST_CARDS,
+  type CardVM,
+  type GrimOrigin,
+  type HostToSidebar,
+  type PagingState,
+  type RegistryVM,
+  type SidebarState,
+  type SidebarToHost,
+  type ViewAction,
+  type ViewOptions,
 } from '../webview/protocol';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
@@ -1130,15 +1131,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     this.postedCatalogIncomplete = this.lastCatalogIncomplete;
-    this.post({
-      type: 'append',
-      token: round.paging.token,
-      offset,
-      cards,
-      ...(installed ? { installed } : {}),
-      paging: round.paging,
-      catalogIncomplete: this.lastCatalogIncomplete,
-    });
+    this.postChunks(round.paging, offset, cards, installed);
+  }
+
+  /** Posts `cards` as appends of at most MAX_POST_CARDS, so no message makes the
+   *  webview or this host handle a huge list at once. Every chunk but the last
+   *  claims more is coming, so the webview shows the list as still loading until
+   *  the last one carries the real paging and `installed`. At least one append
+   *  goes out, because a paging or installed change can arrive with no cards. */
+  private postChunks(
+    paging: PagingState,
+    offset: number,
+    cards: CardVM[],
+    installed?: CardVM[],
+  ): void {
+    let from = 0;
+    do {
+      const chunk = cards.slice(from, from + MAX_POST_CARDS);
+      const end = from + chunk.length;
+      const last = end >= cards.length;
+      this.post({
+        type: 'append',
+        token: paging.token,
+        offset: offset + from,
+        cards: chunk,
+        ...(last && installed ? { installed } : {}),
+        paging: last ? paging : { ...paging, loaded: offset + end, hasMore: true },
+        catalogIncomplete: this.lastCatalogIncomplete,
+      });
+      from = end;
+    } while (from < cards.length);
   }
 
   /** Looks up the catalog row of installed artifacts the loaded pages lack. */
@@ -1346,6 +1368,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }): void {
     const snap = partial.snapshot;
     this.postedCatalogIncomplete = this.lastCatalogIncomplete;
+    // ponytail: without paging (grim < 0.15.0) the list posts whole, since an
+    // append needs a paging token. grim caps each source at 500 rows there, so
+    // the post grows only with the number of configured sources.
+    const overflow = partial.paging && partial.items.length > MAX_POST_CARDS ? partial.paging : null;
+    const paging = overflow ? { ...overflow, loaded: MAX_POST_CARDS, hasMore: true } : partial.paging;
     const projectName = snap?.projectFolder
       ? (snap.projectFolder.split(/[\\/]/).pop() ?? null)
       : null;
@@ -1355,7 +1382,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // webview re-stamps the active tab before rendering (model.ts viewForTab).
       mode: 'browse',
       query: this.query,
-      items: partial.items,
+      items: overflow ? partial.items.slice(0, MAX_POST_CARDS) : partial.items,
       installedItems: partial.installed,
       scopes: {
         projectOpen: snap?.projectFolder !== undefined,
@@ -1369,7 +1396,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       syncedAt: partial.syncedAt ?? null,
       now: Date.now(),
       ...(partial.stale === true ? { stale: true } : {}),
-      ...(partial.paging ? { paging: partial.paging } : {}),
+      ...(paging ? { paging } : {}),
       ...(this.lastCatalogIncomplete ? { catalogIncomplete: true } : {}),
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
@@ -1387,5 +1414,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         : {}),
     };
     this.post({ type: 'state', state });
+    if (overflow) {
+      this.postChunks(overflow, MAX_POST_CARDS, partial.items.slice(MAX_POST_CARDS));
+    }
   }
 }

@@ -6282,7 +6282,7 @@ suite('extension integration', () => {
     const TOTAL = 450;
 
     /** One canned page: `count` rows from `offset`, with grim's `total`. The
-     *  walker asks for 1000 rows after the first 200, so one file holds the rest. */
+     *  walker asks for 2500 rows after the first 200, so one file holds the rest. */
     function cannedPage(offset: number, count: number, sources?: unknown[]): void {
       const items = Array.from({ length: count }, (_, i) =>
         searchItem(`ghcr.io/grimoire-rs/skills/paged-${offset + i}`),
@@ -6372,7 +6372,7 @@ suite('extension integration', () => {
         assert.ok(lines[0]?.includes('--limit 200 --offset 0'), `page one: ${lines[0]}`);
         assert.ok(lines[0]?.includes('--offline'), 'page one reads the disk catalog');
         assert.ok(lines[1]?.includes('--offline'), `later pages are offline: ${lines[1]}`);
-        assert.ok(lines[1]?.includes('--limit 1000 --offset 200'), `page two: ${lines[1]}`);
+        assert.ok(lines[1]?.includes('--limit 2500 --offset 200'), `page two: ${lines[1]}`);
         assert.strictEqual(states.at(-1)?.items.length, 200, 'the state carried page one only');
         const done = replayed(posted);
         assert.strictEqual(done.repos.length, TOTAL);
