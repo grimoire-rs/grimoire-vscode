@@ -483,9 +483,30 @@ export type GrimResult<T> =
 /** `search --format json` runs ~2 KB per row, so 128 MiB leaves headroom for large indexes. */
 const MAX_OUTPUT_BYTES = 128 * 1024 * 1024;
 
+/** A catalog refresh may take up to 360 s inside grim, so any call that can
+ *  trigger one is given more than that. */
+export const REFRESHING_TIMEOUT_MS = 420_000;
+export const NON_REFRESHING_TIMEOUT_MS = 120_000;
+
+/** The deadline runJson gives a call that sets no `timeoutMs`. `--offline` and
+ *  `--version` never refresh a catalog, and `config set --dry-run` loads none;
+ *  every other call may, including `rate --dry-run`, which resolves its row
+ *  through the catalog. Only the tokens before the `--` separator count: a
+ *  positional after it is a query or reference, never a flag. Pure. */
+export function defaultTimeoutMs(args: string[]): number {
+  const sep = args.indexOf('--');
+  const tokens = (sep === -1 ? args : args.slice(0, sep)).slice(args[0] === '--global' ? 1 : 0);
+  const loadsNoCatalog =
+    tokens.includes('--offline') ||
+    tokens.includes('--version') ||
+    (tokens[0] === 'config' && tokens[1] === 'set' && tokens.includes('--dry-run'));
+  return loadsNoCatalog ? NON_REFRESHING_TIMEOUT_MS : REFRESHING_TIMEOUT_MS;
+}
+
 export interface RunOptions {
   cwd?: string;
   env?: Record<string, string>;
+  /** Overrides {@link defaultTimeoutMs}. */
   timeoutMs?: number;
   /** Overrides {@link MAX_OUTPUT_BYTES}; exists so a test can overflow cheaply. */
   maxBufferBytes?: number;
@@ -670,7 +691,7 @@ export function runJson<T>(
       {
         cwd: options.cwd,
         env: { ...process.env, ...options.env },
-        timeout: options.timeoutMs ?? 120_000,
+        timeout: options.timeoutMs ?? defaultTimeoutMs(fullArgs),
         maxBuffer,
         shell: false,
       },

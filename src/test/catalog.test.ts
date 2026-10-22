@@ -2,7 +2,7 @@
 // triggers can search concurrently (the search box, watcher/command refreshes,
 // the details panels), so response ordering is the thing worth pinning down.
 import * as assert from 'assert';
-import { CatalogService, SEARCH_PAGE_SIZE, mergePage } from '../catalog';
+import { CatalogService, LOADER_TIMEOUT_MS, SEARCH_PAGE_SIZE, mergePage } from '../catalog';
 import type { GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService } from '../scopes';
 
@@ -989,7 +989,7 @@ suite('catalog loader', () => {
     await flush();
     resolveNext(rows(0, 3))();
     await search;
-    assert.ok((calls[0]?.[3] as number) > 120_000, 'longer than the default deadline');
+    assert.strictEqual(calls[0]?.[3], LOADER_TIMEOUT_MS, 'the loader sets its own deadline');
     settleLoader({ ok: true, value: { items: [] }, warnings: 'source down' });
     await flush();
     const again = catalog.search('b');

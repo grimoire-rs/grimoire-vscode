@@ -3,11 +3,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  NON_REFRESHING_TIMEOUT_MS,
+  REFRESHING_TIMEOUT_MS,
   addArgs,
   configListArgs,
   configSetArgs,
   configUnsetArgs,
   contextArgs,
+  defaultTimeoutMs,
   describeArgs,
   fetchArgs,
   initArgs,
@@ -16,6 +19,7 @@ import {
   isRetryable,
   parseReport,
   positionalOf,
+  rateArgs,
   refusedNames,
   editRegistrySteps,
   registryAddArgs,
@@ -1009,6 +1013,23 @@ suite('grim report parsing', () => {
     }
   });
 
+  test('runJson kills the child at an explicit timeoutMs, ahead of the default (skipped on Windows: POSIX stub)', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    this.timeout(5000);
+    // `exec` replaces the shell, so the kill reaches the sleeper itself and the
+    // stdout pipe closes with it. The default for `search` is 420 s.
+    const scriptPath = path.join(os.tmpdir(), `grim-timeout-${Date.now()}.sh`);
+    fs.writeFileSync(scriptPath, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    try {
+      const result = await runJson(scriptPath, ['search'], { timeoutMs: 300 });
+      assert.ok(!result.ok);
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
+
   test('runJson reports a stdout overflow as a clear error, not the truncated stdout (skipped on Windows: POSIX stub)', async function () {
     if (process.platform === 'win32') {
       this.skip();
@@ -1141,5 +1162,85 @@ suite('refusedNames', () => {
     assert.deepStrictEqual(refusedNames({ items: 'nope' }), []);
     assert.deepStrictEqual(refusedNames({ items: [null, 'x', 42] }), []);
     assert.deepStrictEqual(refusedNames('{"items":[]}'), []);
+  });
+});
+
+suite('defaultTimeoutMs', () => {
+  const ref = 'ghcr.io/grimoire-rs/skills/demo';
+  // runJson appends `--format json` ahead of any `--`; the verdict is read off
+  // that argv, so the tests go through the same shape.
+  const full = (args: string[]): string[] => withFlags(args, ['--format', 'json']);
+
+  test('a call that may refresh the catalog gets the long deadline', () => {
+    assert.strictEqual(REFRESHING_TIMEOUT_MS, 420_000);
+    assert.strictEqual(NON_REFRESHING_TIMEOUT_MS, 120_000);
+    for (const args of [statusArgs(), searchArgs(''), searchArgs('x', { refresh: true })]) {
+      assert.strictEqual(defaultTimeoutMs(full(args)), REFRESHING_TIMEOUT_MS, args.join(' '));
+    }
+  });
+
+  test('rate --dry-run resolves its row through the catalog, so online it is long', () => {
+    // --dry-run alone proves nothing: grim looks the row up and may refresh it.
+    assert.strictEqual(
+      defaultTimeoutMs(full(rateArgs(ref, { dryRun: true }))),
+      REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('--offline before the separator is the short deadline', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(withFlags(rateArgs(ref, { dryRun: true }), ['--offline']))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(searchArgs('', { offline: true, limit: 200, offset: 0 }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(searchArgs('demo', { offline: true }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('a positional is data: a query named --offline does not shorten the deadline', () => {
+    assert.deepStrictEqual(searchArgs('--offline'), ['search', '--', '--offline']);
+    assert.strictEqual(defaultTimeoutMs(full(searchArgs('--offline'))), REFRESHING_TIMEOUT_MS);
+    assert.strictEqual(
+      defaultTimeoutMs(full(rateArgs('--offline', { dryRun: true }))),
+      REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('a leading --global is skipped', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...searchArgs('', { offline: true })])),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...statusArgs()])),
+      REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...configSetArgs('k', 'v', { dryRun: true })])),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('config set --dry-run loads no catalog; any other dry run or config call does not qualify', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(configSetArgs('k', 'v', { dryRun: true }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(defaultTimeoutMs(full(configSetArgs('k', 'v'))), REFRESHING_TIMEOUT_MS);
+    // The key is a positional, so a key named --dry-run does not count either.
+    assert.strictEqual(
+      defaultTimeoutMs(full(configSetArgs('--dry-run', 'v'))),
+      REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(defaultTimeoutMs(full(configListArgs())), REFRESHING_TIMEOUT_MS);
+  });
+
+  test('--version never touches the catalog', () => {
+    assert.strictEqual(defaultTimeoutMs(['--version']), NON_REFRESHING_TIMEOUT_MS);
   });
 });

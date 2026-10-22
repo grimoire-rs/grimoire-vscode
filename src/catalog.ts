@@ -26,7 +26,7 @@ const LOADER_POLL_MS = 1_000;
 /** A settled loader is trusted this long; grim's own TTL decides what is stale. */
 const LOADER_REUSE_MS = 60_000;
 /** The loader's own bound. It outlives any build; this only frees a hung grim. */
-const LOADER_TIMEOUT_MS = 30 * 60_000;
+export const LOADER_TIMEOUT_MS = 30 * 60_000;
 
 export interface SearchOptions {
   refresh?: boolean;
