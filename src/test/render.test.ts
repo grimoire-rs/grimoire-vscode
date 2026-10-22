@@ -8,7 +8,10 @@ import {
   DEFAULT_FILTER,
   DEFAULT_INSTALLED_FILTER,
   DEFAULT_VIEW,
+  estimatedRowHeight,
   viewForTab,
+  windowRows,
+  type FlatRow,
   type ScopeStatus,
 } from '../webview/model';
 import { createMarkdown } from '../webview/markdown';
@@ -18,6 +21,7 @@ import {
   highlightJson,
   kindIcon,
   MAX_TREE_DEPTH,
+  prepareResults,
   renderCard,
   renderCardContextMenu,
   renderCompactRow,
@@ -32,8 +36,9 @@ import {
   renderSidebarSearch,
   renderSidebarTabs,
   revalidateIndicator,
+  type ResultsWindow,
 } from '../webview/render';
-import type { GrimOrigin } from '../webview/protocol';
+import type { CardVM, GrimOrigin, SidebarState, ViewOptions } from '../webview/protocol';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 import {
@@ -1013,8 +1018,14 @@ suite('sidebar rendering', () => {
     assert.ok(html.includes('grim 0.9.1 at /usr/bin/grim is too old.'), html);
     assert.ok(html.includes('Install state is unavailable'));
     assert.ok(html.indexOf('init-notification') < html.indexOf('sidebar-tabs'));
-    // Catalog cards still render — the catalog loaded fine.
-    assert.ok(html.includes('class="card'), 'browse cards still render');
+    // Catalog cards still render — the catalog loaded fine. The item's own
+    // data-repo, not `class="card`: that also matches the `class="cards"`
+    // container, which renders even over the empty state.
+    assert.ok(
+      html.includes('data-repo="ghcr.io/grimoire-rs/skills/grim-usage"'),
+      `the browse card renders: ${html}`,
+    );
+    assert.ok(!html.includes('No artifacts found'), 'not the empty state');
     // ...but nothing claims to know whether any of them is installed.
     assert.ok(!html.includes('data-action="install"'), 'no Install button');
     assert.ok(!html.includes('data-action="update"'), 'no Update button');
@@ -1197,7 +1208,7 @@ suite('sidebar rendering', () => {
       renderSidebarResults(sidebarState({ mode: 'installed', items }), DEFAULT_FILTER),
     );
     assert.ok(
-      collapsed.includes('data-action="toggle-node" data-node="project"'),
+      collapsed.includes('data-action="toggle-node" data-key="g:project" data-node="project"'),
       'a Project group header, not a toggle',
     );
     assert.ok(!collapsed.includes('data-action="menu"'), 'collapsed group renders no rows');
@@ -2848,7 +2859,9 @@ suite('tree indentation', () => {
       renderSidebarResults(sidebarState({ items }), DEFAULT_FILTER, treeView, expanded),
     );
     const groups = [
-      ...html.matchAll(/class="tree-node d(\d+)" data-action="toggle-node" data-node="([^"]+)"/g),
+      ...html.matchAll(
+        /class="tree-node d(\d+)" data-action="toggle-node" data-key="[^"]*" data-node="([^"]+)"/g,
+      ),
     ];
     assert.strictEqual(groups.length, CHAIN.length, 'one group row per namespace');
     for (const [, cls = '', id = ''] of groups) {
@@ -2856,7 +2869,11 @@ suite('tree indentation', () => {
       assert.notStrictEqual(level, -1, `unexpected group id ${id}`);
       assert.strictEqual(Number(cls), Math.min(level, MAX_TREE_DEPTH), `group ${id}`);
     }
-    const leaves = [...html.matchAll(/class="compact-row tree-leaf d(\d+)" data-repo="([^"]+)"/g)];
+    const leaves = [
+      ...html.matchAll(
+        /class="compact-row tree-leaf d(\d+)" data-key="[^"]*" data-repo="([^"]+)"/g,
+      ),
+    ];
     assert.strictEqual(leaves.length, CHAIN.length, 'one leaf row per package');
     for (const [, cls = '', repo = ''] of leaves) {
       // pkgN sits under lvlN, one level below it.
@@ -3017,5 +3034,779 @@ suite('paged Browse rendering', () => {
       renderSidebarSearch(partial({ hasMore: false }), { ...DEFAULT_FILTER, sort: 'rating' }),
     );
     assert.ok(!free.includes('aria-disabled'));
+  });
+});
+
+suite('windowed results (VX-R03)', () => {
+  const TOTAL = 20_000;
+  const NONE = new Set<string>();
+  const decode = (s: string): string =>
+    s
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
+  const skills = (n: number, hostOf: (i: number) => string = () => 'ghcr.io'): CardVM[] =>
+    Array.from({ length: n }, (_, i) =>
+      card({ repo: `${hostOf(i)}/team/skills/skill-${i}`, name: `skill-${i}` }),
+    );
+  const installedInBoth = (n: number): CardVM[] =>
+    skills(n).map((c) =>
+      card({
+        ...c,
+        state: 'installed',
+        installs: [bothInstalled('project'), bothInstalled('global')],
+      }),
+    );
+  const compact: ViewOptions = { ...DEFAULT_VIEW, density: 'compact' };
+
+  interface Layout {
+    name: string;
+    state: SidebarState;
+    view: ViewOptions;
+    expanded: Set<string>;
+  }
+  const layouts = (): Layout[] => {
+    const flat = sidebarState({ items: skills(TOTAL) });
+    const hosts = sidebarState({ items: skills(TOTAL, (i) => `host${i % 3}.example`) });
+    const treeItems = skills(TOTAL).map((c, i) =>
+      card({ ...c, repo: `reg.example/ns${i % 4}/skill-${i}` }),
+    );
+    const tree = sidebarState({ items: treeItems });
+    const treeOpen = new Set(collectNodeIds(buildTree(treeItems, {})));
+    return [
+      { name: 'comfortable list', state: flat, view: DEFAULT_VIEW, expanded: NONE },
+      { name: 'compact list', state: flat, view: compact, expanded: NONE },
+      {
+        name: 'registry-grouped list',
+        state: hosts,
+        view: { ...DEFAULT_VIEW, browseGroup: 'registry' },
+        expanded: new Set(['host0.example', 'host1.example', 'host2.example']),
+      },
+      {
+        name: 'scope-grouped Installed',
+        state: sidebarState({ mode: 'installed', items: installedInBoth(TOTAL / 2) }),
+        view: DEFAULT_VIEW,
+        expanded: new Set(['project', 'global']),
+      },
+      {
+        name: 'comfortable (roomy) tree',
+        state: tree,
+        view: { ...DEFAULT_VIEW, mode: 'tree' },
+        expanded: treeOpen,
+      },
+      { name: 'compact tree', state: tree, view: { ...compact, mode: 'tree' }, expanded: treeOpen },
+    ];
+  };
+
+  /** Reads the rendered window back out of the markup. */
+  function inspect(html: string): { keys: string[]; before: number; after: number } {
+    const keys = [...html.matchAll(/data-key="([^"]*)"/g)].map((m) => decode(m[1] ?? ''));
+    const firstKeyAt = html.search(/data-key="/);
+    let before = 0;
+    let after = 0;
+    for (const m of html.matchAll(/class="win-spacer" data-px="(\d+)"/g)) {
+      if (m.index < firstKeyAt) {
+        before += Number(m[1]);
+      } else {
+        after += Number(m[1]);
+      }
+    }
+    return { keys, before, after };
+  }
+
+  /** The rendered run is contiguous in `rows`, within the cap, its spacers are
+   *  exactly the unrendered rows' heights, and it covers the viewport. */
+  function assertWindow(
+    html: string,
+    rows: FlatRow[],
+    view: ViewOptions,
+    win: ResultsWindow,
+  ): { first: number; end: number } {
+    const { keys, before, after } = inspect(html);
+    const heightOf = (r: FlatRow): number => win.heights?.get(r.key) ?? estimatedRowHeight(r, view);
+    assert.ok(keys.length > 0 && keys.length <= 200, `${keys.length} rows rendered`);
+    const first = rows.findIndex((r) => r.key === keys[0]);
+    assert.ok(first >= 0, 'the first rendered row is a real row');
+    keys.forEach((k, i) => assert.strictEqual(rows[first + i]?.key, k, `row ${i} is contiguous`));
+    const end = first + keys.length;
+    assert.strictEqual(before, sum(rows.slice(0, first).map(heightOf)), 'leading spacer');
+    assert.strictEqual(after, sum(rows.slice(end).map(heightOf)), 'trailing spacer');
+    const whole = sum(rows.map(heightOf));
+    const top = Math.min(win.scrollTop, Math.max(whole - win.viewport, 0));
+    assert.ok(before <= top, 'nothing visible sits under the leading spacer');
+    assert.ok(whole - after >= Math.min(top + win.viewport, whole), 'nothing visible is cut off');
+    return { first, end };
+  }
+
+  suite('every layout at 20,000 rows', () => {
+    for (const layout of layouts()) {
+      const { name, state, view, expanded } = layout;
+
+      test(`${name}: the first paint renders a bounded window with a trailing spacer`, async () => {
+        const html = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, view, expanded));
+        const { rows } = prepareResults(state, DEFAULT_FILTER, view, expanded);
+        assert.ok(rows.length >= TOTAL, `${rows.length} rows to window`);
+        const { first } = assertWindow(html, rows, view, { scrollTop: 0, viewport: 800 });
+        assert.strictEqual(first, 0);
+        assert.strictEqual(inspect(html).before, 0);
+        assert.ok(inspect(html).after > 0);
+        assert.ok(!html.includes('class="win-spacer" data-px="0"'), 'a zero spacer is omitted');
+      });
+
+      test(`${name}: scrolled to the middle it renders both spacers around that offset`, async () => {
+        const { rows } = prepareResults(state, DEFAULT_FILTER, view, expanded);
+        const whole = sum(rows.map((r) => estimatedRowHeight(r, view)));
+        const win: ResultsWindow = { scrollTop: Math.floor(whole / 2), viewport: 800 };
+        const html = await litHtml(
+          renderSidebarResults(state, DEFAULT_FILTER, view, expanded, win),
+        );
+        const { first, end } = assertWindow(html, rows, view, win);
+        assert.ok(first > 0 && end < rows.length, 'rows are trimmed on both sides');
+        assert.ok(inspect(html).before > 0 && inspect(html).after > 0);
+      });
+
+      test(`${name}: scrolled away from the focused row it still renders it, the spacers adding up`, async () => {
+        const { rows } = prepareResults(state, DEFAULT_FILTER, view, expanded);
+        const whole = sum(rows.map((r) => estimatedRowHeight(r, view)));
+        for (const focused of [rows[3], rows[rows.length - 4]]) {
+          const win: ResultsWindow = {
+            scrollTop: Math.floor(whole / 2),
+            viewport: 800,
+            focusKey: focused?.key ?? '',
+          };
+          const html = await litHtml(
+            renderSidebarResults(state, DEFAULT_FILTER, view, expanded, win),
+          );
+          const keys = assertWholeList(html, rows, view, win);
+          assert.ok(keys.includes(focused?.key ?? ''), 'the focused row is rendered');
+          assert.ok(keys.length <= 201);
+          const stops = stopsOf(html);
+          assert.strictEqual(stops.length, 1);
+          assert.ok(stops[0]?.includes(`data-key="${focused?.key}"`), 'and is the stop');
+        }
+      });
+
+      test(`${name}: with the last row as the stop, no control before it is in the tab order`, async () => {
+        const { rows } = prepareResults(state, DEFAULT_FILTER, view, expanded);
+        const last = rows[rows.length - 1]?.key ?? '';
+        const html = await litHtml(
+          renderSidebarResults(state, DEFAULT_FILTER, view, expanded, {
+            scrollTop: 0,
+            viewport: 800,
+            focusKey: last,
+          }),
+        );
+        const stopAt = html.lastIndexOf('<', html.indexOf(`data-key="${last}"`));
+        const ahead = [...html.slice(0, stopAt).matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+        assert.ok(ahead.length > 0, 'the window renders buttons ahead of the stop');
+        assert.deepStrictEqual(
+          ahead.filter((b) => !b.includes('tabindex="-1"')),
+          [],
+          'every one of them is out of the tab order',
+        );
+      });
+
+      // main.ts measureScroll() reads the list's offset from `.cards`; a layout
+      // without it measures 0, so its window never follows the scroll.
+      test(`${name}: the rows sit inside the .cards element the scroll offset is measured from`, async () => {
+        const html = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, view, expanded));
+        const anchor = html.indexOf('<div class="cards">');
+        assert.ok(anchor >= 0, 'a .cards wrapper');
+        assert.ok(anchor < html.search(/data-key="/), 'the first row is inside it');
+      });
+
+      test(`${name}: rows carry their ARIA position and exactly one roving stop`, async () => {
+        const html = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, view, expanded));
+        const { keys } = inspect(html);
+        // Rows only: the buttons nested in them carry their own tabindex.
+        const stops = [...html.matchAll(/<[^>]*data-key="[^"]*"[^>]*>/g)].flatMap((m) => {
+          const stop = /tabindex="(-?\d+)"/.exec(m[0]);
+          return stop ? [stop[1]] : [];
+        });
+        assert.strictEqual(stops.length, keys.length, 'every windowed row is a focus stop');
+        assert.strictEqual(stops.filter((t) => t === '0').length, 1);
+        assert.strictEqual(stops[0], '0', 'the first rendered row when nothing is focused');
+        const sized = [...html.matchAll(/aria-setsize="(\d+)"/g)].length;
+        const placed = [...html.matchAll(/aria-posinset="(\d+)"/g)].length;
+        assert.strictEqual(sized, placed);
+        assert.ok(sized > 0 && sized <= keys.length, 'headers carry no set position');
+        if (view.mode === 'tree') {
+          assert.strictEqual(
+            [...html.matchAll(/aria-level="(\d+)"/g)].length,
+            keys.length,
+            'every tree row has a level',
+          );
+          assert.match(html, /role="tree"/);
+        }
+      });
+    }
+  });
+
+  test('focusKey moves the single roving stop onto that row', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const target = rows[3]?.key ?? '';
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, {
+        scrollTop: 0,
+        viewport: 800,
+        focusKey: target,
+      }),
+    );
+    const zero = [...html.matchAll(/<[^>]*tabindex="0"[^>]*>/g)];
+    assert.strictEqual(zero.length, 1);
+    assert.ok(zero[0]?.[0].includes(`data-key="${target}"`), 'on the focused row');
+  });
+
+  /** Walks the markup in document order: the rendered rows' keys and the
+   *  spacers between them, so a pinned row's position and the sum can be read. */
+  function walk(html: string): {
+    keys: string[];
+    spacers: number[];
+    order: Array<string | number>;
+  } {
+    const order: Array<string | number> = [];
+    for (const m of html.matchAll(/data-key="([^"]*)"|class="win-spacer" data-px="(\d+)"/g)) {
+      order.push(m[1] !== undefined ? decode(m[1]) : Number(m[2]));
+    }
+    return {
+      keys: order.filter((o): o is string => typeof o === 'string'),
+      spacers: order.filter((o): o is number => typeof o === 'number'),
+      order,
+    };
+  }
+
+  /** Every row that renders plus every spacer is the whole list, and the rows
+   *  come out in list order. */
+  function assertWholeList(
+    html: string,
+    rows: FlatRow[],
+    view: ViewOptions,
+    win: ResultsWindow,
+  ): string[] {
+    const { keys, spacers } = walk(html);
+    const at = keys.map((k) => rows.findIndex((r) => r.key === k));
+    assert.ok(
+      at.every((i) => i >= 0),
+      'every rendered row is a real row',
+    );
+    assert.deepStrictEqual(
+      at,
+      [...at].sort((a, b) => a - b),
+      'rows keep their list order',
+    );
+    const heightOf = (r: FlatRow): number => win.heights?.get(r.key) ?? estimatedRowHeight(r, view);
+    assert.strictEqual(
+      sum(spacers) + sum(at.map((i) => heightOf(rows[i] as FlatRow))),
+      sum(rows.map(heightOf)),
+      'spacers and rendered rows add up to the list',
+    );
+    return keys;
+  }
+
+  const stopsOf = (html: string): string[] =>
+    [
+      ...html.matchAll(
+        /<[^>]*data-key="[^"]*"[^>]*tabindex="0"[^>]*>|<[^>]*tabindex="0"[^>]*data-key="[^"]*"[^>]*>/g,
+      ),
+    ].map((m) => m[0]);
+
+  test('a focusKey outside the window renders that row pinned, as the one roving stop', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const far = rows[TOTAL - 1]?.key ?? '';
+    const win: ResultsWindow = { scrollTop: 0, viewport: 800, focusKey: far };
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, win),
+    );
+    const keys = assertWholeList(html, rows, DEFAULT_VIEW, win);
+    assert.strictEqual(keys[keys.length - 1], far, 'rendered after the window');
+    const stops = stopsOf(html);
+    assert.strictEqual(stops.length, 1);
+    assert.ok(stops[0]?.includes(`data-key="${far}"`), 'the pinned row is the stop');
+  });
+
+  test('a focused row that the list scrolls far away from stays mounted, above the window', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const focused = rows[3]?.key ?? '';
+    const win: ResultsWindow = { scrollTop: 9200, viewport: 800, focusKey: focused };
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, win),
+    );
+    const keys = assertWholeList(html, rows, DEFAULT_VIEW, win);
+    assert.strictEqual(keys[0], focused, 'rendered before the window');
+    assert.ok(keys.length > 2 && keys.length <= 201, `${keys.length} rows rendered`);
+    const stops = stopsOf(html);
+    assert.strictEqual(stops.length, 1);
+    assert.ok(stops[0]?.includes(`data-key="${focused}"`));
+    const [lead, gap] = walk(html).spacers;
+    assert.strictEqual(lead, 3 * estimatedRowHeight(rows[0] as FlatRow, DEFAULT_VIEW));
+    assert.ok((gap ?? 0) > 0, 'a spacer stands in for the rows between it and the window');
+  });
+
+  test('a focused row inside the window is not pinned twice', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const win: ResultsWindow = { scrollTop: 0, viewport: 800, focusKey: rows[3]?.key ?? '' };
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, win),
+    );
+    const { keys } = walk(html);
+    assert.strictEqual(new Set(keys).size, keys.length);
+    assert.strictEqual(inspect(html).before, 0);
+  });
+
+  test('a focusKey that names no row falls back to the first row at the visible top', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, {
+        scrollTop: 0,
+        viewport: 800,
+        focusKey: 'gone',
+      }),
+    );
+    const stops = stopsOf(html);
+    assert.strictEqual(stops.length, 1);
+    assert.ok(stops[0]?.includes(`data-key="${rows[0]?.key}"`));
+  });
+
+  test('with no focus and a scrolled list the tab stop is the first row at the visible top, not the overscan', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const win: ResultsWindow = { scrollTop: 9200, viewport: 800 };
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, win),
+    );
+    const heights = rows.map((r) => estimatedRowHeight(r, DEFAULT_VIEW));
+    const { start, firstVisible } = windowRows(heights, win.scrollTop, win.viewport);
+    assert.ok(start < firstVisible, 'the window renders overscan above the viewport');
+    const zero = [...html.matchAll(/<[^>]*tabindex="0"[^>]*>/g)];
+    assert.strictEqual(zero.length, 1);
+    assert.ok(zero[0]?.[0].includes(`data-key="${rows[firstVisible]?.key}"`), 'on the visible top');
+    assert.ok(!zero[0]?.[0].includes(`data-key="${rows[start]?.key}"`), 'not the first rendered');
+  });
+
+  suite('nested controls and the single roving tab stop', () => {
+    const buttonTags = (html: string): string[] =>
+      [...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]);
+    const cases: Array<[string, CardVM]> = [
+      ['not installed', card()],
+      ['installed', card({ state: 'installed', installs: [bothInstalled('project')] })],
+      ['outdated', outdatedCard()],
+      ['deprecated', card({ state: 'deprecated', deprecated: 'use another' })],
+    ];
+    const renderers: Array<[string, (c: CardVM, tabindex: 0 | -1) => unknown]> = [
+      ['card', (c, tabindex) => renderCard(c, { row: { key: 'k', tabindex } })],
+      [
+        'installed-tab card',
+        (c, tabindex) => renderCard(c, { variant: 'scope', row: { key: 'k', tabindex } }),
+      ],
+      ['compact row', (c, tabindex) => renderCompactRow(c, { row: { key: 'k', tabindex } })],
+    ];
+
+    for (const [layout, render] of renderers) {
+      for (const [label, c] of cases) {
+        test(`${layout}, ${label}: buttons leave the tab order unless the row is the stop`, async () => {
+          const off = buttonTags(await litHtml(render(c, -1)));
+          assert.ok(off.length > 0, 'the row has controls to guard');
+          assert.deepStrictEqual(
+            off.filter((b) => !b.includes('tabindex="-1"')),
+            [],
+            'all of them are tabindex -1 off the stop',
+          );
+          const on = buttonTags(await litHtml(render(c, 0)));
+          assert.deepStrictEqual(
+            on.filter((b) => b.includes('tabindex')),
+            [],
+            'none of them is touched on the stop row',
+          );
+        });
+      }
+    }
+
+    test('rows rendered without row options keep their buttons as they were', async () => {
+      for (const [, c] of cases) {
+        for (const out of [renderCard(c), renderCompactRow(c)]) {
+          assert.ok(!buttonTags(await litHtml(out)).some((b) => b.includes('tabindex')));
+        }
+      }
+    });
+  });
+
+  suite('a windowed row is named with its kind and install state', () => {
+    const row = { key: 'k', tabindex: 0 as const };
+    const installed = card({ state: 'installed', installs: [bothInstalled('project')] });
+    const renderers: Array<[string, (c: CardVM, unknown?: boolean) => unknown]> = [
+      ['card', (c, u) => renderCard(c, { row, ...(u ? { installStateUnknown: true } : {}) })],
+      [
+        'compact row',
+        (c, u) => renderCompactRow(c, { row, ...(u ? { installStateUnknown: true } : {}) }),
+      ],
+    ];
+    const labelOf = async (out: unknown): Promise<string> =>
+      /<div[^>]*role="article"[^>]*>/
+        .exec(await litHtml(out))?.[0]
+        .match(/aria-label="([^"]*)"/)?.[1] ?? '';
+
+    for (const [layout, render] of renderers) {
+      test(`${layout}: an outdated and an installed row read differently`, async () => {
+        const outdated = await labelOf(render(outdatedCard()));
+        const current = await labelOf(render(installed));
+        assert.notStrictEqual(outdated, current);
+        assert.match(outdated, /grim-usage, skill, installed .*, update to 1\.5\.0/);
+        assert.match(current, /grim-usage, skill, installed 1\.5\.0$/);
+        assert.match(await labelOf(render(card())), /not installed$/);
+      });
+
+      test(`${layout}: an unknown install state claims nothing about installs`, async () => {
+        const label = await labelOf(render(installed, true));
+        assert.strictEqual(label, 'grim-usage, skill');
+      });
+
+      test(`${layout}: a hostile name stays inert inside the label`, async () => {
+        const html = await litHtml(render(card({ name: '"><img src=x onerror=alert(1)>' })));
+        assert.ok(!html.includes('<img src=x'), 'no element built from the name');
+        assert.match(html, /aria-label="&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;, skill/);
+      });
+    }
+  });
+
+  test('the tree has an accessible name that tells Browse and Installed apart', async () => {
+    const items = skills(3).map((c) =>
+      card({ ...c, state: 'installed', installs: [bothInstalled('project')] }),
+    );
+    const open = new Set(collectNodeIds(buildTree(items, {})));
+    const tree = { ...compact, mode: 'tree' as const };
+    const nameOf = async (state: SidebarState): Promise<string | undefined> => {
+      const html = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, tree, open));
+      const tag = /<div[^>]*role="tree"[^>]*>/.exec(html)?.[0] ?? '';
+      return /aria-label="([^"]*)"/.exec(tag)?.[1];
+    };
+    const browse = await nameOf(sidebarState({ items }));
+    const installed = await nameOf(sidebarState({ mode: 'installed', items }));
+    assert.ok(browse && installed, `named: ${browse} / ${installed}`);
+    assert.notStrictEqual(browse, installed);
+  });
+
+  test('windowed card and compact rows are named; tree items, headers and bare rows are not', async () => {
+    const state = sidebarState({ items: [card({ repo: 'ghcr.io/team/skills/one', name: 'one' })] });
+    const named = /aria-label="one, skill, not installed"[^>]*>/;
+    const list = await litHtml(renderSidebarResults(state, DEFAULT_FILTER));
+    assert.match(/<div[^>]*class="card"[^>]*>/.exec(list)?.[0] ?? '', named);
+    const dense = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, compact));
+    assert.match(/<div[^>]*class="compact-row"[^>]*>/.exec(dense)?.[0] ?? '', named);
+    const open = new Set(collectNodeIds(buildTree(state.items, {})));
+    const tree = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, { ...compact, mode: 'tree' }, open),
+    );
+    const rowsOnly = tree.replace(/<div[^>]*role="tree"[^>]*>/, '');
+    assert.ok(!rowsOnly.includes('aria-label'), 'a treeitem is named by its content');
+    const grouped = await litHtml(
+      renderSidebarResults(
+        state,
+        DEFAULT_FILTER,
+        { ...DEFAULT_VIEW, browseGroup: 'registry' },
+        new Set(['ghcr.io']),
+      ),
+    );
+    assert.ok(!/<button[^>]*group-header[^>]*aria-label/.test(grouped));
+    for (const out of [renderCard(card()), renderCompactRow(card())]) {
+      assert.ok(!(await litHtml(out)).includes('aria-label'), 'no row options, no label');
+    }
+  });
+
+  suite('aria-setsize while Browse pages are still loading', () => {
+    const loading = (hasMore: boolean): SidebarState =>
+      sidebarState({
+        items: skills(3),
+        paging: { token: 1, loaded: 3, total: 600, lowerBound: false, hasMore },
+      });
+    const sizesOf = (html: string): string[] =>
+      [...html.matchAll(/aria-setsize="(-?\d+)"/g)].map((m) => m[1] ?? '');
+
+    test('flat, grouped and tree rows say -1 until the last page is in', async () => {
+      const tree = { ...compact, mode: 'tree' as const };
+      const layouts: Array<[ViewOptions, Set<string>]> = [
+        [DEFAULT_VIEW, NONE],
+        [compact, NONE],
+        [{ ...DEFAULT_VIEW, browseGroup: 'registry' }, new Set(['ghcr.io'])],
+        [tree, new Set(collectNodeIds(buildTree(skills(3), {})))],
+      ];
+      for (const [view, expanded] of layouts) {
+        const partial = sizesOf(
+          await litHtml(renderSidebarResults(loading(true), DEFAULT_FILTER, view, expanded)),
+        );
+        assert.ok(partial.length >= 3, `${view.mode}/${view.density}: rows carry a size`);
+        assert.ok(partial.every((n) => n === '-1'), `${view.mode}/${view.density}: ${partial}`);
+        const done = sizesOf(
+          await litHtml(renderSidebarResults(loading(false), DEFAULT_FILTER, view, expanded)),
+        );
+        assert.ok(done.every((n) => n !== '-1'), `${view.mode}/${view.density}: complete`);
+      }
+    });
+
+    test('prepareResults hands the unknown size to flattenRows', () => {
+      const { rows } = prepareResults(loading(true), DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+      assert.ok(rows.every((r) => r.type === 'group' || r.setsize === -1));
+    });
+  });
+
+  test('a measured height replaces the estimate in the spacers', async () => {
+    const state = sidebarState({ items: skills(TOTAL) });
+    const { rows } = prepareResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const heights = new Map<string, number>([
+      [rows[0]?.key ?? '', 140],
+      [rows[TOTAL - 1]?.key ?? '', 61],
+    ]);
+    const win = { scrollTop: 0, viewport: 800, heights };
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, win),
+    );
+    assertWindow(html, rows, DEFAULT_VIEW, win);
+  });
+
+  test('a prepared list is reused, not recomputed, on a scroll render', async () => {
+    const state = sidebarState({ items: skills(50) });
+    const other = sidebarState({
+      items: skills(5).map((c) => card({ ...c, repo: `other/${c.name}` })),
+    });
+    const prepared = prepareResults(other, DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, DEFAULT_VIEW, NONE, {
+        scrollTop: 0,
+        viewport: 800,
+        prepared,
+      }),
+    );
+    assert.deepStrictEqual(
+      inspect(html).keys,
+      prepared.rows.map((r) => r.key).slice(0, inspect(html).keys.length),
+      'the rows come from `prepared`',
+    );
+    assert.ok(html.includes('5 results'), 'and so does the count');
+  });
+
+  test('prepareResults: Browse and Installed flatten, Updates and non-ready phases do not', () => {
+    const items = skills(7);
+    const browse = prepareResults(sidebarState({ items }), DEFAULT_FILTER, DEFAULT_VIEW, NONE);
+    assert.strictEqual(browse.filtered.length, 7);
+    assert.strictEqual(browse.rows.length, 7);
+    const installed = prepareResults(
+      sidebarState({ mode: 'installed', items: installedInBoth(3) }),
+      DEFAULT_FILTER,
+      DEFAULT_VIEW,
+      new Set(['project', 'global']),
+    );
+    assert.strictEqual(installed.filtered.length, 3);
+    assert.strictEqual(installed.rows.length, 3 * 2 + 2, 'both scopes, plus their headers');
+    const updates = prepareResults(
+      sidebarState({ mode: 'updates', items }),
+      DEFAULT_FILTER,
+      DEFAULT_VIEW,
+      NONE,
+    );
+    assert.strictEqual(updates.filtered, items, 'the whole slice, unfiltered');
+    assert.deepStrictEqual(updates.rows, [], 'never windowed');
+    for (const phase of ['loading', 'error', 'no-grim'] as const) {
+      const empty = prepareResults(
+        sidebarState({ phase, items }),
+        DEFAULT_FILTER,
+        DEFAULT_VIEW,
+        NONE,
+      );
+      assert.deepStrictEqual([empty.filtered, empty.rows], [[], []], phase);
+    }
+  });
+
+  test('the Updates tab is not windowed: every card renders, plain', async () => {
+    const items = skills(300).map((c) =>
+      card({
+        ...c,
+        state: 'outdated',
+        installs: [{ ...bothInstalled('project'), updateAvailable: true }],
+      }),
+    );
+    const html = await litHtml(
+      renderSidebarResults(sidebarState({ mode: 'updates', items }), DEFAULT_FILTER),
+    );
+    assert.strictEqual([...html.matchAll(/<div[^>]*class="card"/g)].length, 300);
+    assert.ok(!html.includes('win-spacer'));
+    assert.ok(!html.includes('data-key'));
+  });
+
+  test('rows keep the card and group markup the delegated handlers rely on', async () => {
+    const view = { ...DEFAULT_VIEW, browseGroup: 'registry' as const };
+    const state = sidebarState({ items: skills(3) });
+    const html = await litHtml(
+      renderSidebarResults(state, DEFAULT_FILTER, view, new Set(['ghcr.io'])),
+    );
+    assert.match(
+      html,
+      /<button[^>]*class="group-header"[^>]*data-action="toggle-node"[^>]*data-node="ghcr\.io"/,
+    );
+    assert.match(
+      html,
+      /<button[^>]*data-key="g:ghcr\.io"[^>]*tabindex="0"/,
+      'a header is a focus stop',
+    );
+    assert.ok(!/<button[^>]*group-header[^>]*aria-setsize/.test(html), 'but not a set member');
+    const cards = [...html.matchAll(/<div[^>]*class="card"[^>]*>/g)];
+    assert.strictEqual(cards.length, 3);
+    cards.forEach((m, i) => {
+      assert.match(m[0], /role="article"/);
+      assert.match(m[0], /data-repo="ghcr\.io\/team\/skills\/skill-\d"/);
+      assert.match(m[0], new RegExp(`aria-posinset="${i + 1}"`));
+      assert.match(m[0], /aria-setsize="3"/, 'the group size');
+      assert.match(m[0], /tabindex="-?[01]"/);
+    });
+  });
+
+  test('list-mode compact rows are articles; tree leaves stay treeitems with a level', async () => {
+    const state = sidebarState({ items: skills(2) });
+    const list = await litHtml(renderSidebarResults(state, DEFAULT_FILTER, compact));
+    assert.strictEqual(
+      [...list.matchAll(/<div[^>]*class="compact-row"[^>]*role="article"/g)].length,
+      2,
+    );
+    const tree = await litHtml(
+      renderSidebarResults(
+        state,
+        DEFAULT_FILTER,
+        { ...compact, mode: 'tree' },
+        new Set(collectNodeIds(buildTree(state.items, {}))),
+      ),
+    );
+    const leaf = /<div[^>]*class="compact-row tree-leaf d1"[^>]*>/.exec(tree)?.[0] ?? '';
+    assert.match(leaf, /role="treeitem"/);
+    assert.match(leaf, /aria-level="2"/, 'one below its namespace node');
+    assert.match(leaf, /aria-setsize="2"/);
+    assert.match(leaf, /aria-posinset="1"/);
+    const node = /<button[^>]*class="tree-node d0"[^>]*>/.exec(tree)?.[0] ?? '';
+    assert.match(node, /aria-level="1"/);
+    assert.match(node, /aria-expanded="true"/);
+  });
+
+  test('a card or compact row rendered without row options is unchanged', async () => {
+    for (const out of [renderCard(card()), renderCompactRow(card())]) {
+      const html = await litHtml(out);
+      assert.ok(!/data-key|tabindex|aria-setsize|aria-posinset|role=/.test(html), html);
+    }
+  });
+
+  test('a hostile repo or group id stays inert inside data-key', async () => {
+    const hostile = '"<>&';
+    const flat = await litHtml(
+      renderSidebarResults(
+        sidebarState({ items: [card({ repo: `ghcr.io/x/${hostile}y`, name: 'y' })] }),
+        DEFAULT_FILTER,
+      ),
+    );
+    assert.ok(flat.includes('data-key="ghcr.io/x/&quot;&lt;&gt;&amp;y"'), flat);
+    assert.ok(!flat.includes(hostile));
+    const alias = `a${hostile}`;
+    const grouped = await litHtml(
+      renderSidebarResults(
+        sidebarState({
+          items: [card({ repo: 'ghcr.io/x/y', name: 'y' })],
+          registries: [{ alias, oci: 'ghcr.io/x', kind: 'registry', isDefault: true }],
+        }),
+        DEFAULT_FILTER,
+        { ...DEFAULT_VIEW, browseGroup: 'registry' },
+        new Set([alias]),
+      ),
+    );
+    assert.ok(grouped.includes('data-key="g:a&quot;&lt;&gt;&amp;"'), grouped);
+    assert.ok(grouped.includes('data-key="a&quot;&lt;&gt;&amp;:ghcr.io/x/y"'), grouped);
+    assert.ok(!grouped.includes(hostile));
+    const items = [
+      card({ repo: `reg.example/${hostile}/y`, name: 'y' }),
+      card({ repo: 'reg.example/ok/z', name: 'z' }),
+    ];
+    const tree = await litHtml(
+      renderSidebarResults(
+        sidebarState({ items }),
+        DEFAULT_FILTER,
+        { ...compact, mode: 'tree' },
+        new Set(collectNodeIds(buildTree(items, {}))),
+      ),
+    );
+    assert.ok(
+      tree.includes('data-key="reg.example/&quot;&lt;&gt;&amp;"') ||
+        tree.includes('&quot;&lt;&gt;&amp;'),
+      tree,
+    );
+    assert.ok(!tree.includes(hostile));
+  });
+
+  test('vscode-scrollable still ships the .scrollable-container main.ts selects', () => {
+    // main.ts reaches into the component's shadow root for this class; a rename
+    // upstream would leave the scroller null and only the first window reachable.
+    const dist = path.join(
+      __dirname,
+      '..',
+      '..',
+      'node_modules',
+      '@vscode-elements',
+      'elements',
+      'dist',
+      'vscode-scrollable',
+      'vscode-scrollable.js',
+    );
+    assert.match(fs.readFileSync(dist, 'utf8'), /scrollable-container/);
+    const main = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'src', 'webview', 'sidebar', 'main.ts'),
+      'utf8',
+    );
+    assert.ok(main.includes("'.scrollable-container'"), 'main.ts still selects the same class');
+  });
+
+  test('sidebar.css agrees with the heights the windower assumes', () => {
+    const css = fs
+      .readFileSync(
+        path.join(__dirname, '..', '..', 'src', 'webview', 'sidebar', 'sidebar.css'),
+        'utf8',
+      )
+      .replace(/\r\n/g, '\n');
+    const px = (re: RegExp): number => Number(re.exec(css)?.[1]);
+    const open = new Set(['ghcr.io', 'ghcr.io/team', 'ghcr.io/team/skills']);
+    const row = (view: ViewOptions, nth: number): FlatRow => {
+      const rows = prepareResults(
+        sidebarState({ items: skills(1) }),
+        DEFAULT_FILTER,
+        view,
+        open,
+      ).rows;
+      return rows[nth] ?? assert.fail(`no row ${nth}`);
+    };
+    const height = (view: ViewOptions, nth: number): number =>
+      estimatedRowHeight(row(view, nth), view);
+    // A comfortable card has no fixed height in CSS: 92px is only the estimate a
+    // card keeps until it renders and is measured.
+    assert.strictEqual(height(DEFAULT_VIEW, 0), 92, '.card estimate');
+    assert.strictEqual(
+      height(compact, 0),
+      px(/^\.compact-row \{[^}]*\n {2}height: (\d+)px;/m),
+      '.compact-row',
+    );
+    const headerPx = px(/^\.group-header,\n\.tree-node \{[^}]*\n {2}height: (\d+)px;/m);
+    const grouped: ViewOptions = { ...compact, browseGroup: 'registry' };
+    assert.strictEqual(row(grouped, 0).type, 'group');
+    assert.strictEqual(height(grouped, 0), headerPx, '.group-header');
+    const roomyPx = px(
+      /^\.tree\.roomy \.compact-row,\n\.tree\.roomy \.tree-node \{\n {2}height: (\d+)px;/m,
+    );
+    const roomyTree: ViewOptions = { ...DEFAULT_VIEW, mode: 'tree' };
+    assert.strictEqual(row(roomyTree, 0).type, 'node');
+    assert.strictEqual(height(roomyTree, 0), roomyPx, '.tree.roomy .tree-node');
+    assert.strictEqual(row(roomyTree, 1).type, 'card');
+    assert.strictEqual(height(roomyTree, 1), roomyPx, '.tree.roomy .compact-row');
+    const denseTree: ViewOptions = { ...compact, mode: 'tree' };
+    assert.strictEqual(height(denseTree, 0), headerPx, '.tree-node');
+    assert.strictEqual(height(denseTree, 1), px(/^\.compact-row \{[^}]*\n {2}height: (\d+)px;/m));
   });
 });

@@ -1,0 +1,133 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "repo": "ghcr.io/acme/skills/pkg-000",
+      "source": {
+        "alias": "hub",
+        "locator": "http://127.0.0.1:8080"
+      },
+      "summary": "Convention-aware pull request review",
+      "description": "Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the c",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": {
+        "up": 0,
+        "url": "https://github.com/acme/index/discussions/0"
+      },
+      "downloads": {
+        "total": 1000,
+        "versions": [
+          {
+            "version": "1.2.0",
+            "total": 600
+          },
+          {
+            "version": "1.1.0",
+            "total": 400
+          }
+        ],
+        "as_of": "2026-10-01T00:00:00Z"
+      },
+      "oci": {},
+      "status": "not-installed"
+    },
+    {
+      "kind": "skill",
+      "repo": "ghcr.io/acme/skills/pkg-001",
+      "source": {
+        "alias": "hub",
+        "locator": "http://127.0.0.1:8080"
+      },
+      "summary": "Convention-aware pull request review",
+      "description": "Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the co",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": {
+        "up": 1,
+        "url": "https://github.com/acme/index/discussions/1"
+      },
+      "downloads": {
+        "total": 1001,
+        "versions": [
+          {
+            "version": "1.2.0",
+            "total": 601
+          },
+          {
+            "version": "1.1.0",
+            "total": 400
+          }
+        ],
+        "as_of": "2026-10-01T00:00:00Z"
+      },
+      "oci": {},
+      "status": "not-installed"
+    },
+    {
+      "kind": "skill",
+      "repo": "ghcr.io/acme/skills/pkg-002",
+      "source": {
+        "alias": "hub",
+        "locator": "http://127.0.0.1:8080"
+      },
+      "summary": "Convention-aware pull request review",
+      "description": "Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the contributing guide, the lint and format configuration and the test layout, then checks each changed file for naming, error handling, logging, test coverage and documentation drift. Reviews a pull request against the repository's own conventions: reads the con",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": {
+        "up": 2,
+        "url": "https://github.com/acme/index/discussions/2"
+      },
+      "downloads": {
+        "total": 1002,
+        "versions": [
+          {
+            "version": "1.2.0",
+            "total": 602
+          },
+          {
+            "version": "1.1.0",
+            "total": 400
+          }
+        ],
+        "as_of": "2026-10-01T00:00:00Z"
+      },
+      "oci": {},
+      "status": "not-installed"
+    }
+  ],
+  "sources": [
+    {
+      "alias": "hub",
+      "locator": "http://127.0.0.1:8080",
+      "ok": true,
+      "error": null,
+      "capped": false
+    },
+    {
+      "alias": "down",
+      "locator": "http://127.0.0.1:9",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 600,
+  "truncated": true
+}

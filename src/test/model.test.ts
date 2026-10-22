@@ -4,8 +4,8 @@ import {
   applyCardMeta,
   browseSortRequest,
   formatCount,
-  appendedFrom,
   applyAppend,
+  foldHostPost,
   pagingSummary,
   resultIsPartial,
   cardVersion,
@@ -31,7 +31,9 @@ import {
   NATURAL,
   DEFAULT_VIEW,
   effectiveInstall,
+  estimatedRowHeight,
   filterCards,
+  flattenRows,
   findAssetPath,
   groupCards,
   groupKeyFor,
@@ -66,21 +68,32 @@ import {
   registryLabel,
   registryUrlHost,
   relativeTime,
+  revealScrollTop,
+  rowIndexByKey,
+  rowLabel,
+  rowOffset,
   rowState,
   scopeRowMenuEntries,
   topLevelIds,
   type TreeNode,
   footerTickRenders,
   keepPaintedOnLoading,
+  measuredHeights,
+  navTarget,
   shouldResetUi,
   toggleKinds,
+  treeKeyAction,
   updateCount,
   viewForTab,
+  viewportReport,
+  windowRows,
+  type FlatRow,
   type MenuEntry,
   sortCards,
   type CardFilter,
   type MenuItem,
   type ScopeStatus,
+  type HostListPost,
   type WireSearchItem,
   type WireStatusItem,
 } from '../webview/model';
@@ -3100,6 +3113,51 @@ suite('paged Browse', () => {
       );
     });
 
+    test('continues the Installed set where the message says, and drops one that does not fit', () => {
+      const held = { ...base(), installedItems: [card('i1'), card('i2')] };
+      const rest = [card('i3')];
+      assert.deepStrictEqual(
+        applyAppend(held, append({ installed: rest, installedOffset: 2 }))?.installedItems.map(
+          (c) => c.repo,
+        ),
+        ['i1', 'i2', 'i3'],
+      );
+      assert.strictEqual(applyAppend(held, append({ installed: rest, installedOffset: 1 })), null);
+      assert.strictEqual(
+        applyAppend(base(), append({ installed: rest, installedOffset: 2 })),
+        null,
+      );
+      assert.deepStrictEqual(
+        applyAppend(held, append({ installed: rest }))?.installedItems.map((c) => c.repo),
+        ['i3'],
+        'without an offset it replaces the set',
+      );
+    });
+
+    test('an unpaged list continues on an append that names no list', () => {
+      const unpaged = sidebarState({ phase: 'ready', items: [card('a'), card('b')] });
+      const next = applyAppend(unpaged, {
+        type: 'append',
+        offset: 2,
+        cards: [card('c')],
+      });
+      assert.deepStrictEqual(
+        next?.items.map((c) => c.repo),
+        ['a', 'b', 'c'],
+      );
+      assert.strictEqual(next?.paging, undefined);
+      assert.strictEqual(applyAppend(base(), { type: 'append', offset: 2, cards: [] }), null);
+    });
+
+    test('a page that read a complete catalog takes the mark down; one that says nothing leaves it', () => {
+      const flagged = { ...base(), catalogIncomplete: true };
+      assert.strictEqual(
+        applyAppend(flagged, append({ catalogIncomplete: false }))?.catalogIncomplete,
+        undefined,
+      );
+      assert.strictEqual(applyAppend(flagged, append())?.catalogIncomplete, true);
+    });
+
     test('drops a message for another list, another length or a state that cannot take it', () => {
       assert.strictEqual(applyAppend(base(), append({ token: 2 })), null, 'wrong token');
       assert.strictEqual(applyAppend(base(), append({ offset: 1 })), null, 'wrong offset');
@@ -3110,20 +3168,859 @@ suite('paged Browse', () => {
     });
   });
 
-  suite('appendedFrom', () => {
-    test('an extended list resumes observing at the first new row', () => {
-      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'b', 'c', 'd']), 2);
-      assert.strictEqual(appendedFrom([], ['a']), 0);
+  suite('foldHostPost', () => {
+    const card = (repo: string): CardVM => cardFixture({ repo });
+    const repos = (state: SidebarState): string[] => state.items.map((c) => c.repo);
+    // The REAL paging of the whole 5-row list, as every chunk carries it.
+    const whole = { token: 1, loaded: 5, total: 5, lowerBound: false, hasMore: false };
+    const head = (more: boolean, items = [card('a'), card('b')]): HostListPost => ({
+      type: 'state',
+      state: sidebarState({ phase: 'ready', items, paging: whole }),
+      ...(more ? { more: true as const } : {}),
+    });
+    const append = (offset: number, names: string[], more: boolean): HostListPost => ({
+      type: 'append',
+      token: 1,
+      offset,
+      cards: names.map(card),
+      paging: whole,
+      ...(more ? { more: true as const } : {}),
     });
 
-    test('an unchanged list has nothing new to observe', () => {
-      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'b']), 2);
+    test('a state with more stages the head and commits nothing; the last append commits once', () => {
+      const first = foldHostPost(null, null, head(true));
+      assert.strictEqual(first.commit, undefined, 'the head alone paints nothing');
+      assert.deepStrictEqual(first.staged && repos(first.staged.state), ['a', 'b']);
+
+      const middle = foldHostPost(first.staged, null, append(2, ['c', 'd'], true));
+      assert.strictEqual(middle.commit, undefined);
+      assert.deepStrictEqual(middle.staged && repos(middle.staged.state), ['a', 'b', 'c', 'd']);
+
+      const end = foldHostPost(middle.staged, null, append(4, ['e'], false));
+      assert.strictEqual(end.staged, null);
+      assert.strictEqual(end.commit?.fromState, true);
+      assert.deepStrictEqual(end.commit && repos(end.commit.state), ['a', 'b', 'c', 'd', 'e']);
+      assert.deepStrictEqual(
+        end.commit?.state.paging,
+        whole,
+        'the real paging, never a partial one',
+      );
     });
 
-    test('a list that does not extend the observed one re-arms from scratch', () => {
-      assert.strictEqual(appendedFrom(['a', 'b'], ['b', 'a']), null, 'reordered');
-      assert.strictEqual(appendedFrom(['a', 'b'], ['a']), null, 'shrunk');
-      assert.strictEqual(appendedFrom(['a', 'b'], ['a', 'x', 'b']), null, 'row inserted mid-list');
+    test('every staged step already carries the real paging', () => {
+      const first = foldHostPost(null, null, head(true));
+      const middle = foldHostPost(first.staged, null, append(2, ['c', 'd'], true));
+      assert.strictEqual(first.staged?.state.paging?.hasMore, false);
+      assert.strictEqual(middle.staged?.state.paging?.hasMore, false);
+    });
+
+    test('an append run without a state folds onto the painted list and commits once', () => {
+      const rendered = sidebarState({
+        phase: 'ready',
+        items: [card('a'), card('b')],
+        paging: { ...whole, loaded: 2, hasMore: true },
+      });
+      const first = foldHostPost(null, rendered, append(2, ['c', 'd'], true));
+      assert.strictEqual(first.commit, undefined);
+      const end = foldHostPost(first.staged, rendered, append(4, ['e'], false));
+      assert.strictEqual(end.staged, null);
+      assert.strictEqual(end.commit?.fromState, false, 'an append run, not a state');
+      assert.deepStrictEqual(end.commit && repos(end.commit.state), ['a', 'b', 'c', 'd', 'e']);
+      assert.strictEqual(rendered.items.length, 2, 'the painted state is not mutated');
+    });
+
+    test('a plain append commits at once, as an append run of one', () => {
+      const rendered = sidebarState({
+        phase: 'ready',
+        items: [card('a'), card('b')],
+        paging: { ...whole, loaded: 2, hasMore: true },
+      });
+      const folded = foldHostPost(null, rendered, append(2, ['c'], false));
+      assert.strictEqual(folded.staged, null);
+      assert.strictEqual(folded.commit?.fromState, false);
+      assert.deepStrictEqual(folded.commit && repos(folded.commit.state), ['a', 'b', 'c']);
+    });
+
+    test('a plain state commits at once and discards a staged run', () => {
+      const staged = foldHostPost(null, null, head(true)).staged;
+      const next = head(false, [card('x')]);
+      const folded = foldHostPost(staged, null, next);
+      assert.strictEqual(folded.staged, null);
+      assert.strictEqual(folded.commit?.fromState, true);
+      assert.deepStrictEqual(folded.commit && repos(folded.commit.state), ['x']);
+    });
+
+    test('a state with more replaces a staged run instead of joining it', () => {
+      const staged = foldHostPost(null, null, head(true)).staged;
+      const folded = foldHostPost(staged, null, head(true, [card('x')]));
+      assert.deepStrictEqual(folded.staged && repos(folded.staged.state), ['x']);
+    });
+
+    test('a rejected append drops a staged append run and leaves the painted list alone', () => {
+      const rendered = sidebarState({
+        phase: 'ready',
+        items: [card('a'), card('b')],
+        paging: { ...whole, loaded: 2, hasMore: true },
+      });
+      const staged = foldHostPost(null, rendered, append(2, ['c'], true)).staged;
+      assert.ok(staged);
+      const folded = foldHostPost(staged, rendered, append(9, ['z'], false));
+      assert.deepStrictEqual(folded, { staged: null });
+    });
+
+    test('a rejected append on a staged state run commits what was staged', () => {
+      const staged = foldHostPost(null, null, head(true)).staged;
+      assert.ok(staged);
+      const folded = foldHostPost(staged, null, append(9, ['z'], false));
+      assert.strictEqual(folded.staged, null);
+      assert.strictEqual(folded.commit, staged, 'the head state is not lost');
+    });
+
+    test('an append that continues nothing is dropped without a commit', () => {
+      assert.deepStrictEqual(foldHostPost(null, null, append(0, ['a'], false)), { staged: null });
+    });
+
+    test('a run that starts as an append keeps fromState false through every step', () => {
+      const rendered = sidebarState({
+        phase: 'ready',
+        items: [card('a')],
+        paging: { ...whole, loaded: 1, hasMore: true },
+      });
+      let staged = foldHostPost(null, rendered, append(1, ['b'], true)).staged;
+      staged = foldHostPost(staged, rendered, append(2, ['c'], true)).staged;
+      assert.strictEqual(staged?.fromState, false);
+    });
+  });
+});
+
+suite('row windowing', () => {
+  const uniform = (n: number, h = 22): number[] => Array.from({ length: n }, () => h);
+  const total = (heights: readonly number[]): number => heights.reduce((a, b) => a + b, 0);
+
+  suite('windowRows', () => {
+    test('an empty list has an empty window', () => {
+      assert.deepStrictEqual(windowRows([], 0, 800), {
+        start: 0,
+        end: 0,
+        before: 0,
+        after: 0,
+        firstVisible: 0,
+      });
+    });
+
+    test('a list that fits the viewport renders whole, with no spacers', () => {
+      assert.deepStrictEqual(windowRows(uniform(5), 0, 800), {
+        start: 0,
+        end: 5,
+        before: 0,
+        after: 0,
+        firstVisible: 0,
+      });
+    });
+
+    test('a scrolled list renders the rows crossing the viewport, spacers for the rest', () => {
+      // 100 x 22px, viewport [1100, 1320) = rows 50..59.
+      assert.deepStrictEqual(windowRows(uniform(100), 1100, 220, 0), {
+        start: 50,
+        end: 60,
+        before: 1100,
+        after: 880,
+        firstVisible: 50,
+      });
+    });
+
+    test('overscan widens the window on both sides', () => {
+      // [1056, 1364): row 47 ends exactly at 1056 (out), row 62 starts at 1364 (out).
+      assert.deepStrictEqual(windowRows(uniform(100), 1100, 220, 44), {
+        start: 48,
+        end: 62,
+        before: 1056,
+        after: 836,
+        firstVisible: 50,
+      });
+    });
+
+    test('maxRows caps the window and keeps the rows nearest the visible top', () => {
+      // Uncapped this would be rows 209..281; the cap drops the leading overscan
+      // first, so the first visible row (227) survives and the tail is cut.
+      assert.deepStrictEqual(windowRows(uniform(1000), 5000, 800, 400, 20), {
+        start: 227,
+        end: 247,
+        before: 227 * 22,
+        after: (1000 - 247) * 22,
+        firstVisible: 227,
+      });
+    });
+
+    test('a scrollTop past the end clamps so the last rows show', () => {
+      assert.deepStrictEqual(windowRows(uniform(100), 99_999, 220, 0), {
+        start: 90,
+        end: 100,
+        before: 1980,
+        after: 0,
+        firstVisible: 90,
+      });
+    });
+
+    test('a negative scrollTop reads as the top', () => {
+      assert.deepStrictEqual(windowRows(uniform(100), -500, 220, 0), {
+        start: 0,
+        end: 10,
+        before: 0,
+        after: 1980,
+        firstVisible: 0,
+      });
+    });
+
+    test('mixed heights: a tall card straddling the top edge is in the window', () => {
+      // Offsets 0, 92, 114, 136, 228, 320 — viewport [100, 200) crosses rows 1..3.
+      assert.deepStrictEqual(windowRows([92, 22, 22, 92, 92, 22], 100, 100, 0), {
+        start: 1,
+        end: 4,
+        before: 92,
+        after: 114,
+        firstVisible: 1,
+      });
+    });
+
+    test('firstVisible skips the leading overscan: the first row at or after the visible top', () => {
+      // Overscan 400px reaches 18 rows above the viewport; the roving tab stop
+      // belongs at the viewport, not at row 0 of the rendered run.
+      const w = windowRows(uniform(1000), 5000, 800, 400);
+      assert.ok(w.start < w.firstVisible, 'overscan renders rows above the viewport');
+      assert.strictEqual(w.firstVisible, 227, 'row 227 spans 4994..5016, the first past 5000');
+      assert.ok(w.firstVisible < w.end);
+    });
+
+    test('before + rendered + after always add up to the whole list', () => {
+      const heights = Array.from({ length: 20_000 }, (_, i) => (i % 7 === 0 ? 92 : 22));
+      const sum = total(heights);
+      for (const scrollTop of [-10, 0, 1, 12_345, 400_000, sum, sum + 1000]) {
+        const w = windowRows(heights, scrollTop, 800);
+        const shown = total(heights.slice(w.start, w.end));
+        assert.strictEqual(w.before + shown + w.after, sum, `scrollTop ${scrollTop}`);
+        assert.strictEqual(w.before, rowOffset(heights, w.start), `scrollTop ${scrollTop}`);
+        assert.ok(w.end - w.start <= 200, `scrollTop ${scrollTop} stays within the row cap`);
+        assert.ok(w.end > w.start, `scrollTop ${scrollTop} renders something`);
+      }
+    });
+
+    suite('a pinned row (the roving focus, kept mounted outside the window)', () => {
+      test('a pin above the window sits first, with its own spacers on both sides', () => {
+        // Window rows 209..281 around scrollTop 5000; row 3 holds focus.
+        const heights = uniform(1000);
+        const bare = windowRows(heights, 5000, 800);
+        const w = windowRows(heights, 5000, 800, 400, 200, 3);
+        assert.strictEqual(w.start, bare.start, 'the window itself does not move');
+        assert.strictEqual(w.end, bare.end);
+        assert.deepStrictEqual(w.pin, {
+          index: 3,
+          above: 3 * 22,
+          gap: (w.start - 4) * 22,
+          below: bare.after,
+        });
+      });
+
+      test('a pin below the window sits last, with its own spacers on both sides', () => {
+        const heights = uniform(1000);
+        const bare = windowRows(heights, 5000, 800);
+        const w = windowRows(heights, 5000, 800, 400, 200, 900);
+        assert.deepStrictEqual(w.pin, {
+          index: 900,
+          above: bare.before,
+          gap: (900 - bare.end) * 22,
+          below: (1000 - 901) * 22,
+        });
+      });
+
+      test('a pin inside the window, or none, leaves the window as it was', () => {
+        const heights = uniform(100);
+        const bare = windowRows(heights, 1100, 220, 0);
+        for (const pin of [-1, 55, 100, 5000]) {
+          assert.deepStrictEqual(windowRows(heights, 1100, 220, 0, 200, pin), bare, `pin ${pin}`);
+        }
+        assert.ok(!('pin' in bare));
+      });
+
+      test('above + pinned + gap + window + below always add up to the whole list', () => {
+        const heights = Array.from({ length: 20_000 }, (_, i) => (i % 7 === 0 ? 92 : 22));
+        const sum = total(heights);
+        for (const pin of [0, 3, 9_999, 19_999]) {
+          for (const scrollTop of [0, 12_345, 200_000, sum]) {
+            const w = windowRows(heights, scrollTop, 800, 400, 200, pin);
+            const shown = total(heights.slice(w.start, w.end));
+            if (!w.pin) {
+              assert.ok(
+                pin >= w.start && pin < w.end,
+                `pin ${pin} at ${scrollTop} is in the window`,
+              );
+              continue;
+            }
+            const label = `pin ${pin} at ${scrollTop}`;
+            assert.strictEqual(w.pin.index, pin, label);
+            assert.strictEqual(
+              w.pin.above + (heights[pin] ?? 0) + w.pin.gap + shown + w.pin.below,
+              sum,
+              label,
+            );
+            assert.strictEqual(w.pin.above, pin < w.start ? rowOffset(heights, pin) : w.before);
+            assert.ok(w.end - w.start <= 200, `${label} keeps the window within the cap`);
+          }
+        }
+      });
+    });
+  });
+
+  suite('rowOffset', () => {
+    test('sums the heights above an index', () => {
+      assert.strictEqual(rowOffset([10, 20, 30], 0), 0);
+      assert.strictEqual(rowOffset([10, 20, 30], 2), 30);
+    });
+
+    test('an index at or past the end is the whole list', () => {
+      assert.strictEqual(rowOffset([10, 20, 30], 3), 60);
+      assert.strictEqual(rowOffset([10, 20, 30], 99), 60);
+    });
+  });
+
+  suite('navTarget', () => {
+    test('arrows step one row and stop at either end', () => {
+      const h = uniform(5);
+      assert.strictEqual(navTarget(h, 2, 'ArrowDown', 100), 3);
+      assert.strictEqual(navTarget(h, 2, 'ArrowUp', 100), 1);
+      assert.strictEqual(navTarget(h, 4, 'ArrowDown', 100), 4, 'last row stays');
+      assert.strictEqual(navTarget(h, 0, 'ArrowUp', 100), 0, 'first row stays');
+    });
+
+    test('Home and End span the whole list, not the window', () => {
+      const h = uniform(20_000);
+      assert.strictEqual(navTarget(h, 9_000, 'Home', 800), 0);
+      assert.strictEqual(navTarget(h, 9_000, 'End', 800), 19_999);
+    });
+
+    test('a page key moves about one viewport of height', () => {
+      const h = uniform(100);
+      assert.strictEqual(navTarget(h, 10, 'PageDown', 220), 20, '220px of 22px rows');
+      assert.strictEqual(navTarget(h, 50, 'PageUp', 220), 40);
+      const mixed = [92, 22, 22, 92, 92, 22, 22, 92];
+      assert.strictEqual(navTarget(mixed, 0, 'PageDown', 200), 3, 'lands on the row at +200px');
+    });
+
+    test('a page key moves at least one row and never past an end', () => {
+      const h = uniform(10);
+      assert.strictEqual(navTarget(h, 3, 'PageDown', 0), 4, 'zero viewport still moves');
+      assert.strictEqual(navTarget(h, 3, 'PageUp', 0), 2);
+      assert.strictEqual(navTarget(h, 8, 'PageDown', 5_000), 9);
+      assert.strictEqual(navTarget(h, 1, 'PageUp', 5_000), 0);
+      assert.strictEqual(navTarget(h, 9, 'PageDown', 220), 9);
+    });
+
+    test('anything else is not navigation', () => {
+      assert.strictEqual(navTarget(uniform(3), 1, 'Enter', 100), null);
+      assert.strictEqual(navTarget(uniform(3), 1, 'a', 100), null);
+      assert.strictEqual(navTarget([], 0, 'ArrowDown', 100), null, 'empty list');
+    });
+
+    test('a current index outside the list clamps into it', () => {
+      assert.strictEqual(navTarget(uniform(5), -1, 'ArrowDown', 100), 1);
+      assert.strictEqual(navTarget(uniform(5), 99, 'ArrowUp', 100), 3);
+    });
+  });
+
+  suite('revealScrollTop', () => {
+    test('a row already in view leaves the scroll alone', () => {
+      assert.strictEqual(revealScrollTop(300, 22, 200, 400), 200);
+    });
+
+    test('a row above scrolls up to its top, one below to its bottom edge', () => {
+      assert.strictEqual(revealScrollTop(100, 22, 200, 400), 100);
+      assert.strictEqual(revealScrollTop(700, 22, 200, 400), 322, 'bottom at 722 = 322 + 400');
+    });
+
+    test('a row taller than the viewport aligns its top', () => {
+      assert.strictEqual(revealScrollTop(500, 300, 0, 200), 500);
+    });
+  });
+
+  suite('measuredHeights', () => {
+    test('a measured row uses its pitch, any other its estimate', () => {
+      const rows = flattenRows(
+        [cardFixture({ repo: 'r.example/a' }), cardFixture({ repo: 'r.example/b' })],
+        'browse',
+        DEFAULT_VIEW,
+        { registries: [] },
+        new Set(),
+      );
+      const [first] = rows;
+      assert.ok(first);
+      assert.deepStrictEqual(measuredHeights(rows, DEFAULT_VIEW), [92, 92]);
+      assert.deepStrictEqual(
+        measuredHeights(rows, DEFAULT_VIEW, new Map([[first.key, 101.5]])),
+        [101.5, 92],
+      );
+    });
+  });
+
+  suite('rowIndexByKey', () => {
+    test('maps each key to its place in the flattened list', () => {
+      const rows = flattenRows(
+        [cardFixture({ repo: 'r.example/a' }), cardFixture({ repo: 'r.example/b' })],
+        'browse',
+        DEFAULT_VIEW,
+        { registries: [] },
+        new Set(),
+      );
+      const index = rowIndexByKey(rows);
+      rows.forEach((row, i) => assert.strictEqual(index.get(row.key), i));
+      assert.strictEqual(index.get('nope'), undefined);
+    });
+  });
+
+  suite('flattenRows', () => {
+    const keysOf = (rows: FlatRow[]): string[] => rows.map((r) => r.key);
+    const assertUnique = (rows: FlatRow[]): void => {
+      assert.strictEqual(
+        new Set(keysOf(rows)).size,
+        rows.length,
+        'keys are unique across the list',
+      );
+    };
+    const ctx = { registries: RIG, projectName: 'my-app' };
+    const NONE = new Set<string>();
+
+    test('a flat list is one card row per card, keyed as repeat() keys it today', () => {
+      const cards = treeCards();
+      const rows = flattenRows(cards, 'browse', DEFAULT_VIEW, ctx, NONE);
+      assert.deepStrictEqual(keysOf(rows), cards.map(cardKey));
+      rows.forEach((row, i) => {
+        assert.strictEqual(row.type, 'card');
+        if (row.type !== 'card') {
+          return;
+        }
+        assert.strictEqual(row.card, cards[i]);
+        assert.strictEqual(row.setsize, cards.length, 'setsize is the whole list');
+        assert.strictEqual(row.posinset, i + 1, 'posinset is 1-based');
+        assert.strictEqual(row.group, undefined);
+        assert.strictEqual(row.depth, undefined);
+      });
+    });
+
+    test('density does not change which rows exist', () => {
+      const compact = { ...DEFAULT_VIEW, density: 'compact' as const };
+      assert.deepStrictEqual(
+        keysOf(flattenRows(treeCards(), 'browse', compact, ctx, NONE)),
+        keysOf(flattenRows(treeCards(), 'browse', DEFAULT_VIEW, ctx, NONE)),
+      );
+    });
+
+    test('a source-attributed card keys on alias and repo, as cardKey does', () => {
+      const [first] = buildCards(
+        [{ ...searchItem(), source: { alias: 'mine', locator: INDEX } }],
+        [],
+      );
+      assert.ok(first);
+      const [row] = flattenRows([first], 'browse', DEFAULT_VIEW, ctx, NONE);
+      assert.strictEqual(row?.key, cardKey(first));
+      assert.ok(row?.key.includes('\u0000'), 'the NUL-joined form survives');
+    });
+
+    test('registry groups: header rows, children of a collapsed group dropped', () => {
+      const view = { ...DEFAULT_VIEW, browseGroup: 'registry' as const };
+      const rows = flattenRows(treeCards(), 'browse', view, ctx, new Set(['primary']));
+      assertUnique(rows);
+      const [primary, acme] = groupCards(treeCards(), 'registry', ctx);
+      assert.ok(primary && acme);
+      assert.deepStrictEqual(
+        rows.map((r) => r.type),
+        ['group', 'card', 'card', 'card', 'card', 'group'],
+      );
+      const [head, , , , , tail] = rows;
+      assert.deepStrictEqual(
+        head && head.type === 'group' ? [head.key, head.open, head.group] : null,
+        [`g:${primary.id}`, true, primary],
+      );
+      assert.deepStrictEqual(
+        tail && tail.type === 'group' ? [tail.key, tail.open] : null,
+        [`g:${acme.id}`, false],
+        'collapsed: header only',
+      );
+      const cardRows = rows.filter((r) => r.type === 'card');
+      assert.deepStrictEqual(
+        cardRows.map((r) => r.key),
+        primary.cards.map((c) => `${primary.id}:${cardKey(c)}`),
+      );
+      cardRows.forEach((r, i) => {
+        if (r.type === 'card') {
+          assert.strictEqual(r.setsize, primary.cards.length, 'setsize is the GROUP card count');
+          assert.strictEqual(r.posinset, i + 1);
+          assert.strictEqual(
+            r.group,
+            head?.type === 'group' ? head.group : null,
+            "the header's group rides along for the scope variant",
+          );
+        }
+      });
+    });
+
+    test('scope groups: an artifact in both scopes gets two rows with unique keys', () => {
+      const cards = buildCards(
+        [searchItem()],
+        [installedScope('project'), installedScope('global')],
+      );
+      const rows = flattenRows(
+        cards,
+        'installed',
+        DEFAULT_VIEW,
+        ctx,
+        new Set(['project', 'global']),
+      );
+      assertUnique(rows);
+      assert.deepStrictEqual(
+        rows.map((r) => r.type),
+        ['group', 'card', 'group', 'card'],
+      );
+      const card = cards[0];
+      assert.ok(card);
+      assert.deepStrictEqual(keysOf(rows), [
+        'g:project',
+        `project:${cardKey(card)}`,
+        'g:global',
+        `global:${cardKey(card)}`,
+      ]);
+      for (const r of rows) {
+        if (r.type === 'card') {
+          assert.strictEqual(r.setsize, 1);
+          assert.strictEqual(r.posinset, 1);
+        }
+      }
+    });
+
+    test('every group collapsed leaves one header per group', () => {
+      const view = { ...DEFAULT_VIEW, browseGroup: 'registry' as const };
+      const rows = flattenRows(treeCards(), 'browse', view, ctx, NONE);
+      assert.deepStrictEqual(
+        rows.map((r) => r.type),
+        ['group', 'group'],
+      );
+    });
+
+    test('tree: collapsed nodes hide their children, expanded ones list them in order', () => {
+      const view = { ...DEFAULT_VIEW, mode: 'tree' as const };
+      const rows = flattenRows(
+        treeCards(),
+        'browse',
+        view,
+        ctx,
+        new Set(['primary', 'primary/skills']),
+      );
+      assertUnique(rows);
+      assert.deepStrictEqual(keysOf(rows), [
+        'primary',
+        'primary/playbooks/ci/release',
+        'primary/rules',
+        'primary/skills',
+        'ghcr.io/grimoire-rs/skills/grim-usage',
+        'ghcr.io/grimoire-rs/skills/ai-config',
+        'acme',
+      ]);
+      const aria = rows.map((r) =>
+        r.type === 'group'
+          ? null
+          : [r.type, r.setsize, r.posinset, r.level, r.depth, r.type === 'node' ? r.open : null],
+      );
+      assert.deepStrictEqual(aria, [
+        ['node', 2, 1, 1, 0, true],
+        ['node', 3, 1, 2, 1, false],
+        ['node', 3, 2, 2, 1, false],
+        ['node', 3, 3, 2, 1, true],
+        ['card', 2, 1, 3, 2, null],
+        ['card', 2, 2, 3, 2, null],
+        ['node', 2, 2, 1, 0, false],
+      ]);
+    });
+
+    test('tree: nothing expanded leaves just the roots', () => {
+      const view = { ...DEFAULT_VIEW, mode: 'tree' as const };
+      assert.deepStrictEqual(keysOf(flattenRows(treeCards(), 'browse', view, ctx, NONE)), [
+        'primary',
+        'acme',
+      ]);
+    });
+
+    test('tree: expand-all lists every node and leaf once', () => {
+      const view = { ...DEFAULT_VIEW, mode: 'tree' as const };
+      const ids = new Set(collectNodeIds(buildTree(treeCards(), ctx)));
+      const rows = flattenRows(treeCards(), 'browse', view, ctx, ids);
+      assertUnique(rows);
+      assert.strictEqual(rows.length, ids.size + treeCards().length);
+    });
+  });
+
+  suite('rowLabel', () => {
+    const install = (overrides: Partial<InstallVM> = {}): InstallVM => ({
+      scope: 'project',
+      version: '1.2.0',
+      updateAvailable: false,
+      clients: [],
+      state: 'installed',
+      kind: 'skill',
+      name: 'grim-usage',
+      viaBundles: [],
+      ...overrides,
+    });
+
+    test('a not-installed row says so after its name and kind', () => {
+      assert.strictEqual(rowLabel(cardFixture(), true), 'grim-usage, skill, not installed');
+    });
+
+    test('an installed row names the installed version', () => {
+      const c = cardFixture({ state: 'installed', installs: [install()] });
+      assert.strictEqual(rowLabel(c, true), 'grim-usage, skill, installed 1.2.0');
+    });
+
+    test('an outdated row also names the version it would update to', () => {
+      const c = cardFixture({
+        state: 'outdated',
+        installs: [install({ updateAvailable: true })],
+        latestVersion: '1.3.0',
+      });
+      assert.strictEqual(rowLabel(c, true), 'grim-usage, skill, installed 1.2.0, update to 1.3.0');
+      assert.notStrictEqual(
+        rowLabel(c, true),
+        rowLabel({ ...c, state: 'installed', installs: [install()] }, true),
+      );
+    });
+
+    test('an update with no known target version still says an update exists', () => {
+      const c = cardFixture({
+        installs: [install({ updateAvailable: true })],
+        latestVersion: null,
+      });
+      assert.strictEqual(rowLabel(c, true), 'grim-usage, skill, installed 1.2.0, update available');
+    });
+
+    test('a deprecated row says so; one with no kind or version drops those parts', () => {
+      assert.strictEqual(
+        rowLabel(cardFixture({ state: 'deprecated', deprecated: 'use x' }), true),
+        'grim-usage, skill, deprecated, not installed',
+      );
+      const bare = cardFixture({ kind: null, installs: [install({ version: null })] });
+      assert.strictEqual(rowLabel(bare, true), 'grim-usage, installed');
+    });
+
+    test('with the install state unknown it claims nothing about installs', () => {
+      const c = cardFixture({ state: 'installed', installs: [install()] });
+      assert.strictEqual(rowLabel(c, false), 'grim-usage, skill');
+    });
+  });
+
+  suite('treeKeyAction', () => {
+    const ctx = { registries: RIG, projectName: 'my-app' };
+    const view = { ...DEFAULT_VIEW, mode: 'tree' as const };
+    // 0 primary (open) / 1 primary/playbooks/ci/release (closed) / 2 primary/rules (closed) /
+    // 3 primary/skills (open) / 4, 5 two leaves / 6 acme (closed)
+    const rows = flattenRows(
+      treeCards(),
+      'browse',
+      view,
+      ctx,
+      new Set(['primary', 'primary/skills']),
+    );
+
+    test('Right on a collapsed node expands it', () => {
+      assert.deepStrictEqual(treeKeyAction(rows, 1, 'ArrowRight'), {
+        kind: 'expand',
+        id: 'primary/playbooks/ci/release',
+      });
+      assert.deepStrictEqual(treeKeyAction(rows, 6, 'ArrowRight'), { kind: 'expand', id: 'acme' });
+    });
+
+    test('Right on an expanded node moves to its first child', () => {
+      assert.deepStrictEqual(treeKeyAction(rows, 0, 'ArrowRight'), { kind: 'focus', index: 1 });
+      assert.deepStrictEqual(treeKeyAction(rows, 3, 'ArrowRight'), { kind: 'focus', index: 4 });
+    });
+
+    test('Right on a leaf does nothing', () => {
+      assert.strictEqual(treeKeyAction(rows, 4, 'ArrowRight'), null);
+    });
+
+    test('Left on an expanded node collapses it', () => {
+      assert.deepStrictEqual(treeKeyAction(rows, 0, 'ArrowLeft'), {
+        kind: 'collapse',
+        id: 'primary',
+      });
+      assert.deepStrictEqual(treeKeyAction(rows, 3, 'ArrowLeft'), {
+        kind: 'collapse',
+        id: 'primary/skills',
+      });
+    });
+
+    test('Left on a collapsed node or a leaf moves to the nearest parent row', () => {
+      assert.deepStrictEqual(treeKeyAction(rows, 1, 'ArrowLeft'), { kind: 'focus', index: 0 });
+      assert.deepStrictEqual(
+        treeKeyAction(rows, 2, 'ArrowLeft'),
+        { kind: 'focus', index: 0 },
+        'steps over its collapsed sibling',
+      );
+      assert.deepStrictEqual(treeKeyAction(rows, 4, 'ArrowLeft'), { kind: 'focus', index: 3 });
+      assert.deepStrictEqual(
+        treeKeyAction(rows, 5, 'ArrowLeft'),
+        { kind: 'focus', index: 3 },
+        'steps over its sibling leaf',
+      );
+    });
+
+    test('Left on a collapsed top-level node does nothing', () => {
+      assert.strictEqual(treeKeyAction(rows, 6, 'ArrowLeft'), null);
+    });
+
+    test('other keys, an index outside the list and non-tree rows are not handled', () => {
+      assert.strictEqual(treeKeyAction(rows, 0, 'ArrowDown'), null);
+      assert.strictEqual(treeKeyAction(rows, 0, 'Enter'), null);
+      assert.strictEqual(treeKeyAction(rows, -1, 'ArrowRight'), null);
+      assert.strictEqual(treeKeyAction(rows, 99, 'ArrowLeft'), null);
+      const flat = flattenRows(treeCards(), 'browse', DEFAULT_VIEW, ctx, new Set());
+      assert.strictEqual(treeKeyAction(flat, 0, 'ArrowRight'), null);
+      const grouped = flattenRows(
+        treeCards(),
+        'browse',
+        { ...DEFAULT_VIEW, browseGroup: 'registry' },
+        ctx,
+        new Set(['primary']),
+      );
+      assert.strictEqual(grouped[0]?.type, 'group');
+      assert.strictEqual(treeKeyAction(grouped, 0, 'ArrowRight'), null);
+      assert.strictEqual(treeKeyAction(grouped, 0, 'ArrowLeft'), null);
+    });
+  });
+
+  suite('flattenRows with the set size still unknown', () => {
+    const ctx = { registries: RIG, projectName: 'my-app' };
+    const sizes = (rows: FlatRow[]): Array<number | null> =>
+      rows.map((r) => (r.type === 'group' ? null : r.setsize));
+
+    test('flat, grouped and tree rows all report -1, positions untouched', () => {
+      const cards = treeCards();
+      const flat = flattenRows(cards, 'browse', DEFAULT_VIEW, ctx, new Set(), true);
+      assert.ok(sizes(flat).every((n) => n === -1));
+      assert.deepStrictEqual(
+        flat.map((r) => (r.type === 'card' ? r.posinset : null)),
+        cards.map((_, i) => i + 1),
+      );
+      const grouped = flattenRows(
+        cards,
+        'browse',
+        { ...DEFAULT_VIEW, browseGroup: 'registry' },
+        ctx,
+        new Set(['primary']),
+        true,
+      );
+      assert.deepStrictEqual(
+        new Set(sizes(grouped).filter((n) => n !== null)),
+        new Set([-1]),
+      );
+      const tree = flattenRows(
+        cards,
+        'browse',
+        { ...DEFAULT_VIEW, mode: 'tree' },
+        ctx,
+        new Set(collectNodeIds(buildTree(cards, ctx))),
+        true,
+      );
+      assert.ok(tree.length > 0 && sizes(tree).every((n) => n === -1));
+    });
+
+    test('a complete list keeps its real sizes', () => {
+      const cards = treeCards();
+      assert.ok(
+        sizes(flattenRows(cards, 'browse', DEFAULT_VIEW, ctx, new Set())).every(
+          (n) => n === cards.length,
+        ),
+      );
+    });
+  });
+
+  suite('estimatedRowHeight', () => {
+    const rowsFor = (view: typeof DEFAULT_VIEW): FlatRow[] =>
+      flattenRows(
+        treeCards(),
+        'browse',
+        view,
+        { registries: RIG },
+        new Set(collectNodeIds(buildTree(treeCards(), { registries: RIG }))),
+      );
+    const heightsByType = (view: typeof DEFAULT_VIEW): Record<string, number[]> => {
+      const out: Record<string, number[]> = {};
+      for (const row of rowsFor(view)) {
+        (out[row.type] ??= []).push(estimatedRowHeight(row, view));
+      }
+      return out;
+    };
+
+    test('comfortable list cards start at a 92px estimate', () => {
+      assert.deepStrictEqual(Object.keys(heightsByType(DEFAULT_VIEW)), ['card']);
+      assert.ok(heightsByType(DEFAULT_VIEW)['card']?.every((h) => h === 92));
+    });
+
+    test('compact rows and group headers are 22px', () => {
+      const view = {
+        ...DEFAULT_VIEW,
+        density: 'compact' as const,
+        browseGroup: 'registry' as const,
+      };
+      const byType = heightsByType(view);
+      assert.ok(byType['card']?.every((h) => h === 22));
+      assert.ok(byType['group']?.every((h) => h === 22));
+    });
+
+    test('a comfortable list keeps 22px group headers between its 92px cards', () => {
+      const view = { ...DEFAULT_VIEW, browseGroup: 'registry' as const };
+      const byType = heightsByType(view);
+      assert.ok(byType['card']?.every((h) => h === 92));
+      assert.ok(byType['group']?.every((h) => h === 22));
+    });
+
+    test('tree rows are 30px when roomy (comfortable) and 22px when compact', () => {
+      const roomy = heightsByType({ ...DEFAULT_VIEW, mode: 'tree' });
+      assert.ok(roomy['node']?.every((h) => h === 30));
+      assert.ok(roomy['card']?.every((h) => h === 30));
+      const dense = heightsByType({ ...DEFAULT_VIEW, mode: 'tree', density: 'compact' });
+      assert.ok(dense['node']?.every((h) => h === 22));
+      assert.ok(dense['card']?.every((h) => h === 22));
+    });
+  });
+
+  suite('viewportReport', () => {
+    const rows = ['ghcr.io/a/one', 'ghcr.io/a/two'];
+
+    test('the first sight of a window reports it', () => {
+      const first = viewportReport(null, rows, 1);
+      assert.strictEqual(first.report, true);
+    });
+
+    test('the same rows in the same round are reported once', () => {
+      const first = viewportReport(null, rows, 1);
+      assert.strictEqual(viewportReport(first.key, rows, 1).report, false);
+      assert.strictEqual(viewportReport(first.key, [...rows], 1).report, false);
+    });
+
+    test('the same rows in a new round are reported again, once', () => {
+      // A refresh re-resolves what is on screen only when the host hears of it.
+      const first = viewportReport(null, rows, 1);
+      const refreshed = viewportReport(first.key, rows, 2);
+      assert.strictEqual(refreshed.report, true);
+      assert.strictEqual(viewportReport(refreshed.key, rows, 2).report, false);
+    });
+
+    test('other rows are reported, in any round', () => {
+      const first = viewportReport(null, rows, 1);
+      assert.strictEqual(viewportReport(first.key, [rows[0] ?? ''], 1).report, true);
+      assert.strictEqual(viewportReport(first.key, [...rows].reverse(), 1).report, true);
+    });
+
+    test('a state that names no round still dedups its rows', () => {
+      const first = viewportReport(null, rows, undefined);
+      assert.strictEqual(viewportReport(first.key, rows, undefined).report, false);
     });
   });
 });

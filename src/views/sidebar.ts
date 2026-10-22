@@ -24,12 +24,7 @@ import {
 } from '../grim';
 import type { CatalogService } from '../catalog';
 import type { CachedCardMeta } from '../detailsCache';
-import {
-  projectSearchable,
-  searchScopeFor,
-  type ScopeService,
-  type Snapshot,
-} from '../scopes';
+import { projectSearchable, searchScopeFor, type ScopeService, type Snapshot } from '../scopes';
 import {
   applyCardMeta,
   artifactName,
@@ -46,16 +41,17 @@ import {
   type ScopeStatus,
   type SortMode,
 } from '../webview/model';
-import type {
-  CardVM,
-  GrimOrigin,
-  HostToSidebar,
-  PagingState,
-  RegistryVM,
-  SidebarState,
-  SidebarToHost,
-  ViewAction,
-  ViewOptions,
+import {
+  MAX_POST_CARDS,
+  type CardVM,
+  type GrimOrigin,
+  type HostToSidebar,
+  type PagingState,
+  type RegistryVM,
+  type SidebarState,
+  type SidebarToHost,
+  type ViewAction,
+  type ViewOptions,
 } from '../webview/protocol';
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
@@ -83,9 +79,9 @@ const MAX_PERSISTED_CARDS = 200;
  *  list is the `visible` report, which supersedes this within a frame or two. */
 const SEED_SWEEP = 24;
 
-/** Sanity ceiling on the webview's viewport report. A tall sidebar of compact
- *  rows plus the observer's 400px margin reports on the order of 100 repos, so
- *  this is far above any real viewport — it exists so a webview that ever posted
+/** Sanity ceiling on the webview's viewport report. The webview reports the
+ *  rows it renders — the viewport plus 400px either side, at most 200 rows — so
+ *  this is far above any real viewport. It exists so a webview that ever posted
  *  a pathological list could not turn it into that many grim spawns, not to
  *  reinstate the fixed top-K the viewport sweep replaced. */
 const MAX_VISIBLE_REPOS = 500;
@@ -245,11 +241,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         origin?: GrimOrigin;
       }
     | undefined;
-  // Last-known "grim warned while searching", stamped onto every post for the
-  // same reason lastUnknown is: without it the mark blinks out on the
+  // Last-known "a registry could not be read in full", stamped onto every post
+  // for the same reason lastUnknown is: without it the mark blinks out on the
   // `phase:'loading'` post that opens the next watcher round and back in when
   // it settles, which reads as a flicker rather than as a state.
   private lastCatalogIncomplete = false;
+  /** The lines last written to the output channel for it, so a refresh that
+   *  reports the same set again does not log it again. */
+  private loggedIncomplete = '';
   /** What the webview was last told about {@link lastCatalogIncomplete}, so a
    *  page that changes nothing else does not repost (and re-render) the list. */
   private postedCatalogIncomplete = false;
@@ -876,11 +875,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       (emptyFromBrokenScope
         ? (snap.error ?? 'grim could not read this scope — the catalog is unavailable.')
         : undefined);
-    // grim answered, but warned while doing it — it dropped a source it could
-    // not read and still exited 0, so the rows on screen are a subset of the
-    // catalog by an unknown amount. Recorded here, not passed per post, so it
-    // survives the next round's loading post rather than blinking out and back
-    // on every watcher-driven refresh.
+    // grim answered, but a registry could not be read in full — a source did
+    // not load, or its listing stopped early — so the rows on screen are a
+    // subset of the catalog by an unknown amount. Recorded here, not passed per
+    // post, so it survives the next round's loading post rather than blinking
+    // out and back on every watcher-driven refresh.
     //
     // Only a SUCCESSFUL search moves it, in either direction. A search that
     // failed outright says nothing about whether the registry came back, and
@@ -888,7 +887,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // that had the least evidence for it. A refetch in flight moves it not at
     // all — the verdict stands until a clean answer replaces it.
     if (catalogState.error === undefined) {
-      this.lastCatalogIncomplete = catalogState.warnings !== undefined;
+      this.setIncomplete(catalogState.incomplete);
     }
     if (catalogError !== undefined) {
       // Other refresh triggers can race a watcher-driven one and carry the same
@@ -900,9 +899,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       items: cards,
       installed,
       ...(catalogError !== undefined ? { error: catalogError } : {}),
-      // grim answered, but warned while doing it — the rows on screen are a
-      // subset of the catalog by an unknown amount. Not an error (there IS
-      // something to browse) and not silence either.
+      // A registry could not be read in full — the rows on screen are a subset
+      // of the catalog by an unknown amount. Not an error (there IS something
+      // to browse) and not silence either.
       // The status failure itself rides this.lastUnknown (stamped by postState).
       // The banner is persistent, so it needs no toast of its own — that would
       // re-fire on every refresh for as long as the failure persists.
@@ -993,6 +992,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  /** Follows a successful read's verdict. Each new set of lines goes to the
+   *  output channel once: the footer's "Click to see which" opens it, and a
+   *  capped source writes nothing to stderr, so this is the only place that
+   *  names it. */
+  private setIncomplete(lines: string[] | undefined): void {
+    this.lastCatalogIncomplete = lines !== undefined;
+    const key = lines?.join('\n') ?? '';
+    if (key !== this.loggedIncomplete) {
+      this.loggedIncomplete = key;
+      for (const line of lines ?? []) {
+        this.output.appendLine(`sidebar: incomplete results — ${line}`);
+      }
+    }
+  }
+
   /** Loads the pages after the first, one at a time, and posts each as it
    *  lands. Pauses while the view is not live or a refresh runs (the refresh
    *  that follows restarts it), and stops on a failed page until Retry. A newer
@@ -1005,15 +1019,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const result = await this.catalog.loadNext();
         if (result.error !== undefined) {
           this.output.appendLine(`sidebar: loading results failed: ${result.error}`);
-          if (result.shadow) {
-            continue; // a reload nobody sees was dropped; the list on screen stands
+          if (!result.shadow) {
+            this.loadFailed = true;
+            await this.syncList(); // posts paging.failed; the loaded rows stay
+            break;
           }
-          this.loadFailed = true;
-          await this.syncList(); // posts paging.failed; the loaded rows stay
-          break;
-        }
-        if (result.warnings !== undefined) {
-          this.lastCatalogIncomplete = true; // same stderr semantics as the first page
+          // Shadow: the list on screen stands and its mark is not a verdict to
+          // follow. A dropped reload changes nothing the view shows; a failed
+          // re-read means the catalog stopped waiting on the loader, so the
+          // sync below posts that it has no more to load.
+        } else if (!result.superseded) {
+          this.setIncomplete(result.incomplete); // same rule as the first page
         }
         await this.syncList();
       }
@@ -1115,15 +1131,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
     this.postedCatalogIncomplete = this.lastCatalogIncomplete;
-    this.post({
-      type: 'append',
-      token: round.paging.token,
-      offset,
-      cards,
-      ...(installed ? { installed } : {}),
-      paging: round.paging,
-      ...(this.lastCatalogIncomplete ? { catalogIncomplete: true as const } : {}),
-    });
+    this.postChunks(round.paging, offset, cards, installed);
+  }
+
+  /** Posts `cards` (and, when given, the Installed set) as appends whose arrays
+   *  hold at most MAX_POST_CARDS rows, so no message makes the webview or this
+   *  host handle a huge list at once. Every chunk carries the real paging, if
+   *  the list has any; all but the last are marked `more`, so the webview paints
+   *  once, on the last. The Installed set rides the last chunks: it replaces the
+   *  set in the first of them and continues it after, `installedFrom` rows in
+   *  when the state already holds the head of it. At least one append goes out,
+   *  because a paging or installed change can arrive with no cards. */
+  private postChunks(
+    paging: PagingState | undefined,
+    offset: number,
+    cards: CardVM[],
+    installed?: CardVM[],
+    installedFrom = 0,
+  ): void {
+    const parts = (rows: number): number => Math.ceil(rows / MAX_POST_CARDS);
+    const installedParts = installed ? Math.max(parts(installed.length), 1) : 0;
+    const total = Math.max(parts(cards.length), installedParts, 1);
+    for (let i = 0; i < total; i++) {
+      const inInstalled = i - (total - installedParts);
+      const rows =
+        installed && inInstalled >= 0
+          ? installed.slice(inInstalled * MAX_POST_CARDS, (inInstalled + 1) * MAX_POST_CARDS)
+          : undefined;
+      const at = installedFrom + inInstalled * MAX_POST_CARDS;
+      this.post({
+        type: 'append',
+        offset: offset + Math.min(i * MAX_POST_CARDS, cards.length),
+        cards: cards.slice(i * MAX_POST_CARDS, (i + 1) * MAX_POST_CARDS),
+        ...(paging ? { token: paging.token, paging } : {}),
+        ...(rows ? { installed: rows, ...(at > 0 ? { installedOffset: at } : {}) } : {}),
+        catalogIncomplete: this.lastCatalogIncomplete,
+        ...(i < total - 1 ? { more: true as const } : {}),
+      });
+    }
   }
 
   /** Looks up the catalog row of installed artifacts the loaded pages lack. */
@@ -1331,6 +1376,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }): void {
     const snap = partial.snapshot;
     this.postedCatalogIncomplete = this.lastCatalogIncomplete;
+    // A list past the bound posts as a head state plus appends, whether or not
+    // grim pages it: the bound is about the size of one message.
+    const overflow =
+      partial.items.length > MAX_POST_CARDS || partial.installed.length > MAX_POST_CARDS;
     const projectName = snap?.projectFolder
       ? (snap.projectFolder.split(/[\\/]/).pop() ?? null)
       : null;
@@ -1340,8 +1389,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // webview re-stamps the active tab before rendering (model.ts viewForTab).
       mode: 'browse',
       query: this.query,
-      items: partial.items,
-      installedItems: partial.installed,
+      items: overflow ? partial.items.slice(0, MAX_POST_CARDS) : partial.items,
+      installedItems: overflow ? partial.installed.slice(0, MAX_POST_CARDS) : partial.installed,
       scopes: {
         projectOpen: snap?.projectFolder !== undefined,
         // snap can be undefined here (posted before a snapshot exists, e.g. the
@@ -1356,6 +1405,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ...(partial.stale === true ? { stale: true } : {}),
       ...(partial.paging ? { paging: partial.paging } : {}),
       ...(this.lastCatalogIncomplete ? { catalogIncomplete: true } : {}),
+      round: this.refreshGen,
       ...(partial.error !== undefined ? { error: partial.error } : {}),
       // Every post carries the current trust verdict — loading, ready and logo
       // repost alike. One source, so no post can silently drop it.
@@ -1371,6 +1421,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }
         : {}),
     };
-    this.post({ type: 'state', state });
+    this.post({ type: 'state', state, ...(overflow ? { more: true as const } : {}) });
+    if (overflow) {
+      const moreInstalled = partial.installed.slice(MAX_POST_CARDS);
+      this.postChunks(
+        partial.paging,
+        state.items.length,
+        partial.items.slice(MAX_POST_CARDS),
+        moreInstalled.length > 0 ? moreInstalled : undefined,
+        state.installedItems.length,
+      );
+    }
   }
 }

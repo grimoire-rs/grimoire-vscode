@@ -1,0 +1,34 @@
+{
+  "version": "0.15.0",
+  "scope": "global",
+  "workspace": "/home/u/.grimoire",
+  "config_path": "/home/u/.grimoire/grimoire.toml",
+  "config_exists": true,
+  "lock_path": "/home/u/.grimoire/grimoire.lock",
+  "lock_exists": false,
+  "lock_error": null,
+  "state_path": "/home/u/.grimoire/state/global.json",
+  "grim_home": "/home/u/.grimoire",
+  "offline": false,
+  "offline_source": null,
+  "clients": [
+    "claude",
+    "opencode",
+    "codex",
+    "junie",
+    "qoder"
+  ],
+  "registries": [
+    {
+      "alias": "hub",
+      "url": "http://127.0.0.1:8080",
+      "kind": "index",
+      "default": true,
+      "authenticated": false,
+      "include": [],
+      "exclude": [],
+      "insecure": false
+    }
+  ],
+  "default_registry": "ghcr.io/grimoire-rs"
+}

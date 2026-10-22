@@ -3,19 +3,24 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  NON_REFRESHING_TIMEOUT_MS,
+  REFRESHING_TIMEOUT_MS,
   addArgs,
   configListArgs,
   configSetArgs,
   configUnsetArgs,
   contextArgs,
+  defaultTimeoutMs,
   describeArgs,
   fetchArgs,
+  incompleteSources,
   initArgs,
   installArgs,
   isForceable,
   isRetryable,
   parseReport,
   positionalOf,
+  rateArgs,
   refusedNames,
   editRegistrySteps,
   registryAddArgs,
@@ -1009,6 +1014,23 @@ suite('grim report parsing', () => {
     }
   });
 
+  test('runJson kills the child at an explicit timeoutMs, ahead of the default (skipped on Windows: POSIX stub)', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    this.timeout(5000);
+    // `exec` replaces the shell, so the kill reaches the sleeper itself and the
+    // stdout pipe closes with it. The default for `search` is 420 s.
+    const scriptPath = path.join(os.tmpdir(), `grim-timeout-${Date.now()}.sh`);
+    fs.writeFileSync(scriptPath, '#!/bin/sh\nexec sleep 30\n', { mode: 0o755 });
+    try {
+      const result = await runJson(scriptPath, ['search'], { timeoutMs: 300 });
+      assert.ok(!result.ok);
+    } finally {
+      fs.rmSync(scriptPath, { force: true });
+    }
+  });
+
   test('runJson reports a stdout overflow as a clear error, not the truncated stdout (skipped on Windows: POSIX stub)', async function () {
     if (process.platform === 'win32') {
       this.skip();
@@ -1141,5 +1163,229 @@ suite('refusedNames', () => {
     assert.deepStrictEqual(refusedNames({ items: 'nope' }), []);
     assert.deepStrictEqual(refusedNames({ items: [null, 'x', 42] }), []);
     assert.deepStrictEqual(refusedNames('{"items":[]}'), []);
+  });
+});
+
+suite('defaultTimeoutMs', () => {
+  const ref = 'ghcr.io/grimoire-rs/skills/demo';
+  // runJson appends `--format json` ahead of any `--`; the verdict is read off
+  // that argv, so the tests go through the same shape.
+  const full = (args: string[]): string[] => withFlags(args, ['--format', 'json']);
+
+  test('a call that may refresh the catalog gets the long deadline', () => {
+    assert.strictEqual(REFRESHING_TIMEOUT_MS, 420_000);
+    assert.strictEqual(NON_REFRESHING_TIMEOUT_MS, 120_000);
+    for (const args of [statusArgs(), searchArgs(''), searchArgs('x', { refresh: true })]) {
+      assert.strictEqual(defaultTimeoutMs(full(args)), REFRESHING_TIMEOUT_MS, args.join(' '));
+    }
+  });
+
+  test('rate --dry-run resolves its row through the catalog, so online it is long', () => {
+    // --dry-run alone proves nothing: grim looks the row up and may refresh it.
+    assert.strictEqual(
+      defaultTimeoutMs(full(rateArgs(ref, { dryRun: true }))),
+      REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('--offline before the separator is the short deadline', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(withFlags(rateArgs(ref, { dryRun: true }), ['--offline']))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(searchArgs('', { offline: true, limit: 200, offset: 0 }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(searchArgs('demo', { offline: true }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('a positional is data: a query named --offline does not shorten the deadline', () => {
+    assert.deepStrictEqual(searchArgs('--offline'), ['search', '--', '--offline']);
+    assert.strictEqual(defaultTimeoutMs(full(searchArgs('--offline'))), REFRESHING_TIMEOUT_MS);
+    assert.strictEqual(
+      defaultTimeoutMs(full(rateArgs('--offline', { dryRun: true }))),
+      REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('a leading --global is skipped', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...searchArgs('', { offline: true })])),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...statusArgs()])),
+      REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(
+      defaultTimeoutMs(full(['--global', ...configSetArgs('k', 'v', { dryRun: true })])),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+  });
+
+  test('config set --dry-run loads no catalog; any other dry run or config call does not qualify', () => {
+    assert.strictEqual(
+      defaultTimeoutMs(full(configSetArgs('k', 'v', { dryRun: true }))),
+      NON_REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(defaultTimeoutMs(full(configSetArgs('k', 'v'))), REFRESHING_TIMEOUT_MS);
+    // The key is a positional, so a key named --dry-run does not count either.
+    assert.strictEqual(
+      defaultTimeoutMs(full(configSetArgs('--dry-run', 'v'))),
+      REFRESHING_TIMEOUT_MS,
+    );
+    assert.strictEqual(defaultTimeoutMs(full(configListArgs())), REFRESHING_TIMEOUT_MS);
+  });
+
+  test('--version never touches the catalog', () => {
+    assert.strictEqual(defaultTimeoutMs(['--version']), NON_REFRESHING_TIMEOUT_MS);
+  });
+});
+
+suite('incompleteSources', () => {
+  const fixtures = path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', 'grim');
+  const recorded = (dir: string, name: string): unknown =>
+    JSON.parse(fs.readFileSync(path.join(fixtures, dir, `${name}.json`), 'utf8'));
+  const downLine = "down: package index fetch failed for 'http://127.0.0.1:9'";
+  const src = (extra: Record<string, unknown>): { sources: unknown[] } => ({
+    sources: [{ alias: 'hub', locator: 'http://hub', ok: true, error: null, ...extra }],
+  });
+
+  // What 0.14.1 to 0.14.3 print when a source stops at the 500-repository cap.
+  const CAP_WARNING = 'WARN catalog listing capped at 500 repositories; results may be incomplete';
+
+  test('a clean recorded envelope is complete, and stderr alone changes nothing', () => {
+    for (const [dir, name] of [
+      ['0.15.0', 'search-loader'],
+      ['0.15.0', 'search-page-first'],
+      ['0.15.0', 'search-page-last'],
+    ] as const) {
+      const env = recorded(dir, name);
+      assert.deepStrictEqual(incompleteSources(env, undefined), [], `${dir}/${name}`);
+      // Debug lines and other warnings are not a verdict once grim reports sources.
+      assert.deepStrictEqual(incompleteSources(env, 'DEBUG grim: a line'), [], `${dir}/${name}`);
+    }
+  });
+
+  test('grim 0.14.x lists sources without capped: its cap warning on stderr lights, a clean read does not', () => {
+    const env = recorded('0.14.3', 'search');
+    assert.deepStrictEqual(incompleteSources(env, undefined), []);
+    assert.deepStrictEqual(incompleteSources(env, CAP_WARNING), [CAP_WARNING]);
+    assert.deepStrictEqual(incompleteSources(env, ''), []);
+  });
+
+  test('grim 0.15.0 reports the cap itself: the same stderr lights nothing', () => {
+    for (const name of ['search-page-first', 'search-page-last', 'search-loader']) {
+      const env = recorded('0.15.0', name);
+      assert.deepStrictEqual(incompleteSources(env, CAP_WARNING), [], name);
+    }
+  });
+
+  test('on grim 0.14.x a source that did not load is named, and stderr adds its own line', () => {
+    const env = recorded('0.14.3', 'search-source-down');
+    assert.deepStrictEqual(incompleteSources(env, CAP_WARNING), [downLine, CAP_WARNING]);
+  });
+
+  test('a source grim could not load is named with its error', () => {
+    for (const [dir, name] of [
+      ['0.14.3', 'search-source-down'],
+      ['0.15.0', 'search-loader-source-down'],
+    ] as const) {
+      assert.deepStrictEqual(incompleteSources(recorded(dir, name), undefined), [downLine], name);
+    }
+  });
+
+  test('an offline page after a failed refresh reports the dead source ok: only the loader knows', () => {
+    assert.deepStrictEqual(
+      incompleteSources(recorded('0.15.0', 'search-page-source-down'), 'WARN down'),
+      [],
+    );
+  });
+
+  test('a capped source reads "listing incomplete" unless the caller ignores capped', () => {
+    const env = src({ capped: true });
+    assert.deepStrictEqual(incompleteSources(env, undefined), ['hub: listing incomplete']);
+    assert.deepStrictEqual(incompleteSources(env, undefined, { ignoreCapped: true }), []);
+    assert.deepStrictEqual(incompleteSources(env, undefined, {}), ['hub: listing incomplete']);
+  });
+
+  test('ignoreCapped still reports a source that is not ok, and that source reads once', () => {
+    const env = src({ ok: false, error: 'boom', capped: true });
+    assert.deepStrictEqual(incompleteSources(env, undefined, { ignoreCapped: true }), [
+      'hub: boom',
+    ]);
+    assert.deepStrictEqual(incompleteSources(env, undefined), ['hub: boom']);
+  });
+
+  test('a missing or empty error reads "did not load"; a missing alias falls back to the locator', () => {
+    assert.deepStrictEqual(incompleteSources(src({ ok: false, error: null }), undefined), [
+      'hub: did not load',
+    ]);
+    assert.deepStrictEqual(incompleteSources(src({ ok: false, error: '' }), undefined), [
+      'hub: did not load',
+    ]);
+    assert.deepStrictEqual(incompleteSources(src({ ok: false, error: 7 }), undefined), [
+      'hub: did not load',
+    ]);
+    for (const alias of [undefined, null, '', 4]) {
+      assert.deepStrictEqual(
+        incompleteSources(src({ alias, ok: false, error: 'x' }), undefined),
+        ['http://hub: x'],
+        String(alias),
+      );
+    }
+  });
+
+  test('one line per source, in order; entries that are not objects are ignored', () => {
+    const env = {
+      sources: [
+        null,
+        'x',
+        42,
+        { alias: 'a', locator: 'l1', ok: false, error: 'e1' },
+        { alias: 'b', locator: 'l2', ok: true, capped: true },
+        { alias: 'c', locator: 'l3', ok: true, capped: false },
+      ],
+    };
+    assert.deepStrictEqual(incompleteSources(env, 'noise'), ['a: e1', 'b: listing incomplete']);
+  });
+
+  test('only a literal false or true counts: no truthiness coercion, an absent field is silent', () => {
+    for (const odd of [0, null, 'false', '', undefined]) {
+      assert.deepStrictEqual(
+        incompleteSources(src({ ok: odd }), undefined),
+        [],
+        `ok ${String(odd)}`,
+      );
+    }
+    for (const odd of [1, 'true', {}, null]) {
+      assert.deepStrictEqual(
+        incompleteSources(src({ capped: odd }), undefined),
+        [],
+        `capped ${String(odd)}`,
+      );
+    }
+    assert.deepStrictEqual(incompleteSources({ sources: [{ alias: 'a' }] }, undefined), []);
+  });
+
+  test('an empty sources array is a verdict too: stderr is still ignored', () => {
+    assert.deepStrictEqual(incompleteSources({ sources: [] }, 'WARN something'), []);
+  });
+
+  test('a grim that predates sources falls back to stderr alone', () => {
+    assert.deepStrictEqual(incompleteSources({ items: [] }, 'source down'), ['source down']);
+    assert.deepStrictEqual(incompleteSources({ items: [] }, ''), []);
+    assert.deepStrictEqual(incompleteSources({ items: [] }, undefined), []);
+    // `sources` that is not an array is no sources array.
+    assert.deepStrictEqual(incompleteSources({ sources: {} }, 'WARN x'), ['WARN x']);
+    assert.deepStrictEqual(incompleteSources({ sources: 'x' }, undefined), []);
+    for (const env of [null, undefined, 'x', 7, []]) {
+      assert.deepStrictEqual(incompleteSources(env, 'WARN x'), ['WARN x'], String(env));
+      assert.deepStrictEqual(incompleteSources(env, undefined), [], String(env));
+    }
   });
 });

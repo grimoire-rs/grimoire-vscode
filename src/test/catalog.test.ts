@@ -2,7 +2,15 @@
 // triggers can search concurrently (the search box, watcher/command refreshes,
 // the details panels), so response ordering is the thing worth pinning down.
 import * as assert from 'assert';
-import { CatalogService, SEARCH_PAGE_SIZE, mergePage } from '../catalog';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  BACKGROUND_PAGE_SIZE,
+  CatalogService,
+  LOADER_TIMEOUT_MS,
+  SEARCH_PAGE_SIZE,
+  mergePage,
+} from '../catalog';
 import type { GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService } from '../scopes';
 
@@ -37,8 +45,15 @@ function deferredScopes(
   holdLoader = false,
 ): {
   scopes: ScopeService;
-  resolveNext: (items: SearchItem[], extra?: Partial<SearchEnvelope>) => () => void;
+  /** `warnings` is what grim wrote to stderr on this (successful) run. */
+  resolveNext: (
+    items: SearchItem[],
+    extra?: Partial<SearchEnvelope>,
+    warnings?: string,
+  ) => () => void;
   failNext: (message: string, overflow?: true) => () => void;
+  /** The oldest held search finds no grim binary (spawn ENOENT). */
+  missingNext: () => () => void;
   /** Settles the oldest held loader run. */
   settleLoader: (result?: GrimResult<SearchEnvelope>) => void;
   argv: string[][];
@@ -86,9 +101,14 @@ function deferredScopes(
       assert.ok(settle, 'no loader was in flight');
       settle(result);
     },
-    resolveNext: (items, extra = {}) => {
+    resolveNext: (items, extra = {}, warnings) => {
       const settle = next();
-      return () => settle({ ok: true, value: { items, ...extra } });
+      return () =>
+        settle({
+          ok: true,
+          value: { items, ...extra },
+          ...(warnings !== undefined ? { warnings } : {}),
+        });
     },
     failNext: (message, overflow) => {
       const settle = next();
@@ -101,6 +121,10 @@ function deferredScopes(
           message,
           ...(overflow ? { overflow } : {}),
         });
+    },
+    missingNext: () => {
+      const settle = next();
+      return () => settle({ ok: false, kind: 'not-found' });
     },
   };
 }
@@ -356,33 +380,47 @@ suite('catalog paging', () => {
   });
 
   test('loadNext continues offline at the next offset in background-sized pages', async () => {
+    const PAGE = BACKGROUND_PAGE_SIZE;
+    const limit = String(PAGE);
+    const total = 200 + 2 * PAGE + 250;
     const { scopes, resolveNext, argv } = deferredScopes('0.15.0');
     const catalog = new CatalogService(scopes);
     const search = catalog.search('');
     await flush();
-    resolveNext(rows(0, 200), { total: 2_450 })();
+    resolveNext(rows(0, 200), { total })();
     await search;
     assert.strictEqual(catalog.hasMore(), true);
 
     const second = catalog.loadNext();
     await flush();
-    resolveNext(rows(200, 1_000), { total: 2_450 })();
+    resolveNext(rows(200, PAGE), { total })();
     assert.deepStrictEqual(await second, {});
-    assert.deepStrictEqual(argv[1], ['search', '--offline', '--limit', '1000', '--offset', '200']);
+    assert.deepStrictEqual(argv[1], ['search', '--offline', '--limit', limit, '--offset', '200']);
 
     const third = catalog.loadNext();
     await flush();
-    resolveNext(rows(1_200, 1_000), { total: 2_450 })();
+    resolveNext(rows(200 + PAGE, PAGE), { total })();
     await third;
-    assert.deepStrictEqual(argv[2], ['search', '--offline', '--limit', '1000', '--offset', '1200']);
+    assert.deepStrictEqual(argv[2], [
+      'search',
+      '--offline',
+      '--limit',
+      limit,
+      '--offset',
+      String(200 + PAGE),
+    ]);
     const fourth = catalog.loadNext();
     await flush();
-    resolveNext(rows(2_200, 250), { total: 2_450 })();
+    resolveNext(rows(200 + 2 * PAGE, 250), { total })();
     await fourth;
-    assert.strictEqual(catalog.state().items.length, 2_450);
+    assert.strictEqual(catalog.state().items.length, total);
     assert.strictEqual(catalog.paging()?.hasMore, false);
     assert.strictEqual(catalog.hasMore(), false);
-    assert.strictEqual(catalog.row('reg/r2449')?.repo, 'reg/r2449', 'pages feed the row index');
+    assert.strictEqual(
+      catalog.row(`reg/r${total - 1}`)?.repo,
+      `reg/r${total - 1}`,
+      'pages feed the row index',
+    );
 
     assert.strictEqual((await catalog.loadNext()).superseded, true);
     assert.strictEqual(argv.length, 4, 'a finished list spawns nothing');
@@ -403,18 +441,18 @@ suite('catalog paging', () => {
       '--sort',
       'name',
       '--limit',
-      '1000',
+      String(BACKGROUND_PAGE_SIZE),
       '--offset',
       '200',
     ]);
-    resolveNext(rows(200, 1_000), { total: 9_000 })();
+    resolveNext(rows(200, BACKGROUND_PAGE_SIZE), { total: 9_000 })();
     await more;
   });
 
   test('a long chain of pages completes with no duplicates and no gaps, past any row ceiling', async () => {
     const stub = deferredScopes('0.15.0');
     const catalog = new CatalogService(stub.scopes);
-    const TOTAL = 25_200;
+    const TOTAL = SEARCH_PAGE_SIZE + 10 * BACKGROUND_PAGE_SIZE;
     const search = catalog.search('');
     await flush();
     serve(stub, TOTAL);
@@ -428,7 +466,7 @@ suite('catalog paging', () => {
     const offsets = stub.argv.map((args) => Number(args[args.indexOf('--offset') + 1]));
     assert.deepStrictEqual(
       offsets,
-      Array.from({ length: 26 }, (_, i) => (i === 0 ? 0 : 200 + (i - 1) * 1_000)),
+      Array.from({ length: 11 }, (_, i) => (i === 0 ? 0 : 200 + (i - 1) * BACKGROUND_PAGE_SIZE)),
     );
     assert.deepStrictEqual(
       catalog.rowsFrom(0).map((i) => i.repo),
@@ -508,10 +546,12 @@ suite('catalog paging', () => {
 
     test('a changed total reloads in the background and swaps in on the last page', async () => {
       const { stub, catalog } = await loadedList(1_200, 1_200);
+      // Two background pages, so the reload swaps in on the second.
+      const grown = SEARCH_PAGE_SIZE + BACKGROUND_PAGE_SIZE + 250;
       const token = catalog.paging()?.token;
       const again = catalog.search('q');
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       const state = await again;
       assert.strictEqual(state.items.length, 1_200, 'the old list stays on screen');
       assert.strictEqual(state.paging?.token, token);
@@ -520,16 +560,16 @@ suite('catalog paging', () => {
 
       const page = catalog.loadNext();
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       assert.deepStrictEqual(await page, {});
       assert.strictEqual(catalog.state().items.length, 1_200, 'still the old list mid-reload');
       assert.strictEqual(catalog.paging()?.token, token);
 
       const last = catalog.loadNext();
       await flush();
-      serve(stub, 1_450);
+      serve(stub, grown);
       assert.deepStrictEqual(await last, { swapped: true });
-      assert.strictEqual(catalog.state().items.length, 1_450);
+      assert.strictEqual(catalog.state().items.length, grown);
       assert.notStrictEqual(catalog.paging()?.token, token);
       assert.strictEqual(catalog.hasMore(), false);
     });
@@ -736,22 +776,17 @@ suite('catalog paging', () => {
     assert.strictEqual(catalog.paging()?.loaded, 450);
   });
 
-  test('a page that wrote to stderr is reported as a warning', async () => {
+  test('a page whose source is not ok is reported as incomplete', async () => {
     const { scopes, resolveNext } = deferredScopes('0.15.0');
     const catalog = new CatalogService(scopes);
     const search = catalog.search('');
     await flush();
-    resolveNext(rows(0, 200), { total: 450 })();
+    resolveNext(rows(0, 200), { total: 450, sources: [HUB] })();
     await search;
-    const originalRun = scopes.run.bind(scopes);
-    scopes.run = (async (...args: Parameters<typeof originalRun>) => {
-      const r = await originalRun(...args);
-      return r.ok ? { ...r, warnings: 'source down' } : r;
-    }) as typeof scopes.run;
     const more = catalog.loadNext();
     await flush();
-    resolveNext(rows(200, 250), { total: 450 })();
-    assert.deepStrictEqual(await more, { warnings: 'source down' });
+    resolveNext(rows(200, 250), { total: 450, sources: [HUB, DOWN] })();
+    assert.deepStrictEqual(await more, { incomplete: [DOWN_LINE] });
   });
 
   test('an explicit refresh reads the disk again once the loader ends, and forgets known rows and lookups', async () => {
@@ -976,7 +1011,7 @@ suite('catalog loader', () => {
     settleLoader();
   });
 
-  test('the loader runs with a long deadline and its stderr reaches the list', async () => {
+  test('the loader runs with a long deadline and its source status reaches the list', async () => {
     const calls: unknown[][] = [];
     const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
     const original = scopes.run.bind(scopes);
@@ -989,13 +1024,384 @@ suite('catalog loader', () => {
     await flush();
     resolveNext(rows(0, 3))();
     await search;
-    assert.ok((calls[0]?.[3] as number) > 120_000, 'longer than the default deadline');
-    settleLoader({ ok: true, value: { items: [] }, warnings: 'source down' });
+    assert.strictEqual(calls[0]?.[3], LOADER_TIMEOUT_MS, 'the loader sets its own deadline');
+    settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
     await flush();
     const again = catalog.search('b');
     await flush();
     resolveNext(rows(0, 3))();
-    assert.deepStrictEqual((await again).warnings, 'source down');
+    assert.deepStrictEqual((await again).incomplete, [DOWN_LINE]);
+  });
+});
+
+// The recorded sources of grim 0.15.0 against a two-index rig: `hub` is fine and
+// `down` is an unreachable index. The loader (online) sees `down` fail; an
+// `--offline` page read afterwards reports the same `down` as ok.
+const RECORDED = path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', 'grim', '0.15.0');
+interface RecordedSource {
+  alias: string;
+  locator: string;
+  ok: boolean;
+  error: string | null;
+  capped: boolean;
+}
+const sourcesOf = (name: string): RecordedSource[] =>
+  (
+    JSON.parse(fs.readFileSync(path.join(RECORDED, `${name}.json`), 'utf8')) as {
+      sources: RecordedSource[];
+    }
+  ).sources;
+const [HUB, DOWN] = sourcesOf('search-loader-source-down') as [RecordedSource, RecordedSource];
+const [, DOWN_OK] = sourcesOf('search-page-source-down') as [RecordedSource, RecordedSource];
+const DOWN_LINE = "down: package index fetch failed for 'http://127.0.0.1:9'";
+const CAPPED_LINE = 'hub: listing incomplete';
+const capped = { ...HUB, capped: true };
+
+suite('catalog incomplete results', () => {
+  const POLL = 5;
+  const WARN = 'WARN grim: some debug line';
+
+  suite('unpaged search (grim before 0.15.0)', () => {
+    // 0.14.1 to 0.14.3 list sources without `capped`, so only stderr can say a
+    // source stopped at the 500-repository cap.
+    const HUB_G0 = { alias: HUB.alias, locator: HUB.locator, ok: HUB.ok, error: HUB.error };
+
+    test('stderr alone, with sources that report capped, lights nothing', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.14.3');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] }, WARN)();
+      assert.ok(!('incomplete' in (await search)));
+    });
+
+    test('stderr lights when the sources carry no capped, as on 0.14.x', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.14.3');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB_G0] }, WARN)();
+      assert.deepStrictEqual((await search).incomplete, [WARN]);
+    });
+
+    test('a source that is not ok lights, naming it', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.14.3');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB, DOWN] }, WARN)();
+      assert.deepStrictEqual((await search).incomplete, [DOWN_LINE]);
+    });
+
+    test('a grim with no sources and stderr lights', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.14.3');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 3), {}, 'source down')();
+      assert.deepStrictEqual((await search).incomplete, ['source down']);
+    });
+  });
+
+  suite('first page', () => {
+    test('stderr alone, with sources reported, lights nothing', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.15.0');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 200), { total: 450, sources: [HUB] }, WARN)();
+      assert.ok(!('incomplete' in (await search)));
+    });
+
+    test('a source that is not ok lights', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.15.0');
+      const catalog = new CatalogService(scopes);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 200), { total: 450, sources: [HUB, DOWN] })();
+      assert.deepStrictEqual((await search).incomplete, [DOWN_LINE]);
+    });
+
+    test('a capped source lights once no loader runs', async () => {
+      const { scopes, resolveNext } = deferredScopes('0.15.0'); // the loader settles at once
+      const catalog = new CatalogService(scopes, POLL);
+      const search = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { total: 3, sources: [capped] })();
+      assert.deepStrictEqual((await search).incomplete, [CAPPED_LINE]);
+    });
+
+    test('a capped source lights nothing while the loader builds: the paging says loading', async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      resolveNext(rows(0, 64), { total: 64, sources: [capped] })(); // a checkpoint
+      const state = await search;
+      assert.ok(!('incomplete' in state));
+      assert.strictEqual(state.paging?.lowerBound, true, 'capped still drives lowerBound');
+      settleLoader();
+    });
+
+    test("the loader's verdict stands for later offline reads that say every source is ok", async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB, DOWN_OK] })();
+      assert.ok(!('incomplete' in (await a)), 'the loader has not said anything yet');
+      settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      const b = catalog.search('b');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB, DOWN_OK] })(); // the dead source reads ok offline
+      assert.deepStrictEqual((await b).incomplete, [DOWN_LINE]);
+    });
+
+    test("the loader's verdict stands until the next loader settles, then goes", async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      await a;
+      settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      const refresh = catalog.search('b', { refresh: true }); // starts the next loader
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB, DOWN_OK] })();
+      assert.deepStrictEqual((await refresh).incomplete, [DOWN_LINE], 'it has not settled yet');
+      settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN_OK] } });
+      await flush();
+      const c = catalog.search('c');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB, DOWN_OK] })();
+      assert.ok(!('incomplete' in (await c)));
+    });
+
+    test('a line the read and the loader both report is listed once', async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      await a;
+      settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      const b = catalog.search('b');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [capped, DOWN] })();
+      assert.deepStrictEqual((await b).incomplete, [CAPPED_LINE, DOWN_LINE]);
+    });
+  });
+
+  suite('loader', () => {
+    test('stderr alone, with sources reported, lights nothing', async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      await a;
+      settleLoader({ ok: true, value: { items: [], sources: [HUB] }, warnings: WARN });
+      await flush();
+      const b = catalog.search('b');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      assert.ok(!('incomplete' in (await b)));
+    });
+
+    test('a capped source is kept: the loader ended, so the cap is the final word', async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      await a;
+      settleLoader({ ok: true, value: { items: [], sources: [capped] } });
+      await flush();
+      const b = catalog.search('b');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      assert.deepStrictEqual((await b).incomplete, [CAPPED_LINE]);
+    });
+
+    test('a loader that failed outright leaves no verdict of its own', async () => {
+      const { scopes, resolveNext, settleLoader } = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(scopes, POLL);
+      const a = catalog.search('a');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      await a;
+      settleLoader({ ok: false, kind: 'error', code: 'failure', exitCode: 1, message: 'boom' });
+      await flush();
+      const b = catalog.search('b');
+      await flush();
+      resolveNext(rows(0, 3), { sources: [HUB] })();
+      assert.ok(!('incomplete' in (await b)));
+    });
+  });
+
+  suite('background page', () => {
+    async function firstPage(held: boolean) {
+      const stub = deferredScopes('0.15.0', held);
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      stub.resolveNext(rows(0, 200), { total: 450, sources: [HUB] })();
+      await search;
+      return { stub, catalog };
+    }
+
+    test('stderr alone, with sources reported, lights nothing', async () => {
+      const { stub, catalog } = await firstPage(false);
+      const more = catalog.loadNext();
+      await flush();
+      stub.resolveNext(rows(200, 250), { total: 450, sources: [HUB] }, WARN)();
+      assert.deepStrictEqual(await more, {});
+    });
+
+    test('a source that is not ok lights', async () => {
+      const { stub, catalog } = await firstPage(false);
+      const more = catalog.loadNext();
+      await flush();
+      stub.resolveNext(rows(200, 250), { total: 450, sources: [HUB, DOWN] })();
+      assert.deepStrictEqual(await more, { incomplete: [DOWN_LINE] });
+    });
+
+    test('a capped source lights once no loader runs', async () => {
+      const { stub, catalog } = await firstPage(false);
+      const more = catalog.loadNext();
+      await flush();
+      stub.resolveNext(rows(200, 250), { total: 450, sources: [capped] })();
+      assert.deepStrictEqual(await more, { incomplete: [CAPPED_LINE] });
+    });
+
+    test('a capped source lights nothing while the loader builds', async () => {
+      const { stub, catalog } = await firstPage(true);
+      const more = catalog.loadNext();
+      await flush();
+      stub.resolveNext(rows(200, 250), { total: 450, sources: [capped] })();
+      assert.deepStrictEqual(await more, {});
+      stub.settleLoader();
+    });
+
+    test("the loader's verdict joins the page's once it has settled", async () => {
+      const { stub, catalog } = await firstPage(true);
+      stub.settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      const more = catalog.loadNext();
+      await flush();
+      stub.resolveNext(rows(200, 250), { total: 450, sources: [HUB, DOWN_OK] })();
+      assert.deepStrictEqual(await more, { incomplete: [DOWN_LINE] });
+    });
+
+    test('a swap carries the verdict too', async () => {
+      const stub = deferredScopes('0.15.0');
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const first = catalog.search('q');
+      await flush();
+      serve(stub, 450);
+      await first;
+      while (catalog.hasMore()) {
+        const page = catalog.loadNext();
+        await flush();
+        serve(stub, 450);
+        await page;
+      }
+      // A longer catalog reloads behind the list on screen; its last page promotes it.
+      const reload = catalog.search('q');
+      await flush();
+      serve(stub, 600);
+      await reload;
+      const page = catalog.loadNext();
+      await flush();
+      const args = stub.argv[stub.argv.length - 1] ?? [];
+      const offset = Number(args[args.indexOf('--offset') + 1]);
+      stub.resolveNext(rows(offset, 600 - offset), { total: 600, sources: [HUB, DOWN] })();
+      const result = await page;
+      assert.strictEqual(result.swapped, true);
+      assert.deepStrictEqual(result.incomplete, [DOWN_LINE]);
+    });
+  });
+
+  suite('reconcile', () => {
+    test('passes the verdict of the read that follows the loader through', async () => {
+      const stub = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB] })();
+      await search; // complete on disk, but the loader still runs
+      const waiting = catalog.loadNext();
+      await flush();
+      const before = stub.argv.length;
+      stub.settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      assert.strictEqual(stub.argv.length, before + 1, 'the afresh read');
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB, DOWN_OK] }, WARN)();
+      assert.deepStrictEqual(await waiting, { incomplete: [DOWN_LINE] });
+    });
+
+    test('a read that errors ends the reconcile and keeps the list on screen', async () => {
+      const stub = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB] })();
+      await search;
+      const waiting = catalog.loadNext();
+      await flush();
+      stub.settleLoader({ ok: true, value: { items: [], sources: [HUB, DOWN] } });
+      await flush();
+      stub.failNext('boom')();
+      // The error is a dropped read, not a verdict on the list, and not a
+      // failed page: the walker keeps the rows and does not stop on it.
+      assert.deepStrictEqual(await waiting, { error: 'boom', shadow: true });
+      // With no re-read left to try, the walker must not call again at once:
+      // that is a failing spawn in a loop for as long as grim keeps failing.
+      assert.strictEqual(catalog.hasMore(), false);
+      assert.strictEqual(catalog.rowsFrom(0).length, 3, 'the rows on screen stay');
+      const spawned = stub.argv.length;
+      assert.deepStrictEqual(await catalog.loadNext(), { superseded: true });
+      assert.strictEqual(stub.argv.length, spawned, 'nothing was spawned');
+    });
+
+    test('a read that finds no grim ends the reconcile too', async () => {
+      const stub = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB] })();
+      await search;
+      const waiting = catalog.loadNext();
+      await flush();
+      stub.settleLoader({ ok: true, value: { items: [], sources: [HUB] } });
+      await flush();
+      stub.missingNext()();
+      // Same outcome as a failed read: the walker must not ask again at once.
+      assert.deepStrictEqual(await waiting, { error: 'grim not found', shadow: true });
+      assert.strictEqual(catalog.hasMore(), false);
+      assert.strictEqual(catalog.rowsFrom(0).length, 3, 'the rows on screen stay');
+      const spawned = stub.argv.length;
+      assert.deepStrictEqual(await catalog.loadNext(), { superseded: true });
+      assert.strictEqual(stub.argv.length, spawned, 'nothing was spawned');
+    });
+
+    test('a clean loader and a clean read pass nothing through', async () => {
+      const stub = deferredScopes('0.15.0', true);
+      const catalog = new CatalogService(stub.scopes, POLL);
+      const search = catalog.search('');
+      await flush();
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB] })();
+      await search;
+      const waiting = catalog.loadNext();
+      await flush();
+      stub.settleLoader({ ok: true, value: { items: [], sources: [HUB] }, warnings: WARN });
+      await flush();
+      stub.resolveNext(rows(0, 3), { total: 3, sources: [HUB] }, WARN)();
+      assert.deepStrictEqual(await waiting, {});
+    });
   });
 });
 
@@ -1018,25 +1424,31 @@ suite('catalog reloads', () => {
 
   test('a repeat of the search that started a reload keeps that reload', async () => {
     const { stub, catalog } = await loadedList(1_200);
+    // Pages remain after the first background one, so there is a reload to keep.
+    const grown = SEARCH_PAGE_SIZE + 2 * BACKGROUND_PAGE_SIZE;
     const first = catalog.search('q');
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await first;
     const page = catalog.loadNext();
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await page;
     const loaded = stub.argv.length;
     const repeat = catalog.search('q'); // a watcher refresh while the reload loads
     await flush();
-    serve(stub, 1_450);
+    serve(stub, grown);
     await repeat;
     assert.strictEqual(stub.argv.length, loaded + 1, 'one page-one read, no restart');
     const next = catalog.loadNext();
     await flush();
     const args = stub.argv[stub.argv.length - 1] ?? [];
-    assert.strictEqual(args[args.indexOf('--offset') + 1], '1200', 'the reload carries on');
-    serve(stub, 1_450);
+    assert.strictEqual(
+      args[args.indexOf('--offset') + 1],
+      String(SEARCH_PAGE_SIZE + BACKGROUND_PAGE_SIZE),
+      'the reload carries on',
+    );
+    serve(stub, grown);
     await next;
   });
 
@@ -1113,5 +1525,80 @@ suite('catalog output overflow', () => {
     await flush();
     failNext('boom')();
     assert.strictEqual((await search).error, 'boom');
+  });
+});
+
+// A 20,000-row browse from the recorded 0.15.0 row: the call count bounds the
+// spawn overhead, the page size bounds the JSON.parse stall in the extension host.
+suite('catalog at 20,000 rows', () => {
+  const TOTAL = 20_000;
+  const MAX_CALLS = 10;
+  const MAX_PAGE_BYTES = 5 * 1024 * 1024;
+
+  test('a full browse takes at most 10 grim calls and no page prints over 5 MiB', async () => {
+    const text = fs.readFileSync(path.join(RECORDED, 'search-page-first.json'), 'utf8');
+    const recorded = JSON.parse(text) as { items: SearchItem[]; sources: unknown };
+    assert.strictEqual(
+      JSON.stringify(recorded, null, 2) + '\n',
+      text,
+      'the measure below is what grim prints',
+    );
+    const template = recorded.items[0] as SearchItem;
+    const catalogRows = Array.from({ length: TOTAL }, (_, n) => ({
+      ...template,
+      repo: template.repo.replace('pkg-000', `pkg-${String(n).padStart(3, '0')}`),
+    }));
+
+    const calls: string[][] = [];
+    const pageBytes: number[] = [];
+    const scopes = {
+      projectFolder: () => undefined,
+      grimVersion: () => Promise.resolve('0.15.0'),
+      run: <T>(args: string[]): Promise<GrimResult<T>> => {
+        calls.push(args);
+        if (isLoader(args)) {
+          const settled: GrimResult<SearchEnvelope> = {
+            ok: true,
+            value: { items: [], sources: recorded.sources },
+          };
+          return Promise.resolve(settled as GrimResult<T>);
+        }
+        const offset = Number(args[args.indexOf('--offset') + 1]);
+        const limit = Number(args[args.indexOf('--limit') + 1]);
+        const items = catalogRows.slice(offset, offset + limit);
+        const envelope = {
+          items,
+          sources: recorded.sources,
+          total: TOTAL,
+          truncated: offset + items.length < TOTAL,
+        };
+        pageBytes.push(Buffer.byteLength(JSON.stringify(envelope, null, 2)));
+        const page: GrimResult<SearchEnvelope> = { ok: true, value: envelope };
+        return Promise.resolve(page as GrimResult<T>);
+      },
+    } as unknown as ScopeService;
+
+    const catalog = new CatalogService(scopes);
+    await catalog.search('');
+    for (let i = 0; catalog.hasMore(); i++) {
+      assert.ok(i < 30, 'the walk ends');
+      assert.deepStrictEqual(await catalog.loadNext(), {});
+    }
+
+    const repos = catalog.rowsFrom(0).map((item) => item.repo);
+    assert.deepStrictEqual(
+      repos,
+      catalogRows.map((item) => item.repo),
+      'every row loaded once, in order',
+    );
+    assert.strictEqual(catalog.paging()?.loaded, TOTAL);
+    assert.ok(
+      calls.length <= MAX_CALLS,
+      `${calls.length} grim calls: ${calls.map((a) => a.join(' ')).join(' | ')}`,
+    );
+    assert.ok(
+      pageBytes.every((bytes) => bytes <= MAX_PAGE_BYTES),
+      `a page printed over 5 MiB: ${pageBytes.join(', ')}`,
+    );
   });
 });

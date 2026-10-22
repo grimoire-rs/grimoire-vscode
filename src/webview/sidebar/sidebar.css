@@ -28,6 +28,9 @@ body {
 #sb-results {
   display: flex;
   flex-direction: column;
+  /* The list windows its rows and corrects scrollTop itself once a row is
+     measured; the browser's own anchoring would apply the same shift twice. */
+  overflow-anchor: none;
 }
 
 #sb-footer {
@@ -377,15 +380,26 @@ vscode-textfield#search {
   cursor: pointer;
   position: relative;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.12));
-  /* Off-screen cards skip layout and paint, so a list that grows in the
-     background costs only what is near the viewport; `auto` remembers the
-     measured height once a card has rendered. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 92px;
 }
 
 .card:hover {
   background: var(--vscode-list-hoverBackground);
+}
+
+/* Stands in for the rows outside the window; main.ts sets its height from
+   data-px (inline style is blocked by the CSP). Never shrinks inside a flex
+   parent, or the scroll height drifts. */
+.win-spacer {
+  flex: none;
+}
+
+/* Rows take roving focus (arrow keys) as divs and buttons; keyboard focus only. */
+.card:focus-visible,
+.compact-row:focus-visible,
+.group-header:focus-visible,
+.tree-node:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
 }
 
 .card-body {
@@ -1000,8 +1014,6 @@ vscode-progress-bar {
   height: 22px;
   padding: 0 12px;
   cursor: pointer;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 22px;
 }
 
 .compact-row:hover {
@@ -1246,10 +1258,6 @@ vscode-progress-bar {
 .tree.roomy .compact-row,
 .tree.roomy .tree-node {
   height: 30px;
-}
-
-.tree.roomy .compact-row {
-  contain-intrinsic-size: auto 30px;
 }
 
 .tree.roomy .row-name,

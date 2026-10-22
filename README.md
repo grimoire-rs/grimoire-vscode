@@ -176,6 +176,13 @@ on an artifact that may already be installed. Point `grimoire.path.executable`
 at a current build, or run **Grimoire: Show Info** to see which binary is
 actually being spawned.
 
+Browsing a large catalog needs `grim` 0.15.0 or newer — the release that pages
+`grim search`. Browse then shows the first rows at once and loads the rest in
+the background. The list keeps only the rows near the viewport on screen, so a
+catalog of 20,000 entries scrolls like a short one. An older `grim` lists the
+catalog in one call: Browse still works, but it shows only the first 500
+entries of each index or registry.
+
 Editing a registry in place needs `grim` 0.13.0 or newer — the release that
 ships the `config registry set` verb, the `--include`/`--exclude` browse
 filters on `config registry add`, and the per-registry `--insecure` plain-HTTP

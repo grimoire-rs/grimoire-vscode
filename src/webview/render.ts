@@ -33,7 +33,6 @@ import {
   DEFAULT_VIEW,
   KIND_ICONS,
   avatarTint,
-  buildTree,
   cardKey,
   cardMenuEntries,
   clientDriftTooltip,
@@ -41,12 +40,12 @@ import {
   concreteVersion,
   effectiveInstall,
   filterCards,
+  flattenRows,
   formatCount,
-  groupCards,
-  groupKeyFor,
   hasClientDrift,
   hasOutputsPending,
   hasUpdate,
+  measuredHeights,
   browseSortRequest,
   installedCards,
   monogram,
@@ -57,10 +56,13 @@ import {
   registryLabel,
   relativeTime,
   resultIsPartial,
+  rowLabel,
   scopeRowMenuEntries,
   viaBundleTitle,
+  windowRows,
   PAGING_CAP_NOTE,
   type CardGroup,
+  type FlatRow,
   type SortMode,
   type MenuEntry,
   type TreeNode,
@@ -196,7 +198,9 @@ const COMPACT = new Intl.NumberFormat(undefined, { notation: 'compact', maximumF
  *  else, beside the rating badge. Omitted on an uncounted row — most registries
  *  publish no counter, so this is absent far more often than present, and an
  *  omitted badge is the difference between "unknown" and "nobody pulled it". */
-function downloadsBadge(downloads: DownloadsVM | null | undefined): TemplateResult | typeof nothing {
+function downloadsBadge(
+  downloads: DownloadsVM | null | undefined,
+): TemplateResult | typeof nothing {
   if (!downloads) {
     return nothing;
   }
@@ -288,27 +292,27 @@ function installedChip(install: InstallVM): TemplateResult {
  *  chevron opens the shared card menu (scope choices + Install specific
  *  version…). Deprecated artifacts demote to a single secondary Install (state
  *  matrix 1g) — the version picker stays reachable via the right-click menu. */
-function cardInstallButton(card: CardVM): TemplateResult {
+function cardInstallButton(card: CardVM, tab: NestedTab): TemplateResult {
   if (card.state === 'deprecated') {
-    return html`<button class="card-btn secondary" data-action="install" data-repo="${card.repo}">Install</button>`;
+    return html`<button class="card-btn secondary" data-action="install" data-repo="${card.repo}" tabindex="${ifDefined(tab)}">Install</button>`;
   }
-  return html`<div class="split-button sm"><button class="split-main" data-action="install" data-repo="${card.repo}">Install</button><button class="split-arrow" data-action="menu" title="Install options"><span class="codicon codicon-chevron-down"></span></button></div>`;
+  return html`<div class="split-button sm"><button class="split-main" data-action="install" data-repo="${card.repo}" tabindex="${ifDefined(tab)}">Install</button><button class="split-arrow" data-action="menu" title="Install options" tabindex="${ifDefined(tab)}"><span class="codicon codicon-chevron-down"></span></button></div>`;
 }
 
 /** Right-aligned action cluster on the card meta line (state matrix, 1g). */
-function cardAction(card: CardVM): TemplateResult {
+function cardAction(card: CardVM, tab: NestedTab): TemplateResult {
   if (card.state === 'outdated') {
     const target = card.installs.find((i) => i.updateAvailable);
     const to = card.latestVersion
       ? html`<span class="update-hint mono">→ ${card.latestVersion}</span>`
       : nothing;
-    return html`${to}<button class="card-btn" data-action="update" data-kind="${target?.kind ?? ''}" data-name="${target?.name ?? ''}" data-scope="${target?.scope ?? 'project'}">Update</button>`;
+    return html`${to}<button class="card-btn" data-action="update" data-kind="${target?.kind ?? ''}" data-name="${target?.name ?? ''}" data-scope="${target?.scope ?? 'project'}" tabindex="${ifDefined(tab)}">Update</button>`;
   }
   const install = effectiveInstall(card.installs);
   if (install) {
-    return html`${installedChip(install)}<button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button>`;
+    return html`${installedChip(install)}<button class="icon-button" data-action="menu" title="Manage" tabindex="${ifDefined(tab)}"><span class="codicon codicon-gear"></span></button>`;
   }
-  return cardInstallButton(card);
+  return cardInstallButton(card, tab);
 }
 
 /** Renders the shared menu-entry model (model.cardMenuEntries) to templates.
@@ -339,6 +343,27 @@ export function renderCardContextMenu(card: CardVM, projectOpen: boolean): Templ
   return html`<div class="card-menu card-context-menu">${renderMenuEntries(cardMenuEntries(card, { projectOpen, context: true }))}</div>`;
 }
 
+/** What a windowed row carries so one keyboard/ARIA layer can address it: the
+ *  `data-key` the windower tracks, the roving `tabindex`, and its position in
+ *  the set. Absent (every non-windowed caller) the markup is unchanged. */
+export interface RowAttrs {
+  key: string;
+  tabindex: 0 | -1;
+  setsize?: number | undefined;
+  posinset?: number | undefined;
+  /** Tree rows only. */
+  level?: number | undefined;
+}
+
+/** The `tabindex` a button nested in a windowed row carries. The row is the one
+ *  roving tab stop, so its controls leave the tab order (still clickable) unless
+ *  it is the stop; a row outside the window machinery keeps its buttons as they
+ *  were. */
+type NestedTab = -1 | undefined;
+function nestedTab(row?: RowAttrs): NestedTab {
+  return row?.tabindex === -1 ? -1 : undefined;
+}
+
 export interface CardVariant {
   /** 'updates' = version-delta row (1e UPDATES); 'scope' = client-chip row (1e sections). */
   variant?: 'browse' | 'updates' | 'scope';
@@ -346,6 +371,7 @@ export interface CardVariant {
   /** Status did not load: drop the row's install/update affordance rather than
    *  render "Install" off an empty install list (see SidebarState). */
   installStateUnknown?: boolean;
+  row?: RowAttrs;
 }
 
 /** Client-drift badge for an installed scope row (Installed tab): shown iff
@@ -386,6 +412,11 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
       ${version}
       ${kindBadge(card.kind)}
     </div>`;
+  // The Installed tab shows the install of the scope it is listed under.
+  const scopeInstall =
+    variant === 'scope'
+      ? (card.installs.find((i) => i.scope === options.scope) ?? card.installs[0])
+      : undefined;
   let body: TemplateResult;
   if (variant === 'updates') {
     const install = card.installs.find((i) => i.updateAvailable) ?? card.installs[0];
@@ -403,14 +434,14 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
       <span class="card-actions"><button class="card-btn" data-action="update" data-kind="${install?.kind ?? ''}" data-name="${install?.name ?? ''}" data-scope="${install?.scope ?? 'project'}">Update</button></span>
     </div>`;
   } else if (variant === 'scope') {
-    const install = card.installs.find((i) => i.scope === options.scope) ?? card.installs[0];
+    const install = scopeInstall;
     const extras =
       card.kind === 'bundle'
         ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
         : nothing;
     body = html`${title}
     <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}${pendingBadge(install)}
-      <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button></span>
+      <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage" tabindex="${ifDefined(nestedTab(options.row))}"><span class="codicon codicon-gear"></span></button></span>
     </div>`;
   } else {
     const description = html`<div class="card-desc">${card.description ?? ''}</div>`;
@@ -423,11 +454,12 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
     <div class="card-meta">
       <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
       ${ratingBadge(card.rating)}${downloadsBadge(card.downloads)}
-      <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card)}</span>
+      <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card, nestedTab(options.row))}</span>
     </div>`;
   }
+  const row = options.row;
   return html`
-<div class="card${deprecatedClass}" data-repo="${card.repo}">
+<div class="card${deprecatedClass}" data-repo="${card.repo}" role="${ifDefined(row && 'article')}" aria-label="${ifDefined(row && rowLabel(card, options.installStateUnknown !== true, scopeInstall))}" data-key="${ifDefined(row?.key)}" tabindex="${ifDefined(row?.tabindex)}" aria-setsize="${ifDefined(row?.setsize)}" aria-posinset="${ifDefined(row?.posinset)}">
   ${cardTile(card)}
   <div class="card-body">${body}</div>
 </div>`;
@@ -469,14 +501,14 @@ function depthClass(depth: number): string {
  *  {@link InstallVM.state}; rowState() collapses both into 'installed'. Pending
  *  ranks directly above installed, matching grim's own badge order — an update
  *  and real drift both outrank it, because it is a hint and they are not. */
-function rowSlot(card: CardVM, installStateUnknown: boolean): TemplateResult {
+function rowSlot(card: CardVM, installStateUnknown: boolean, tab: NestedTab): TemplateResult {
   if (installStateUnknown) {
     return html`<span class="row-slot"></span>`;
   }
   const target = card.installs.find((i) => i.updateAvailable);
   if (target) {
     const to = card.latestVersion ? ` to ${card.latestVersion}` : '';
-    return html`<span class="row-slot"><button class="row-action update" data-action="update" data-kind="${target.kind}" data-name="${target.name}" data-scope="${target.scope}" title="Update${to}"><span class="codicon codicon-sync"></span></button></span>`;
+    return html`<span class="row-slot"><button class="row-action update" data-action="update" data-kind="${target.kind}" data-name="${target.name}" data-scope="${target.scope}" title="Update${to}" tabindex="${ifDefined(tab)}"><span class="codicon codicon-sync"></span></button></span>`;
   }
   const drifted = card.installs.find((i) => i.state === 'modified' || i.state === 'missing');
   if (drifted) {
@@ -494,13 +526,14 @@ function rowSlot(card: CardVM, installStateUnknown: boolean): TemplateResult {
   if (install) {
     return html`<span class="row-slot"><span class="row-dot codicon codicon-circle-filled" title="Installed (${install.scope === 'project' ? 'Project' : 'Global'})"></span></span>`;
   }
-  return html`<span class="row-slot"><button class="row-action" data-action="install" data-repo="${card.repo}" title="Install"><span class="codicon codicon-cloud-download"></span></button></span>`;
+  return html`<span class="row-slot"><button class="row-action" data-action="install" data-repo="${card.repo}" title="Install" tabindex="${ifDefined(tab)}"><span class="codicon codicon-cloud-download"></span></button></span>`;
 }
 
 export interface RowOptions {
   installStateUnknown?: boolean;
   /** Tree leaves indent by level; omitted in the flat/grouped list. */
   depth?: number;
+  row?: RowAttrs;
 }
 
 /** The compact (22px) row: the same CardVM the card renders, one line of it.
@@ -513,8 +546,11 @@ export function renderCompactRow(card: CardVM, options: RowOptions = {}): Templa
   const version = shown ? html`<span class="row-version mono">${shown}</span>` : nothing;
   const title = card.deprecated ?? card.description ?? undefined;
   // In the tree the row IS a tree item; in the flat/grouped list it is just a
-  // row, and claiming treeitem outside a tree would be a lie to the reader.
-  const role = options.depth === undefined ? undefined : 'treeitem';
+  // row, and claiming treeitem outside a tree would be a lie to the reader. A
+  // windowed list row is an article: aria-setsize/posinset need a role that
+  // takes them.
+  const row = options.row;
+  const role = options.depth === undefined ? (row ? 'article' : undefined) : 'treeitem';
   // Leading column is the LOGO — publisher identity is what the eye lands on
   // first in a dense list — and it is a fixed box even when the artifact has
   // none, so every name starts at the same x. The trailing cluster reads in
@@ -533,14 +569,14 @@ export function renderCompactRow(card: CardVM, options: RowOptions = {}): Templa
   // claim about what is installed.
   const gear = options.installStateUnknown
     ? nothing
-    : html`<button class="row-action row-gear" data-action="menu" title="Manage"><span class="codicon codicon-gear"></span></button>`;
+    : html`<button class="row-action row-gear" data-action="menu" title="Manage" tabindex="${ifDefined(nestedTab(row))}"><span class="codicon codicon-gear"></span></button>`;
   // The trailing cluster is ONE box (margin-left:auto in CSS), not three loose
   // siblings: the name shrinks to its text so the version can sit beside it like
   // it does on a card, and a row with no version must still hold the same right
   // edge as its neighbours — an auto margin on the version itself would collapse
   // exactly on those rows.
-  const trailing = html`<span class="row-trailing">${gear}${kindTile(card.kind, 'sm')}${rowSlot(card, options.installStateUnknown === true)}</span>`;
-  return html`<div class="compact-row${leaf}${deprecated}" data-repo="${card.repo}" role="${ifDefined(role)}" title="${ifDefined(title)}">${logo}<span class="row-name">${card.name}</span>${version}${trailing}</div>`;
+  const trailing = html`<span class="row-trailing">${gear}${kindTile(card.kind, 'sm')}${rowSlot(card, options.installStateUnknown === true, nestedTab(row))}</span>`;
+  return html`<div class="compact-row${leaf}${deprecated}" data-repo="${card.repo}" role="${ifDefined(role)}" aria-label="${ifDefined(role === 'article' ? rowLabel(card, options.installStateUnknown !== true) : undefined)}" title="${ifDefined(title)}" data-key="${ifDefined(row?.key)}" tabindex="${ifDefined(row?.tabindex)}" aria-setsize="${ifDefined(row?.setsize)}" aria-posinset="${ifDefined(row?.posinset)}" aria-level="${ifDefined(row?.level)}">${logo}<span class="row-name">${card.name}</span>${version}${trailing}</div>`;
 }
 
 function twisty(expanded: boolean): TemplateResult {
@@ -565,8 +601,8 @@ function registryMarks(node: {
     : html`<span class="group-marks">${lock}${badge}</span>`;
 }
 
-function groupHeader(group: CardGroup, expanded: boolean): TemplateResult {
-  return html`<button class="group-header" data-action="toggle-node" data-node="${group.id}" aria-expanded="${expanded}">${twisty(expanded)}<span class="group-label">${group.label}</span><span class="group-count">${group.cards.length}</span>${registryMarks(group)}</button>`;
+function groupHeader(group: CardGroup, expanded: boolean, row?: RowAttrs): TemplateResult {
+  return html`<button class="group-header" data-action="toggle-node" data-node="${group.id}" aria-expanded="${expanded}" data-key="${ifDefined(row?.key)}" tabindex="${ifDefined(row?.tabindex)}">${twisty(expanded)}<span class="group-label">${group.label}</span><span class="group-count">${group.cards.length}</span>${registryMarks(group)}</button>`;
 }
 
 const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
@@ -621,26 +657,26 @@ function renderFooter(state: SidebarState): TemplateResult {
   if (state.catalogIncomplete !== true) {
     return html`<div class="footer"><span class="codicon codicon-cloud"></span>${body}</div>`;
   }
-  // grim answered the search but warned while doing it: the catalog cache for a
-  // registry could not be read, so it was dropped and the rows above are a
+  // grim answered the search, but a registry could not be read in full: a
+  // source did not load, or its listing stopped early, so the rows above are a
   // subset of the catalog by an unknown amount. Nothing else on screen says so —
-  // the exit code was 0 and the envelope names no failure.
+  // the exit code was 0 and `items` looks like any other list.
   //
   // It takes over the line the footer already has rather than adding one: the
   // cloud IS the catalog-cache status glyph, so a warning in its place says
   // "this cache is not what it should be" without a second row appearing and
   // disappearing under the results. The whole line is the click target (a real
   // button, so Enter and Space work) and carries the explanation on hover; the
-  // output channel it opens is the only place the dropped registry is named.
+  // output channel it opens is the only place the registry is named.
   //
   // It does not blink: {@link SidebarState.catalogIncomplete} is a last-known
   // verdict stamped onto every post, including the `phase:'loading'` one that
-  // opens the next round, and only a search that SUCCEEDS with no warning takes
-  // it down. A refetch in flight is not evidence the registry came back.
+  // opens the next round, and only a search that SUCCEEDS with every source read
+  // in full takes it down. A refetch in flight is not evidence the registry came back.
   return html`<button
   class="footer footer-alert"
   data-action="show-output"
-  title="The catalog cache could not be read for every registry, so these results may be missing artifacts. Click to see which."
+  title="A registry could not be read in full, so these results may be missing artifacts. Click to see which."
 ><span class="codicon codicon-warning"></span>${body}</button>`;
 }
 
@@ -778,6 +814,7 @@ function tabRow(
   state: SidebarState,
   view: ViewOptions,
   group?: CardGroup,
+  row?: RowAttrs,
 ): TemplateResult {
   // A stale (storage-restored) round suppresses the same affordances an unknown
   // install state does: its `installs` are last session's, and an Install
@@ -787,7 +824,7 @@ function tabRow(
   // unlike an unknown one, still has real install data behind them.
   const installStateUnknown = state.installStateUnknown !== undefined || state.stale === true;
   if (view.density === 'compact') {
-    return renderCompactRow(card, { installStateUnknown });
+    return renderCompactRow(card, row ? { installStateUnknown, row } : { installStateUnknown });
   }
   if (state.mode === 'updates') {
     return renderCard(card, { variant: 'updates' });
@@ -797,84 +834,171 @@ function tabRow(
       group?.id === 'project' || group?.id === 'global'
         ? group.id
         : (effectiveInstall(card.installs)?.scope ?? 'project');
-    return renderCard(card, { variant: 'scope', scope });
+    return renderCard(card, row ? { variant: 'scope', scope, row } : { variant: 'scope', scope });
   }
-  return renderCard(card, { installStateUnknown });
+  return renderCard(card, row ? { installStateUnknown, row } : { installStateUnknown });
 }
 
-/** The results body for Browse and Installed: tree, grouped list, or flat list.
+/** The slice of the results the windowing needs, computed once per data change
+ *  (state, filter, view or expanded set) and reused by every scroll render. */
+export interface PreparedResults {
+  /** What survived the filters: drives the counts and the empty states. */
+  filtered: CardVM[];
+  /** Browse and Installed only; Updates is bounded by installs and never windowed. */
+  rows: FlatRow[];
+}
+
+export function prepareResults(
+  state: SidebarState,
+  filter: CardFilter,
+  view: ViewOptions,
+  expanded: ExpandedNodes,
+): PreparedResults {
+  // Unknown install state blanks only the installed-side tabs (their data is
+  // missing); Browse is catalog data and keeps its rows — see renderSidebarResults.
+  if (
+    state.phase !== 'ready' ||
+    (state.installStateUnknown !== undefined && state.mode !== 'browse')
+  ) {
+    return { filtered: [], rows: [] };
+  }
+  if (state.mode === 'updates') {
+    // The WHOLE hasUpdate slice, deliberately unfiltered — see renderInstalledResults.
+    return { filtered: state.items, rows: [] };
+  }
+  // Browse is held at the field's natural direction while pages remain (see sortControl).
+  const filtered =
+    state.mode === 'browse'
+      ? filterCards(state.items, { ...filter, dir: browseSortRequest(filter, state.paging).dir })
+      : installedCards(state, filter);
+  const context = { registries: state.registries, projectName: state.scopes.projectName };
+  // Pages still loading: the loaded count is not the set size (aria-setsize -1).
+  const sizeUnknown = state.mode === 'browse' && resultIsPartial(state.paging);
+  return {
+    filtered,
+    rows: flattenRows(filtered, state.mode, view, context, expanded, sizeUnknown),
+  };
+}
+
+/** Where the list is scrolled to, plus what the caller knows about its rows. */
+export interface ResultsWindow {
+  scrollTop: number;
+  /** The scroller's visible height. */
+  viewport: number;
+  /** Measured row heights by row key; an unmeasured row uses its estimate. */
+  heights?: ReadonlyMap<string, number> | undefined;
+  /** The row holding the roving tabindex. Unset, or outside the rendered
+   *  window, the first row at the visible top holds it. */
+  focusKey?: string | undefined;
+  /** Reuse across scroll renders. The caller owns invalidation: drop it when
+   *  state, filter, view or expanded changes. */
+  prepared?: PreparedResults | undefined;
+}
+
+/** First paint, the host-side skeleton and every caller that has no scroller. */
+const FIRST_PAINT_WINDOW: ResultsWindow = { scrollTop: 0, viewport: 800 };
+
+/** A spacer stands in for the unrendered rows on one side. Its height cannot be
+ *  an inline style (CSP), so it rides in `data-px` for the scroller to apply
+ *  through the CSSOM. */
+function spacer(px: number): TemplateResult | typeof nothing {
+  return px > 0 ? html`<div class="win-spacer" aria-hidden="true" data-px="${px}"></div>` : nothing;
+}
+
+function treeNode(node: TreeNode, depth: number, open: boolean, row: RowAttrs): TemplateResult {
+  return html`<button class="tree-node ${depthClass(depth)}" data-action="toggle-node" data-node="${node.id}" role="treeitem" aria-expanded="${open}" data-key="${row.key}" tabindex="${row.tabindex}" aria-level="${ifDefined(row.level)}" aria-setsize="${ifDefined(row.setsize)}" aria-posinset="${ifDefined(row.posinset)}">${twisty(open)}<span class="tree-label mono">${node.label}</span><span class="group-count">${node.count}</span>${registryMarks(node)}</button>`;
+}
+
+/** One flattened row as the template its layout calls for. */
+function flatRow(
+  row: FlatRow,
+  state: SidebarState,
+  view: ViewOptions,
+  stop: string | undefined,
+): TemplateResult {
+  const tabindex = row.key === stop ? 0 : -1;
+  if (row.type === 'group') {
+    return groupHeader(row.group, row.open, { key: row.key, tabindex });
+  }
+  const attrs: RowAttrs = {
+    key: row.key,
+    tabindex,
+    setsize: row.setsize,
+    posinset: row.posinset,
+    level: row.level,
+  };
+  if (row.type === 'node') {
+    return treeNode(row.node, row.depth, row.open, attrs);
+  }
+  if (row.depth !== undefined) {
+    return renderCompactRow(row.card, {
+      depth: row.depth,
+      installStateUnknown: state.installStateUnknown !== undefined || state.stale === true,
+      row: attrs,
+    });
+  }
+  return tabRow(row.card, state, view, row.group, attrs);
+}
+
+/** The spacer between a pinned row and the window. It rides in the same keyed
+ *  run as the rows, so a row moving from the pinned slot into the window (or
+ *  back) keeps its DOM node, and focus with it. */
+const GAP_KEY = '\0gap';
+
+type RunItem = FlatRow | { type: 'gap'; key: string; px: number };
+
+/** The results body for Browse and Installed: tree, grouped list, or flat list,
+ *  windowed to the rows around the scroll position with spacers for the rest.
+ *  The row holding the roving focus stays rendered even when the window has
+ *  moved away from it: scrolling past the overscan would otherwise dispose its
+ *  node and drop focus to the body.
  *  Updates never gets here — it is a short single-purpose list (see below). */
 function listBody(
-  cards: CardVM[],
+  rows: FlatRow[],
   state: SidebarState,
   view: ViewOptions,
-  expanded: ExpandedNodes,
+  win: ResultsWindow,
 ): TemplateResult {
-  if (view.mode === 'tree') {
-    const nodes = buildTree(cards, {
-      registries: state.registries,
-      projectName: state.scopes.projectName,
-    });
-    // Density applies to the tree too — as a scale on the whole tree, not a
-    // card/row swap: a card indented under a namespace node is not a tree, and
-    // "comfortable" here means the rows and their glyphs get bigger. One
-    // container class does it, so nothing threads through the node renderer.
-    const roomy = view.density === 'comfortable' ? ' roomy' : '';
-    return html`<div class="tree${roomy}" role="tree">${treeNodes(nodes, state, view, expanded, 0)}</div>`;
+  const heights = measuredHeights(rows, view, win.heights);
+  const pinAt = win.focusKey === undefined ? -1 : rows.findIndex((r) => r.key === win.focusKey);
+  const { start, end, before, after, firstVisible, pin } = windowRows(
+    heights,
+    win.scrollTop,
+    win.viewport,
+    undefined, // the default overscan
+    undefined, // and row cap
+    pinAt,
+  );
+  const shown = rows.slice(start, end);
+  const pinned = pin ? rows[pin.index] : undefined;
+  // Not shown[0]: the overscan renders up to 400 px above the viewport, and Tab
+  // landing there scrolls the list back to it.
+  const stop =
+    pinned?.key ??
+    shown.find((r) => r.key === win.focusKey)?.key ??
+    (shown[Math.max(firstVisible - start, 0)] ?? shown[0])?.key;
+  const gap: RunItem[] = pin && pin.gap > 0 ? [{ type: 'gap', key: GAP_KEY, px: pin.gap }] : [];
+  const run: RunItem[] =
+    pin && pinned
+      ? pin.index < start
+        ? [pinned, ...gap, ...shown]
+        : [...shown, ...gap, pinned]
+      : shown;
+  const body = html`${spacer(pin?.above ?? before)}${repeat(
+    run,
+    (r) => r.key,
+    (r) => (r.type === 'gap' ? spacer(r.px) : flatRow(r, state, view, stop)),
+  )}${spacer(pin?.below ?? after)}`;
+  if (view.mode !== 'tree') {
+    return body;
   }
-  const key = groupKeyFor(state.mode, view);
-  if (key === 'none') {
-    return html`${repeat(
-      cards,
-      cardKey,
-      (c) => tabRow(c, state, view),
-    )}`;
-  }
-  const groups = groupCards(cards, key, {
-    registries: state.registries,
-    projectName: state.scopes.projectName,
-  });
-  return html`${repeat(
-    groups,
-    (g) => g.id,
-    (g) =>
-      html`${groupHeader(g, expanded.has(g.id))}${
-        expanded.has(g.id)
-          ? html`${repeat(
-              g.cards,
-              // Keyed per group: an artifact installed in both scopes lands in
-              // both, and lit requires the keys to be unique across the list.
-              (c) => `${g.id}:${cardKey(c)}`,
-              (c) => tabRow(c, state, view, g),
-            )}`
-          : nothing
-      }`,
-  )}`;
-}
-
-function treeNodes(
-  nodes: TreeNode[],
-  state: SidebarState,
-  view: ViewOptions,
-  expanded: ExpandedNodes,
-  depth: number,
-): TemplateResult {
-  return html`${repeat(
-    nodes,
-    (n) => n.id,
-    (n) => {
-      if (n.card) {
-        return renderCompactRow(n.card, {
-          depth,
-          installStateUnknown: state.installStateUnknown !== undefined || state.stale === true,
-        });
-      }
-      const open = expanded.has(n.id);
-      return html`<button class="tree-node ${depthClass(depth)}" data-action="toggle-node" data-node="${n.id}" role="treeitem" aria-expanded="${open}">${twisty(open)}<span class="tree-label mono">${n.label}</span><span class="group-count">${n.count}</span>${registryMarks(n)}</button>${
-        open ? treeNodes(n.children, state, view, expanded, depth + 1) : nothing
-      }`;
-    },
-  )}`;
+  // Density applies to the tree too — as a scale on the whole tree, not a
+  // card/row swap: a card indented under a namespace node is not a tree, and
+  // "comfortable" here means the rows and their glyphs get bigger. One
+  // container class does it, so nothing threads through the node renderer.
+  const roomy = view.density === 'comfortable' ? ' roomy' : '';
+  const name = state.mode === 'installed' ? 'Installed artifacts' : 'Artifacts';
+  return html`<div class="tree${roomy}" role="tree" aria-label="${name}">${body}</div>`;
 }
 
 /** One installed view's card list (native-views split — the workbench owns
@@ -885,6 +1009,7 @@ function renderInstalledResults(
   filter: CardFilter,
   view: ViewOptions,
   expanded: ExpandedNodes,
+  win: ResultsWindow,
 ): TemplateResult {
   if (state.mode === 'updates') {
     // The WHOLE hasUpdate slice, deliberately unfiltered: this tab renders no
@@ -897,11 +1022,7 @@ function renderInstalledResults(
     // "Everything is up to date." A `kind: null` card — installed, absent from
     // the catalog — dropped out of every chip-narrowed list the same way.
     return state.items.length
-      ? html`${repeat(
-          state.items,
-          cardKey,
-          (c) => tabRow(c, state, view),
-        )}`
+      ? html`${repeat(state.items, cardKey, (c) => tabRow(c, state, view))}`
       : installedEmpty('Everything is up to date.');
   }
   // Installed view: BOTH scopes (the host posts both). Scope grouping replaced
@@ -909,9 +1030,11 @@ function renderInstalledResults(
   // installed in both scopes appears under both headers, keyed per group.
   // The initialize-project notice lives in the top #sb-notice slot (above the
   // tabs, all modes) — no inline copy here.
-  const cards = installedCards(state, filter);
-  return cards.length
-    ? listBody(cards, state, view, expanded)
+  const { filtered, rows } = win.prepared ?? prepareResults(state, filter, view, expanded);
+  // `.cards` is where main.ts measures the list's scroll offset: without it the
+  // Installed window would never follow the scroll.
+  return filtered.length
+    ? html`<div class="cards">${listBody(rows, state, view, win)}</div>`
     : installedEmpty('Nothing installed.');
 }
 
@@ -965,18 +1088,14 @@ function sortControl(
   // While pages remain grim's order has one direction per field, so the toggle
   // is held at the field's natural one rather than reversing a partial prefix.
   const { dir, dirDisabled } =
-    mode === 'browse'
-      ? browseSortRequest(filter, paging)
-      : { dir: filter.dir, dirDisabled: false };
+    mode === 'browse' ? browseSortRequest(filter, paging) : { dir: filter.dir, dirDisabled: false };
   const asc = dir === 'asc';
   const label = dirDisabled
     ? 'Loading all results — the order can be reversed once they are loaded'
     : asc
       ? 'Ascending — click for descending'
       : 'Descending — click for ascending';
-  const options = SORT_OPTIONS.filter(
-    (option) => option.id !== 'relevance' || mode === 'browse',
-  );
+  const options = SORT_OPTIONS.filter((option) => option.id !== 'relevance' || mode === 'browse');
   return html`<div class="sort-group" role="group" aria-label="Sort by">
     <button class="sort-dir" data-action="toggle-sort-dir" title="${label}" aria-label="${label}" aria-disabled="${ifDefined(dirDisabled ? 'true' : undefined)}">${asc ? SORT_ASC_ICON : SORT_DESC_ICON}</button>
     <select class="sort-field" id="sort-field" aria-label="Sort by" title="Sort by" .value="${filter.sort}">${options.map(
@@ -1028,6 +1147,7 @@ export function renderSidebarResults(
   filter: CardFilter,
   view: ViewOptions = DEFAULT_VIEW,
   expanded: ExpandedNodes = NONE_EXPANDED,
+  win: ResultsWindow = FIRST_PAINT_WINDOW,
 ): TemplateResult {
   if (state.phase === 'no-grim') {
     return renderNoGrim();
@@ -1045,11 +1165,9 @@ export function renderSidebarResults(
     if (state.installStateUnknown !== undefined) {
       return installedEmpty('Install state is unavailable.');
     }
-    return renderInstalledResults(state, filter, view, expanded);
+    return renderInstalledResults(state, filter, view, expanded, win);
   }
-  // Held at the field's natural direction while pages remain (see sortControl).
-  const sorted = { ...filter, dir: browseSortRequest(filter, state.paging).dir };
-  const filtered = filterCards(state.items, sorted);
+  const { filtered, rows } = win.prepared ?? prepareResults(state, filter, view, expanded);
   const registries = registryCount(state);
   const partial = pagingSummary(state.paging, filtered.length, registries);
   const summary =
@@ -1062,7 +1180,7 @@ export function renderSidebarResults(
   // load cannot claim that nothing matches.
   const body =
     filtered.length > 0
-      ? listBody(filtered, state, view, expanded)
+      ? listBody(rows, state, view, win)
       : state.paging && state.items.length > 0 && resultIsPartial(state.paging)
         ? renderPartialEmpty(state.items.length, state.paging.failed === true)
         : // Nothing loaded yet while the catalog is still being built is not "no results".
@@ -1270,7 +1388,9 @@ function renderPackagePanel(vm: DetailsVM): TemplateResult {
     // Skills-only annotation, null for every other kind by construction — so a
     // permanent "Not provided" row on an mcp or a bundle would be noise, not
     // information. The row appears only when grim reports a value.
-    vm.compatibility ? railRow('Compatibility', html`<span class="mono">${vm.compatibility}</span>`) : nothing
+    vm.compatibility
+      ? railRow('Compatibility', html`<span class="mono">${vm.compatibility}</span>`)
+      : nothing
   }
 </div>`;
 }

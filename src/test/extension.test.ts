@@ -41,6 +41,7 @@ import { renderSidebarFooter } from '../webview/render';
 import { litString } from './litString';
 import {
   MINIMUM_GRIM_VERSION,
+  PAGING_GRIM_VERSION,
   RATING_GRIM_VERSION,
   REGISTRY_EDIT_GRIM_VERSION,
 } from '../installer';
@@ -1021,7 +1022,8 @@ suite('extension integration', () => {
     // (no banner, no version gate) whose catalog cache was written by a newer
     // grim still exits 0 — with the rows from the sources it could read and a
     // WARN naming the ones it dropped. The list looks healthy and is silently
-    // short. stderr is the only evidence, so presence of it is the signal.
+    // short. This envelope names no sources (a grim that predates the per-source
+    // status), so stderr is the only evidence and presence of it is the signal.
     const undo = cannedStderr(
       stub,
       'search',
@@ -1094,6 +1096,36 @@ suite('extension integration', () => {
       undo();
       await api.providers.sidebar.refresh();
       assert.strictEqual(states.at(-1)?.catalogIncomplete, undefined, 'and cleared again');
+    } finally {
+      undo();
+      canned(stub, 'search', { items: [] });
+    }
+  });
+
+  test('a grim that reports its sources: stderr alone lights nothing, a source that is not ok does', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const { view, states } = fakeView();
+    api.providers.sidebar.resolveWebviewView(view);
+    // `capped` is what marks a grim whose stderr is only a log (0.15.0).
+    const hub = { alias: 'hub', locator: 'http://hub', ok: true, error: null, capped: false };
+    const down = {
+      alias: 'down',
+      locator: 'http://down',
+      ok: false,
+      error: 'index fetch failed',
+      capped: false,
+    };
+    const undo = cannedStderr(stub, 'search', 'DEBUG grim: an unrelated line\n');
+    const items = [searchItem('ghcr.io/grimoire-rs/skills/sourced')];
+    try {
+      canned(stub, 'search', { items, sources: [hub] });
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.phase, 'ready');
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, undefined, 'stderr is not a verdict');
+      canned(stub, 'search', { items, sources: [hub, down] });
+      await api.providers.sidebar.refresh();
+      assert.strictEqual(states.at(-1)?.catalogIncomplete, true, 'a source that did not load');
     } finally {
       undo();
       canned(stub, 'search', { items: [] });
@@ -3279,6 +3311,284 @@ suite('extension integration', () => {
       canned(stub, 'search', { items: [] });
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  // --- Rating probe: an UNRATED search row may still have a vote target. Behind the
+  // --- catalog-at-scale index a new entry stays unrated in grim's catalog until
+  // --- the index publishes new stats, but `grim rate` refetches once for an
+  // --- unrated row — so grim can know a target the row does not show.
+
+  const RECORDED_RATE = path.join(
+    __dirname,
+    '..',
+    '..',
+    'src',
+    'test',
+    'fixtures',
+    'grim',
+    '0.15.0',
+  );
+  const recordedRate = (name: string): Record<string, unknown> =>
+    JSON.parse(fs.readFileSync(path.join(RECORDED_RATE, `${name}.json`), 'utf8')) as Record<
+      string,
+      unknown
+    >;
+  const ROW_RATING = { up: 5, url: 'https://forge.example/d/row' };
+  let probeSeq = 0;
+
+  /** Fires `readies` ready messages at a panel on a catalog row that is UNRATED
+   *  (or carries {@link ROW_RATING} with `rated`), under grim `version`, with
+   *  `rate` canned as grim's answer to every `rate` call. A fresh repo per call,
+   *  because the probe is remembered per session. `then` runs before the
+   *  cleanup, for assertions that need the live panel. */
+  async function readyOnRow(options: {
+    version: string;
+    rate: unknown;
+    exit?: number;
+    readies?: number;
+    rated?: boolean;
+    /** The catalog holds no row for the repo (an artifact in no catalog). */
+    noRow?: boolean;
+    then?: (api: GrimoireApi, repo: string, panel: vscode.WebviewPanel) => Promise<void>;
+  }): Promise<{ posts: DetailsVM[]; rates: string[] }> {
+    const api = await activateExtension();
+    const cacheDir = isolateCache(api);
+    const repo = `ghcr.io/grimoire-rs/skills/probe-${(probeSeq += 1)}`;
+    const restoreVersion = await withGrimVersion(api, options.version);
+    canned(stub, 'search', {
+      items: options.noRow
+        ? []
+        : [{ ...searchItem(repo), ...(options.rated ? { rating: ROW_RATING } : {}) }],
+    });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'rate', options.rate);
+    const undoExit =
+      options.exit === undefined ? undefined : cannedExit(stub, 'rate', options.exit);
+    try {
+      await api.providers.sidebar.refresh(); // loads the row into the catalog
+      fs.rmSync(stub.argvLog, { force: true });
+      const { panel, posts } = fakePanel();
+      for (let i = 0; i < (options.readies ?? 1); i += 1) {
+        await api.providers.details.onMessage(repo, panel, { type: 'ready', repo });
+      }
+      const rates = argvLines(stub).filter((l) => l.startsWith('rate'));
+      await options.then?.(api, repo, panel);
+      return { posts, rates };
+    } finally {
+      undoExit?.();
+      uncan(stub, 'rate', 'describe');
+      canned(stub, 'search', { items: [] });
+      await restoreVersion();
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  }
+
+  /** A probe is an uncredentialed dry-run handshake — and online it may refresh
+   *  the catalog, so it must NOT be `--offline` (that would starve the very
+   *  refetch it exists for). */
+  function assertProbeArgv(line: string | undefined): void {
+    assert.ok(line?.includes('--dry-run'), `not a dry run: ${line}`);
+    assert.ok(!line?.includes('--offline'), `the probe went offline: ${line}`);
+    assert.ok(!line?.includes('--token-stdin'), `the probe asked for a credential: ${line}`);
+  }
+
+  test('rating probe: an unrated row asks grim for a vote target and shows the vote', async function () {
+    this.timeout(20000);
+    const { posts, rates } = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+    });
+    // The probe, then refineVote's own handshake over the rating the probe found.
+    assert.strictEqual(rates.length, 2, `expected probe + refine handshake: ${rates.join(' | ')}`);
+    rates.forEach(assertProbeArgv);
+    const last = posts[posts.length - 1];
+    assert.ok(last?.rating, 'the probed rating never reached the panel');
+    assert.strictEqual(last.rating.up, 1);
+    assert.strictEqual(last.rating.url, 'https://github.com/acme/index/discussions/1');
+    assert.strictEqual(last.rating.vote, 'unknown', 'a probe says nothing about the viewer');
+    assert.strictEqual(last.canVote, true, 'the vote affordance is offered');
+  });
+
+  test('rating probe: an artifact in no catalog has no row, so grim is not asked', async function () {
+    this.timeout(20000);
+    const { posts, rates } = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+      noRow: true,
+    });
+    assert.deepStrictEqual(rates, [], 'a dry run was spent on a repo no catalog lists');
+    assert.ok(posts.length > 0, 'the panel never painted');
+    assert.ok(
+      posts.every((vm) => vm.rating === null),
+      'a rating appeared for a row that does not exist',
+    );
+  });
+
+  test('rating probe: a report that is not an object, or has no count, shows no vote', async function () {
+    this.timeout(30000);
+    // parseReport returns ok for any JSON document; `null` used to throw inside
+    // onMessage('ready'), and `up: null` used to be shown as zero.
+    for (const rate of [null, 7, { ...recordedRate('rate-dry-run'), up: null }]) {
+      const { posts, rates } = await readyOnRow({ version: PAGING_GRIM_VERSION, rate });
+      assert.strictEqual(rates.length, 1, `${JSON.stringify(rate)}: one probe, no handshake`);
+      assert.ok(posts.length > 0, `${JSON.stringify(rate)}: the panel never painted`);
+      assert.ok(
+        posts.every((vm) => vm.rating === null),
+        `${JSON.stringify(rate)}: a rating was shown`,
+      );
+    }
+  });
+
+  test('rating probe: a probe grim refuses leaves the vote hidden and is not retried', async function () {
+    this.timeout(20000);
+    const { posts, rates } = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run-unrated'),
+      exit: 65,
+      readies: 2,
+    });
+    // Two ready messages (a reopen, a repaint), ONE probe: a failure is
+    // remembered for the session too, not retried on every repaint.
+    assert.strictEqual(rates.length, 1, `expected one probe: ${rates.join(' | ')}`);
+    assertProbeArgv(rates[0]);
+    assert.ok(posts.length > 0, 'the panel never painted');
+    assert.ok(
+      posts.every((vm) => vm.rating === null),
+      'a refused probe produced a rating',
+    );
+  });
+
+  test('rating probe: a grim that can vote but cannot refetch an unrated row is not asked', async function () {
+    this.timeout(20000);
+    // 0.14.x has `rate`, but its dry run reads the catalog as it is: it cannot
+    // find a target the row lacks, and the spawn can wait 420 s on a refresh.
+    const { posts, rates } = await readyOnRow({
+      version: '0.14.3',
+      rate: recordedRate('rate-dry-run'),
+    });
+    assert.deepStrictEqual(rates, [], `a probe was spent on 0.14.3: ${rates.join(' | ')}`);
+    assert.ok(posts.length > 0, 'the panel never painted');
+    assert.ok(
+      posts.every((vm) => vm.rating === null),
+      'a rating appeared with no probe',
+    );
+    const paged = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+    });
+    assert.strictEqual(
+      paged.rates.length,
+      2,
+      `the first grim that refetches probes: ${paged.rates}`,
+    );
+  });
+
+  test('rating probe: no probe below RATING_GRIM_VERSION, none for a rated row', async function () {
+    this.timeout(30000);
+    // Control: the same unrated row DOES probe on a grim with `rate`.
+    const control = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+    });
+    assert.strictEqual(control.rates.length, 2, `control did not probe: ${control.rates}`);
+
+    const old = await readyOnRow({
+      version: MINIMUM_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+    });
+    assert.deepStrictEqual(old.rates, [], 'an older grim was sent `rate`, which it rejects (64)');
+    assert.ok(
+      old.posts.every((vm) => vm.rating === null && vm.canVote === false),
+      'a grim without `rate` showed a vote',
+    );
+
+    // A rated row needs no probe: the ONE rate call is refineVote's handshake,
+    // where the unrated control above spent two. The row's rating is kept, not
+    // replaced by what grim would say.
+    const rated = await readyOnRow({
+      version: RATING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+      rated: true,
+    });
+    assert.strictEqual(rated.rates.length, 1, `a rated row was probed: ${rated.rates}`);
+    assert.deepStrictEqual(
+      rated.posts[rated.posts.length - 1]?.rating,
+      { ...ROW_RATING, vote: 'unknown' },
+      'the row’s own rating was overridden',
+    );
+  });
+
+  test('rating probe: a preview retargeted to another unrated repo probes it, once per repo', async function () {
+    this.timeout(30000);
+    const api = await activateExtension();
+    const details = api.providers.details;
+    const cacheDir = isolateCache(api);
+    const a = `ghcr.io/grimoire-rs/skills/retarget-${(probeSeq += 1)}`;
+    const b = `ghcr.io/grimoire-rs/skills/retarget-${(probeSeq += 1)}`;
+    const restoreVersion = await withGrimVersion(api, PAGING_GRIM_VERSION);
+    canned(stub, 'search', { items: [searchItem(a), searchItem(b)] });
+    canned(stub, 'describe', { error: { code: 'usage', exit: 64, message: 'no describe' } });
+    canned(stub, 'rate', recordedRate('rate-dry-run'));
+    const rates = (repo: string): string[] =>
+      argvLines(stub).filter((l) => l.startsWith('rate') && l.endsWith(repo));
+    try {
+      await api.providers.sidebar.refresh(); // loads both rows into the catalog
+      fs.rmSync(stub.argvLog, { force: true });
+      // The real webview boots and posts its own `ready` at a time the test does
+      // not control; swallow it and send the one `ready` a booted webview posts.
+      const onMessage = details.onMessage.bind(details);
+      details.onMessage = async (repo, panel, message) =>
+        message.type === 'ready' ? undefined : onMessage(repo, panel, message);
+      details.openPreview(a);
+      const panel = details.previewPanel;
+      assert.ok(panel, 'preview slot has a panel');
+      await waitFor(() => panel.webview.html !== '');
+      await onMessage(a, panel, { type: 'ready', repo: a });
+      const forA = rates(a).length;
+      assert.ok(forA > 0, 'the first paint probes a');
+      // Retargeting reuses the live webview: no reboot, so no `ready` to hang a probe on.
+      details.openPreview(b);
+      await waitFor(() => rates(b).length > 0).catch(() =>
+        assert.fail('the retargeted repo was never probed'),
+      );
+      rates(b).forEach(assertProbeArgv);
+      const forB = rates(b).length;
+      details.openPreview(a);
+      details.openPreview(b);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      assert.strictEqual(rates(a).length, forA, 'a was probed again on a return');
+      assert.strictEqual(rates(b).length, forB, 'b was probed again on a return');
+    } finally {
+      delete (details as { onMessage?: unknown }).onMessage;
+      details.previewPanel?.dispose();
+      await waitFor(() => details.previewRepo === null);
+      uncan(stub, 'rate', 'describe');
+      canned(stub, 'search', { items: [] });
+      await restoreVersion();
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rating probe: voting on a probed row repaints the rating from the answer', async function () {
+    this.timeout(20000);
+    let env: ReturnType<typeof stubVoteEnvironment> | undefined;
+    const { posts } = await readyOnRow({
+      version: PAGING_GRIM_VERSION,
+      rate: recordedRate('rate-dry-run'),
+      then: async (api, repo, panel) => {
+        env = stubVoteEnvironment('Vote'); // answers up: 22, viewer_up: true
+        await api.providers.details.onMessage(repo, panel, { type: 'vote', remove: false });
+      },
+    });
+    env?.restore();
+    const last = posts[posts.length - 1];
+    assert.strictEqual(last?.rating?.vote, 'voted');
+    assert.strictEqual(last?.rating?.up, 22);
+    assert.strictEqual(
+      last?.rating?.url,
+      'https://github.com/acme/index/discussions/1',
+      'the vote repaint dropped the probed thread link',
+    );
   });
 
   // --- refused-update wiring (grim >= 0.13.0's normal-report refusal) ---
@@ -6104,15 +6414,20 @@ suite('extension integration', () => {
       env.prompts[0]?.detail.includes(VOTE_REPO),
       `the modal named no artifact: ${env.prompts[0]?.detail}`,
     );
+    // The panel the link opened is a real webview, so its own ready may add the
+    // unrated-row probe (one more uncredentialed dry run) wherever it lands. The
+    // vote itself is one mutation with a dry-run handshake somewhere before it.
     const rates = lines.filter((l) => l.startsWith('rate'));
-    assert.strictEqual(rates.length, 2, `expected handshake + mutation: ${rates.join(' | ')}`);
+    const mutations = rates.filter((l) => !l.includes('--dry-run'));
+    assert.strictEqual(mutations.length, 1, `expected one mutation: ${rates.join(' | ')}`);
+    const mutation = mutations[0];
+    assert.ok(rates.indexOf(mutation ?? '') > 0, `no handshake before the mutation: ${rates}`);
     assert.ok(rates[0]?.includes('--dry-run'), `the handshake runs first: ${rates[0]}`);
-    assert.ok(!rates[1]?.includes('--dry-run'), `the second call mutates: ${rates[1]}`);
-    assert.ok(rates[1]?.includes('--up'), `a vote, not a retraction: ${rates[1]}`);
-    assert.ok(rates[1]?.includes('--token-stdin'), 'the credential did not go over stdin');
+    assert.ok(mutation?.includes('--up'), `a vote, not a retraction: ${mutation}`);
+    assert.ok(mutation?.includes('--token-stdin'), 'the credential did not go over stdin');
     assert.ok(
-      rates[1]?.includes('--token-host api.github.com'),
-      `the piped credential declared no host: ${rates[1]}`,
+      mutation?.includes('--token-host api.github.com'),
+      `the piped credential declared no host: ${mutation}`,
     );
   });
 
@@ -6251,14 +6566,19 @@ suite('extension integration', () => {
     const TOTAL = 450;
 
     /** One canned page: `count` rows from `offset`, with grim's `total`. The
-     *  walker asks for 1000 rows after the first 200, so one file holds the rest. */
-    function cannedPage(offset: number, count: number): void {
+     *  walker asks for 2500 rows after the first 200, so one file holds the rest. */
+    function cannedPage(offset: number, count: number, sources?: unknown[]): void {
       const items = Array.from({ length: count }, (_, i) =>
         searchItem(`ghcr.io/grimoire-rs/skills/paged-${offset + i}`),
       );
       fs.writeFileSync(
         path.join(stub.dir, `search@${offset}.json`),
-        JSON.stringify({ items, total: TOTAL, truncated: offset + count < TOTAL }),
+        JSON.stringify({
+          items,
+          total: TOTAL,
+          truncated: offset + count < TOTAL,
+          ...(sources ? { sources } : {}),
+        }),
       );
     }
 
@@ -6336,7 +6656,7 @@ suite('extension integration', () => {
         assert.ok(lines[0]?.includes('--limit 200 --offset 0'), `page one: ${lines[0]}`);
         assert.ok(lines[0]?.includes('--offline'), 'page one reads the disk catalog');
         assert.ok(lines[1]?.includes('--offline'), `later pages are offline: ${lines[1]}`);
-        assert.ok(lines[1]?.includes('--limit 1000 --offset 200'), `page two: ${lines[1]}`);
+        assert.ok(lines[1]?.includes('--limit 2500 --offset 200'), `page two: ${lines[1]}`);
         assert.strictEqual(states.at(-1)?.items.length, 200, 'the state carried page one only');
         const done = replayed(posted);
         assert.strictEqual(done.repos.length, TOTAL);
@@ -6383,11 +6703,21 @@ suite('extension integration', () => {
       }
     });
 
-    test('stderr on a later page marks the results incomplete; a clean page does not', async function () {
+    test('a later page that reports a source that is not ok marks the results incomplete; stderr alone does not', async function () {
       this.timeout(30000);
       const api = await activateExtension();
-      cannedPage(0, 200);
-      cannedPage(200, 250);
+      const hub = { alias: 'hub', locator: 'http://hub', ok: true, error: null, capped: false };
+      const down = {
+        alias: 'down',
+        locator: 'http://down',
+        ok: false,
+        error: 'boom',
+        capped: false,
+      };
+      cannedPage(0, 200, [hub]);
+      cannedPage(200, 250, [hub]);
+      // grim logs on stderr all the time; once it reports sources that is noise.
+      fs.writeFileSync(path.join(stub.dir, 'search@200.err'), 'DEBUG an unrelated line\n');
       const restoreVersion = await withGrimVersion(api, PAGED_GRIM);
       try {
         const clean = fakeView();
@@ -6395,18 +6725,19 @@ suite('extension integration', () => {
         await api.providers.sidebar.handleMessage({ type: 'ready' });
         await waitFor(() => replayed(clean.posted).paging?.hasMore === false);
         assert.ok(
-          clean.posted.every((m) => m.type !== 'append' || m.catalogIncomplete === undefined),
-          'a clean page 2',
+          clean.posted.every((m) => m.type !== 'append' || m.catalogIncomplete !== true),
+          'a clean page 2, stderr or not',
         );
         assert.strictEqual(clean.states.at(-1)?.catalogIncomplete, undefined);
 
         // A changed head makes the next search reload the list behind the one
-        // on screen; the reload's last page warns and the swap carries the mark.
+        // on screen; the reload's last page reports a dead source and the swap
+        // carries the mark.
         const head = path.join(stub.dir, 'search@0.json');
         const page = JSON.parse(fs.readFileSync(head, 'utf8')) as { items: { repo: string }[] };
         page.items[0] = { ...page.items[0], repo: 'ghcr.io/grimoire-rs/skills/renamed' };
         fs.writeFileSync(head, JSON.stringify({ ...page, total: TOTAL, truncated: true }));
-        fs.writeFileSync(path.join(stub.dir, 'search@200.err'), 'WARN source down\n');
+        cannedPage(200, 250, [hub, down]);
         const warned = fakeView();
         api.providers.sidebar.resolveWebviewView(warned.view);
         await api.providers.sidebar.handleMessage({ type: 'ready' });

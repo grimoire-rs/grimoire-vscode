@@ -6,12 +6,18 @@
 import * as assert from 'assert';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import type { CatalogService, CatalogState, LoadResult } from '../catalog';
+import { CatalogService, type CatalogState, type LoadResult } from '../catalog';
 import type { CachedCardMeta } from '../detailsCache';
-import type { ContextInfo, SearchItem } from '../grim';
+import type { ContextInfo, GrimResult, SearchEnvelope, SearchItem } from '../grim';
 import type { ScopeService, Snapshot } from '../scopes';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import type { HostToSidebar, PagingState, SidebarState } from '../webview/protocol';
+import { foldHostPost, type StagedPosts } from '../webview/model';
+import {
+  MAX_POST_CARDS,
+  type HostToSidebar,
+  type PagingState,
+  type SidebarState,
+} from '../webview/protocol';
 
 type Append = Extract<HostToSidebar, { type: 'append' }>;
 
@@ -39,6 +45,25 @@ function healthy(): Snapshot {
     grimMissing: false,
     global: { context: context(), status: [], declared: {} },
   };
+}
+
+/** A healthy global scope with `count` installed skills, none in the catalog. */
+function withInstalled(count: number): Snapshot {
+  const base = healthy();
+  const status = Array.from({ length: count }, (_, n) => ({
+    kind: 'skill',
+    name: `inst-${n}`,
+    source: 'direct',
+    pinned: `ghcr.io/grimoire-rs/skills/inst-${n}:1.0.0`,
+    state: 'installed',
+    outputs: [],
+    clients_missing: [],
+    clients_extra: [],
+    deprecated: null,
+    replaced_by: null,
+    update_available: null,
+  }));
+  return { ...base, global: { ...base.global, status } } as unknown as Snapshot;
 }
 
 /** `grim status` failed for the global scope: browsing works, install state is unknown. */
@@ -81,19 +106,33 @@ interface Controls {
   /** The list completes right after a search took its snapshot, as a page that
    *  was already in flight does when it lands mid-refresh. */
   landAfterSnapshot: boolean;
-  /** The search reports a partial catalog (stderr warnings). */
+  /** The search reports a partial catalog (a source that did not load). */
   warn: boolean;
+  /** The incomplete lines the nth `loadNext` call (1-based) reports, if any. */
+  pageIncomplete: ((call: number) => string[] | undefined) | undefined;
   loadNextCalls: number;
   inFlight: number;
   maxInFlight: number;
 }
 
-/** A catalog that pages: each search starts a new list of one row, and each
- *  accepted loadNext appends one more, up to `total`. Either call can be held. */
+/** Rows a search starts a list with, and rows each accepted loadNext adds. */
+interface Sizes {
+  first: number;
+  page: number;
+}
+
+/** A catalog that pages: each search starts a new list of `first` rows (one by
+ *  default), and each accepted loadNext appends `page` more, up to `total`.
+ *  Either call can be held. */
 function pagedCatalog(
   total: number,
   paged: boolean,
+  { first, page }: Sizes,
 ): { catalog: CatalogService; controls: Controls } {
+  const rowsAt = (from: number): SearchItem[] =>
+    Array.from({ length: Math.max(0, Math.min(page, total - from)) }, (_, i) => row(from + i));
+  const firstRows = (): SearchItem[] =>
+    Array.from({ length: Math.min(first, total) }, (_, n) => row(n));
   let items: SearchItem[] = [];
   let token = 0;
   let shadow: { items: SearchItem[]; token: number } | null = null;
@@ -103,6 +142,7 @@ function pagedCatalog(
     reload: false,
     landAfterSnapshot: false,
     warn: false,
+    pageIncomplete: undefined,
     loadNextCalls: 0,
     inFlight: 0,
     maxInFlight: 0,
@@ -111,24 +151,27 @@ function pagedCatalog(
     paged
       ? { token, loaded: items.length, total, lowerBound: false, hasMore: items.length < total }
       : undefined;
+  // The real catalog joins the loader's lines into every page's verdict, so a
+  // source that stays down is reported by each page, not by the first alone.
+  const warned = ['down: registry unreachable'];
   const state = (): CatalogState => {
     const current = paging();
     return {
       items: items.slice(),
       syncedAt: 1,
       ...(current ? { paging: current } : {}),
-      ...(controls.warn ? { warnings: 'registry unreachable' } : {}),
+      ...(controls.warn ? { incomplete: warned } : {}),
     };
   };
   const catalog = {
     search: async (): Promise<CatalogState> => {
       await controls.hold.search;
       if (controls.reload && items.length >= total) {
-        shadow = { items: [row(0)], token: token + 1 };
+        shadow = { items: firstRows(), token: token + 1 };
         return state();
       }
       token += 1;
-      items = [row(0)];
+      items = firstRows();
       const snapshot = state();
       if (controls.landAfterSnapshot) {
         items = Array.from({ length: total }, (_, n) => row(n));
@@ -154,17 +197,20 @@ function pagedCatalog(
           controls.failWith = {};
           return { error };
         }
+        const incomplete =
+          controls.pageIncomplete?.(controls.loadNextCalls) ?? (controls.warn ? warned : undefined);
+        const verdict = incomplete ? { incomplete } : {};
         if (shadow) {
-          shadow.items = [...shadow.items, row(shadow.items.length)];
+          shadow.items = [...shadow.items, ...rowsAt(shadow.items.length)];
           if (shadow.items.length < total) {
-            return {};
+            return verdict;
           }
           ({ items, token } = { items: shadow.items, token: shadow.token });
           shadow = null;
-          return { swapped: true };
+          return { swapped: true, ...verdict };
         }
-        items = [...items, row(items.length)];
-        return {};
+        items = [...items, ...rowsAt(items.length)];
+        return verdict;
       } finally {
         controls.inFlight -= 1;
       }
@@ -176,13 +222,72 @@ function pagedCatalog(
   return { catalog, controls };
 }
 
+/** A grim whose loader is held and whose first page lists three rows with one
+ *  source down (the mark), and whose every later page read fails. The real
+ *  catalog over it ends up reconciling the finished list against a grim that
+ *  keeps failing. `cap` bounds the reads: a caller that keeps asking parks on
+ *  the one past it, so a runaway shows as a count instead of hanging the host. */
+function brokenAfterLoader(cap: number): {
+  catalog: CatalogService;
+  reads: () => number;
+  endLoader: () => void;
+} {
+  let reads = 0;
+  let endLoader: () => void = () => {};
+  const down = { alias: 'down', locator: 'x', ok: false, error: 'unreachable', capped: false };
+  const scopes = {
+    projectFolder: () => undefined,
+    grimVersion: async () => '0.15.0',
+    run: <T>(args: string[]): Promise<GrimResult<T>> => {
+      if (args.includes('--limit') && args[args.indexOf('--limit') + 1] === '1') {
+        return new Promise((resolve) => {
+          endLoader = () => resolve({ ok: true, value: { items: [] } } as GrimResult<T>);
+        });
+      }
+      reads += 1;
+      if (reads === 1) {
+        const value: SearchEnvelope = {
+          items: [row(0), row(1), row(2)],
+          total: 3,
+          sources: [down],
+        };
+        return Promise.resolve({ ok: true, value } as GrimResult<T>);
+      }
+      if (reads > cap) {
+        return new Promise(() => {});
+      }
+      return Promise.resolve({
+        ok: false,
+        kind: 'error',
+        code: 'failure',
+        exitCode: 1,
+        message: 'boom',
+      });
+    },
+  } as unknown as ScopeService;
+  return {
+    catalog: new CatalogService(scopes, 1),
+    reads: () => reads,
+    endLoader: () => endLoader(),
+  };
+}
+
 function makeSidebar(
   snapshots: Snapshot[],
-  options: { total?: number; paged?: boolean } = {},
+  options: {
+    total?: number;
+    paged?: boolean;
+    first?: number;
+    page?: number;
+    /** The real catalog over a scripted grim, in place of the paging double. */
+    catalog?: CatalogService;
+  } = {},
 ): {
   provider: SidebarProvider;
   posted: HostToSidebar[];
   controls: Controls;
+  /** Every line the provider wrote to its output channel. */
+  lines: string[];
   /** The webview is disposed: VS Code does this to a hidden view. */
   dispose: () => void;
   /** A fresh webview resolves for the same provider. */
@@ -200,7 +305,11 @@ function makeSidebar(
     projectFolder: () => undefined,
     projectSearchableProbe: async () => false,
   } as unknown as ScopeService;
-  const { catalog, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true);
+  const { catalog: double, controls } = pagedCatalog(options.total ?? 4, options.paged ?? true, {
+    first: options.first ?? 1,
+    page: options.page ?? 1,
+  });
+  const catalog = options.catalog ?? double;
   const delegate: SidebarDelegate = {
     openDetails: () => {},
     installGrim: async () => {},
@@ -221,6 +330,7 @@ function makeSidebar(
     },
   } as unknown as vscode.Memento;
   const posted: HostToSidebar[] = [];
+  const lines: string[] = [];
   let onDispose: () => void = () => {};
   const view = {
     viewType: 'grimoire.sidebar',
@@ -251,7 +361,7 @@ function makeSidebar(
     scopes,
     catalog,
     delegate,
-    vscode.window.createOutputChannel('grimoire-paged-test'),
+    { appendLine: (line: string) => lines.push(line) } as unknown as vscode.OutputChannel,
     memento,
   );
   provider.resolveWebviewView(view);
@@ -259,6 +369,7 @@ function makeSidebar(
     provider,
     posted,
     controls,
+    lines,
     dispose: () => onDispose(),
     resolveAgain: () => provider.resolveWebviewView(view),
   };
@@ -299,21 +410,38 @@ async function until(check: () => boolean, what: string): Promise<void> {
   assert.fail(`timed out waiting for ${what}`);
 }
 
-/** What a webview would hold after replaying every message in order. */
-function replay(posted: HostToSidebar[]): { repos: string[]; paging: PagingState | undefined } {
-  let repos: string[] = [];
-  let paging: PagingState | undefined;
+/** What a webview would hold after replaying every message in order: the real
+ *  fold, so the host and the webview cannot disagree here as they do not there. */
+function replay(posted: HostToSidebar[]): {
+  repos: string[];
+  paging: PagingState | undefined;
+  incomplete: boolean;
+} {
+  const webview: { rendered: SidebarState | null; staged: StagedPosts | null } = {
+    rendered: null,
+    staged: null,
+  };
   for (const message of posted) {
-    if (message.type === 'state') {
-      repos = message.state.items.map((c) => c.repo);
-      paging = message.state.paging;
-    } else if (message.type === 'append') {
-      assert.strictEqual(message.offset, repos.length, 'an append continues exactly the list held');
-      repos = repos.concat(message.cards.map((c) => c.repo));
-      paging = message.paging;
+    if (message.type !== 'state' && message.type !== 'append') {
+      continue;
     }
+    if (message.type === 'append') {
+      const held = webview.staged?.state ?? webview.rendered;
+      assert.strictEqual(
+        message.offset,
+        held?.items.length,
+        'an append continues exactly the list held',
+      );
+    }
+    const folded = foldHostPost(webview.staged, webview.rendered, message);
+    webview.staged = folded.staged;
+    webview.rendered = folded.commit?.state ?? webview.rendered;
   }
-  return { repos, paging };
+  return {
+    repos: webview.rendered?.items.map((c) => c.repo) ?? [],
+    paging: webview.rendered?.paging,
+    incomplete: webview.rendered?.catalogIncomplete === true,
+  };
 }
 
 suite('paged sidebar: background page walker', () => {
@@ -333,7 +461,28 @@ suite('paged sidebar: background page walker', () => {
       [0, 1, 2, 3].map((n) => `${PAGE}${n}`),
     );
     assert.strictEqual(replay(posted).paging?.loaded, 4);
-    assert.ok(sent.every((a) => a.paging.token === last(posted).paging?.token));
+    assert.ok(sent.every((a) => a.paging?.token === last(posted).paging?.token));
+  });
+
+  test('each refresh stamps its round on the state; a repost of the same round keeps it', async () => {
+    const { provider, posted } = makeSidebar([healthy(), healthy()]);
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    const rounds = (): (number | undefined)[] =>
+      states(posted)
+        .filter((st) => st.phase === 'ready')
+        .map((st) => st.round);
+
+    const first = rounds();
+    assert.ok(first.length > 0 && first.every((r) => typeof r === 'number'), `${first}`);
+    await provider.repostCardMeta();
+    assert.deepStrictEqual(new Set(rounds()).size, 1, 'a logo repost is the same round');
+
+    await provider.refresh();
+    await until(() => new Set(rounds()).size === 2, 'a second round');
+    const [one, two] = [...new Set(rounds())];
+    assert.notStrictEqual(one, two, 'a refresh is a new round');
+    assert.strictEqual(rounds().at(-1), two);
   });
 
   test('a round whose install state is unknown still loads its pages', async () => {
@@ -363,7 +512,7 @@ suite('paged sidebar: background page walker', () => {
     const after = appends(posted.slice(afterState));
     assert.ok(after.length > 0);
     assert.ok(
-      after.every((a) => a.paging.token === newToken),
+      after.every((a) => a.paging?.token === newToken),
       'only the new list grows',
     );
     assert.deepStrictEqual(
@@ -421,6 +570,84 @@ suite('paged sidebar: background page walker', () => {
       sent.every((a) => a.cards.length > 0),
       'no empty append is posted just because the warning is still set',
     );
+  });
+
+  test('a partial catalog is logged once per distinct set, not on every refresh', async () => {
+    const { provider, posted, controls, lines } = makeSidebar([healthy()]);
+    const logged = (): string[] => lines.filter((l) => l.startsWith('sidebar: incomplete results'));
+    controls.warn = true;
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, true);
+    await provider.handleMessage({ type: 'search', query: 'x' });
+    await provider.handleMessage({ type: 'search', query: 'y' });
+    assert.deepStrictEqual(logged(), ['sidebar: incomplete results — down: registry unreachable']);
+    controls.warn = false;
+    await provider.handleMessage({ type: 'search', query: 'z' });
+    await until(() => !replay(posted).incomplete, 'the mark to clear');
+    controls.warn = true; // the same source failing again is a new episode
+    await provider.handleMessage({ type: 'search', query: 'w' });
+    assert.strictEqual(logged().length, 2);
+  });
+
+  test('a later page that reports an incomplete source lights the footer and is logged', async () => {
+    const { provider, posted, controls, lines } = makeSidebar([healthy()]);
+    controls.pageIncomplete = () => ['hub: listing incomplete'];
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, true, 'the appends carry the mark');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('sidebar: incomplete results')),
+      ['sidebar: incomplete results — hub: listing incomplete'],
+      'three pages said it; the log says it once',
+    );
+  });
+
+  test('a page that read a complete catalog takes the mark down', async () => {
+    const { provider, posted, controls } = makeSidebar([healthy()]);
+    controls.pageIncomplete = (call) => (call === 1 ? ['hub: listing incomplete'] : undefined);
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    assert.strictEqual(replay(posted).incomplete, false);
+    assert.ok(
+      appends(posted).some((a) => a.catalogIncomplete === true),
+      'the first page lit it',
+    );
+  });
+
+  test('a reconcile that fails ends the walk after one read, keeping the rows and the mark', async () => {
+    const grim = brokenAfterLoader(20);
+    const { provider, posted, lines } = makeSidebar([healthy()], { catalog: grim.catalog });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).repos.length === 3, 'the first page');
+    assert.strictEqual(
+      replay(posted).incomplete,
+      true,
+      'precondition: the first page lit the mark',
+    );
+    assert.strictEqual(
+      replay(posted).paging?.hasMore,
+      true,
+      'precondition: the loader keeps it open',
+    );
+    grim.endLoader();
+    await until(() => grim.reads() >= 2, 'the reconcile to read');
+    // A walker that asks again does it without yielding, so a few turns are
+    // enough for it to run into the cap.
+    for (let turn = 0; turn < 5; turn++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.strictEqual(grim.reads(), 2, 'the first page and one failed reconcile, no retry loop');
+    assert.deepStrictEqual(
+      lines.filter((l) => l.startsWith('sidebar: loading results failed')),
+      ['sidebar: loading results failed: boom'],
+      'the failure is logged once',
+    );
+    const held = replay(posted);
+    assert.strictEqual(held.repos.length, 3, 'the rows loaded stay');
+    assert.strictEqual(held.incomplete, true, 'the failed read cleared nothing');
+    assert.strictEqual(held.paging?.hasMore, false, 'the footer stops waiting');
+    assert.strictEqual(held.paging?.failed, undefined, 'nothing to retry: the list is whole');
   });
 
   test('a failed page keeps the rows, posts paging.failed and stops the walker', async () => {
@@ -524,5 +751,321 @@ suite('paged sidebar: background page walker', () => {
     assert.strictEqual(swapped.items.length, 4);
     assert.strictEqual(swapped.paging?.hasMore, false);
     assert.notStrictEqual(swapped.paging?.token, token);
+  });
+});
+
+/** The cards a host message carries, whichever way it carries them. */
+function cardsIn(message: HostToSidebar): number {
+  if (message.type === 'state') {
+    return message.state.items.length;
+  }
+  return message.type === 'append' ? message.cards.length : 0;
+}
+
+/** The largest row array a host message carries, whichever field holds it. */
+function rowsIn(message: HostToSidebar): number {
+  if (message.type === 'state') {
+    return Math.max(message.state.items.length, message.state.installedItems.length);
+  }
+  return message.type === 'append'
+    ? Math.max(message.cards.length, message.installed?.length ?? 0)
+    : 0;
+}
+
+/** What the webview ends up holding, folding every post the way main.ts does.
+ *  Each step must stage or commit: a post that does neither continued nothing. */
+function fold(
+  posted: HostToSidebar[],
+  onStep?: (step: ReturnType<typeof foldHostPost>) => void,
+): { held: SidebarState; commits: StagedPosts[] } {
+  let staged: StagedPosts | null = null;
+  let held: SidebarState | null = null;
+  const commits: StagedPosts[] = [];
+  for (const message of posted) {
+    if (message.type !== 'state' && message.type !== 'append') {
+      continue;
+    }
+    const step = foldHostPost(staged, held, message);
+    onStep?.(step);
+    assert.ok(
+      step.staged || step.commit,
+      `${message.type}${message.type === 'append' ? ` at offset ${message.offset}` : ''} continues the list held`,
+    );
+    staged = step.staged;
+    if (step.commit) {
+      held = step.commit.state;
+      commits.push(step.commit);
+    }
+  }
+  assert.strictEqual(staged, null, 'the last post closes its run');
+  assert.ok(held, 'a state was posted');
+  return { held, commits };
+}
+
+const reposUpTo = (count: number): string[] =>
+  Array.from({ length: count }, (_, n) => `${PAGE}${n}`);
+
+suite('paged sidebar: chunked posts', () => {
+  test('a first state of 2,600 cards posts a head state, then appends that complete it', async () => {
+    const { provider, posted } = makeSidebar([healthy()], { total: 2_600, first: 2_600 });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.ok(
+      posted.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${posted.map(cardsIn).join(', ')}`,
+    );
+    assert.strictEqual(last(posted).items.length, MAX_POST_CARDS);
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length]),
+      [
+        [1_000, 1_000],
+        [2_000, 600],
+      ],
+    );
+    const token = last(posted).paging?.token;
+    assert.ok(sent.every((a) => a.token === token && a.paging?.token === token));
+    const real = { token, loaded: 2_600, total: 2_600, lowerBound: false, hasMore: false };
+    assert.deepStrictEqual(
+      [last(posted).paging, ...sent.map((a) => a.paging)],
+      [real, real, real],
+      'every chunk carries the real paging, never a partial one',
+    );
+    assert.deepStrictEqual(
+      posted
+        .filter((m) => m.type === 'append' || (m.type === 'state' && m.state.phase === 'ready'))
+        .map((m) => (m.type === 'state' || m.type === 'append' ? m.more : undefined)),
+      [true, true, undefined],
+      'only the last message of the run omits more',
+    );
+
+    const { held, commits } = fold(posted);
+    assert.strictEqual(
+      commits.filter((c) => c.state.phase === 'ready').length,
+      1,
+      'the run paints once',
+    );
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.deepStrictEqual(held.paging, real);
+  });
+
+  test('a walker page of 2,500 rows posts appends of at most 1,000, installed on the last', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      total: 2_700,
+      first: 200,
+      page: 2_500,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+
+    assert.ok(
+      posted.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${posted.map(cardsIn).join(', ')}`,
+    );
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length]),
+      [
+        [200, 1_000],
+        [1_200, 1_000],
+        [2_200, 500],
+      ],
+    );
+    assert.deepStrictEqual(
+      sent.map((a) => [a.paging?.loaded, a.paging?.hasMore, a.more]),
+      [
+        [2_700, false, true],
+        [2_700, false, true],
+        [2_700, false, undefined],
+      ],
+      'the real paging on every chunk; only the last omits more',
+    );
+    assert.deepStrictEqual(
+      sent.map((a) => a.installed !== undefined),
+      [false, false, true],
+      'the installed set arrives once, with the last chunk',
+    );
+
+    const { held, commits } = fold(posted);
+    assert.deepStrictEqual(
+      commits
+        .filter((c) => c.state.phase === 'ready')
+        .map((c) => [c.fromState, c.state.items.length]),
+      [
+        [true, 200],
+        [false, 2_700],
+      ],
+      'the first state paints, then the page paints once, as a grown list',
+    );
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_700),
+    );
+    assert.strictEqual(held.paging?.loaded, 2_700);
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a swap of 2,600 rows posts as chunks of at most 1,000 and rebuilds the new list', async () => {
+    const { provider, posted, controls } = makeSidebar([healthy()], {
+      total: 2_600,
+      first: 1,
+      page: 2_599,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+    const token = replay(posted).paging?.token;
+
+    controls.reload = true;
+    const before = posted.length;
+    await provider.refresh();
+    await until(() => replay(posted).paging?.token !== token, 'the swap');
+
+    const after = posted.slice(before);
+    assert.ok(
+      after.every((m) => cardsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} cards: ${after.map(cardsIn).join(', ')}`,
+    );
+    const ready = states(after).filter((st) => st.phase === 'ready');
+    assert.strictEqual(ready.length, 2, 'the refresh state, then the swap');
+    assert.ok(ready.every((st) => st.items.length === MAX_POST_CARDS));
+    const { held } = fold(after);
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.notStrictEqual(held.paging?.token, token);
+    assert.strictEqual(held.paging?.loaded, 2_600);
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a list of exactly 1,000 cards posts as one message, as before', async () => {
+    const { provider, posted } = makeSidebar([healthy()], { total: 1_000, first: 1_000 });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.strictEqual(last(posted).items.length, 1_000);
+    assert.deepStrictEqual(appends(posted), []);
+    assert.strictEqual(last(posted).paging?.hasMore, false);
+    assert.ok(
+      posted.every((m) => m.type !== 'state' || m.more === undefined),
+      'a list that fits one message is not staged',
+    );
+  });
+
+  test('a completed 2,600-card round re-posted for logos never says partial, at any step', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      total: 2_600,
+      first: 200,
+      page: 2_400,
+    });
+    await provider.handleMessage({ type: 'ready' });
+    await until(() => replay(posted).paging?.hasMore === false, 'the list to complete');
+
+    const before = posted.length;
+    await provider.repostCardMeta();
+    const repost = posted.slice(before);
+    assert.ok(
+      repost.length >= 3,
+      `the whole round was re-posted: ${repost.map(cardsIn).join(', ')}`,
+    );
+    assert.ok(repost.every((m) => cardsIn(m) <= MAX_POST_CARDS));
+
+    // At no point, staged or committed, may a step of the repost claim pages remain.
+    const partialSteps: string[] = [];
+    const { held, commits } = fold(repost, (step) => {
+      for (const part of [step.staged, step.commit]) {
+        if (part && part.state.paging?.hasMore !== false) {
+          partialSteps.push(
+            `${part.state.items.length} rows, hasMore ${part.state.paging?.hasMore}`,
+          );
+        }
+      }
+    });
+    assert.deepStrictEqual(partialSteps, [], 'no staged or committed step is partial');
+    assert.deepStrictEqual(
+      commits.map((c) => [c.fromState, c.state.items.length]),
+      [[true, 2_600]],
+      'the repost replaces the list in one paint',
+    );
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(2_600),
+    );
+    assert.strictEqual(held.paging?.hasMore, false);
+  });
+
+  test('a grim that cannot page chunks its list by size all the same', async () => {
+    const { provider, posted } = makeSidebar([healthy()], {
+      paged: false,
+      total: 1_500,
+      first: 1_500,
+    });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.ok(
+      posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+      `no post over ${MAX_POST_CARDS} rows: ${posted.map(rowsIn).join(', ')}`,
+    );
+    const sent = appends(posted);
+    assert.deepStrictEqual(
+      sent.map((a) => [a.offset, a.cards.length, a.more]),
+      [[1_000, 500, undefined]],
+    );
+    assert.ok(
+      sent.every((a) => a.token === undefined && a.paging === undefined),
+      'there is no list to name: a chunk continues the head state it follows',
+    );
+    const { held, commits } = fold(posted);
+    assert.strictEqual(commits.filter((c) => c.state.phase === 'ready').length, 1, 'one paint');
+    assert.deepStrictEqual(
+      held.items.map((c) => c.repo),
+      reposUpTo(1_500),
+    );
+    assert.strictEqual(held.paging, undefined, 'the list is not partial');
+  });
+
+  test('the installed set is bounded too, on a grim that pages and on one that cannot', async () => {
+    for (const paged of [false, true]) {
+      const { provider, posted } = makeSidebar([withInstalled(2_100)], {
+        paged,
+        total: 1_200,
+        first: paged ? 200 : 1_200,
+        page: 1_000,
+      });
+      await provider.handleMessage({ type: 'ready' });
+      await until(() => replay(posted).paging?.hasMore !== true, 'the list to complete');
+
+      assert.ok(
+        posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+        `paged ${paged}: no post over ${MAX_POST_CARDS} rows: ${posted.map(rowsIn).join(', ')}`,
+      );
+      const { held } = fold(posted);
+      assert.strictEqual(held.items.length, 1_200, `paged ${paged}: every card`);
+      assert.strictEqual(held.installedItems.length, 2_100, `paged ${paged}: every installed row`);
+      assert.strictEqual(
+        new Set(held.installedItems.map((c) => c.repo)).size,
+        2_100,
+        `paged ${paged}: no installed row twice`,
+      );
+    }
+  });
+
+  test('an installed set alone over the bound still posts in parts', async () => {
+    const { provider, posted } = makeSidebar([withInstalled(1_300)], {
+      paged: false,
+      total: 10,
+      first: 10,
+    });
+    await provider.handleMessage({ type: 'ready' });
+
+    assert.ok(
+      posted.every((m) => rowsIn(m) <= MAX_POST_CARDS),
+      posted.map(rowsIn).join(', '),
+    );
+    const { held } = fold(posted);
+    assert.strictEqual(held.items.length, 10);
+    assert.strictEqual(held.installedItems.length, 1_300);
   });
 });

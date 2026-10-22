@@ -112,12 +112,12 @@ never shows up.
 ## 3b. If Browse shows no `localhost:*` rows
 
 The local rig registries speak plain HTTP. Unless the host is in grim's
-plain-HTTP set, grim cannot reach them and reports
-`catalog for source 'localhost:5050' unavailable: … registry access failed` —
-on **stderr**, as a tracing WARN. `search --format json`'s envelope is `{items}`
-alone, with no warnings channel, so the extension cannot surface it: Browse
-simply comes back short while `grim status` keeps listing the artifacts already
-on disk, i.e. Installed shows registries Browse does not.
+plain-HTTP set, grim cannot reach them. `search --format json` still exits 0,
+but its `sources` array marks that registry `ok: false` with the error. The
+sidebar footer turns into a warning ("A registry could not be read in full").
+Clicking it opens the Grimoire output channel, which names the registry and
+the error. Browse comes back short meanwhile, while `grim status` keeps listing
+the artifacts already on disk, so Installed shows registries Browse does not.
 
 Two ways in, and they add up (nothing takes a host back out):
 
@@ -245,6 +245,85 @@ cd -
 GRIM_LIVE_ANNOTATED_REF=localhost:5050/grimoire/skills/support-desk \
   GRIM_INSECURE_REGISTRIES=localhost:5050,localhost:5060 xvfb-run -a npm test
 ```
+
+## Browsing 20,000 rows (release checklist)
+
+The Browse list keeps only the rows near the viewport in the DOM, and the host
+posts it to the webview in parts of at most 1,000 cards. Unit tests cover the
+windowing math, the rendered row count and the post sizes. They cannot reach a
+real webview's focus, keyboard, scroll or memory, so run this check before a
+release that touches the sidebar list. It needs grim 0.15.0 or newer; an older
+grim lists only the first 500 entries of an index.
+
+Build a synthetic index of 20,000 entries and serve it on loopback:
+
+```sh
+mkdir -p /tmp/grim-20k/idx /tmp/grim-20k/home
+python3 - <<'EOF'
+import json
+entries = [{"schema": 1, "name": f"pkg-{i:05d}", "kind": "skill",
+            "ref": f"ghcr.io/acme/skills/pkg-{i:05d}",
+            "summary": "Synthetic entry for the 20,000-row browse check",
+            "description": "Synthetic entry for the 20,000-row browse check. " * (1 + i % 5),
+            "repository": "https://github.com/acme/skills"} for i in range(20000)]
+open("/tmp/grim-20k/idx/all.json", "w").write(json.dumps(entries))
+EOF
+printf '[[registries]]\nalias = "big"\nindex = "http://127.0.0.1:8020"\ndefault = true\n' \
+  > /tmp/grim-20k/home/grimoire.toml
+python3 -m http.server 8020 --bind 127.0.0.1 --directory /tmp/grim-20k/idx
+```
+
+Launch **Run Extension**, and in the development host's user settings point
+grim at that home: `"grimoire.extraEnv": { "GRIM_HOME": "/tmp/grim-20k/home" }`.
+Open Browse with an empty query and check each item below. Check them in
+comfortable cards, compact rows, grouped, and tree mode.
+
+- [ ] **Loads.** The summary counts up to 20,000 results while pages load in the
+  background, and the footer shows no warning.
+- [ ] **Window.** In **Developer: Open Webview Developer Tools**, the results
+  container holds at most about 200 rows at any scroll position.
+- [ ] **Scroll.** Drag the scrollbar to the middle and to the end. Rows appear
+  without gaps, and the scrollbar does not jump while you scroll back up.
+- [ ] **Keyboard.** Click a row, then press Down, Up, Page Down, Page Up, End
+  and Home. Focus moves row by row, and End reaches `pkg-19999`. The focused
+  row stays in view with a visible focus ring.
+- [ ] **Tab.** Tab out of the list and back in. Focus returns to the row you
+  left, not to the top of the list. The next Tab reaches that row's own
+  buttons (Install, the gear); the buttons of every other row are skipped, and
+  Shift+Tab from the footer lands on the same row, not on the last one drawn.
+- [ ] **Enter and Space.** Enter or Space on a focused card or compact row
+  opens its details preview, and Space does not scroll the list. In grouped
+  and tree mode, Enter and Space on a header still expand or collapse it.
+- [ ] **Scrolling away from a focused row.** Focus a row, then scroll with the
+  mouse wheel and the scrollbar well past it (more than a screen) and back.
+  The row keeps focus the whole time: `document.activeElement` in the webview
+  developer tools is still that row while it is off screen, and the focus ring
+  is on it when you scroll back.
+- [ ] **Tree keys.** In tree mode, Right on a collapsed node expands it and
+  Right on an expanded node moves to its first child. Left on an expanded node
+  collapses it, and Left on a collapsed node or a leaf moves to its parent.
+  Right on a leaf and Left on a collapsed top-level node do nothing.
+- [ ] **Installed tab.** With more than about 200 artifacts installed (publish
+  a few hundred trivial skills to the rig's local registry and `grim add`
+  them), repeat Window, Scroll, Keyboard and Scrolling away from a focused row
+  on the Installed tab, grouped by scope and not.
+- [ ] **Screen reader.** The webview developer tools' Accessibility pane shows
+  `aria-setsize` and `aria-posinset` on rows, plus `aria-level` in the tree. A
+  card or compact row is named with its kind and install state, for example
+  `pkg-00001, skill, not installed`; an outdated one adds `update to 1.3.0`.
+  The tree itself has a name.
+- [ ] **Screen reader pass.** With NVDA on Windows and VoiceOver on macOS, walk
+  the list with the arrow keys all the way to `pkg-19999` in the flat list, the
+  grouped list and the tree. Each row is announced with its name, kind, state
+  and position, and keys keep moving after the last mounted row. The decision
+  on the list container's role (`feed` for the flat list, a tree-like role for
+  grouped) waits for this pass.
+- [ ] **Memory.** Once all pages are loaded, read the JS heap size in the
+  webview developer tools (Memory tab or Performance monitor). Write it down
+  beside the previous release's figure; a large jump is a regression.
+
+Find in page only finds rows near the viewport. That is the accepted cost of
+the window, not a defect.
 
 ## Notes
 

@@ -1,0 +1,2 @@
+# Recorded grim stdout, compared byte for byte: keep it LF on every checkout.
+src/test/fixtures/grim/** text eol=lf

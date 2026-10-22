@@ -8,6 +8,7 @@ import {
   fetchArgs,
   initArgs,
   installArgs,
+  rateArgs,
   uninstallNotice,
   uninstallOrRemoveArgs,
   updateArgs,
@@ -17,6 +18,7 @@ import {
   type DescriptionResult,
   type DigestResult,
   type FetchResult,
+  type RateReport,
   type Scope,
   type SearchItem,
 } from '../grim';
@@ -42,6 +44,7 @@ import {
   isOpenableUrl,
   normalizeKind,
   parseViaBundles,
+  readRating,
   refRepo,
   refTag,
   resolveCompanionAssets,
@@ -52,11 +55,12 @@ import type {
   DetailsToHost,
   DetailsVM,
   HostToDetails,
+  RatingVM,
   RevalidateState,
   ScopesVM,
   VoteState,
 } from '../webview/protocol';
-import { supportsRating } from '../installer';
+import { supportsPaging, supportsRating } from '../installer';
 import { castVote, confirmVote, refineVoteState, type VoteDeps } from './vote';
 import { offerRatingCredential } from './ratingAuth';
 import type { SecretReader, SecretWriter } from '../auth';
@@ -236,6 +240,15 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  stores nothing there — without this it would re-run on every repaint. */
   private readonly refined = new Set<string>();
 
+  /** Ratings `grim rate --dry-run` revealed for rows the catalog shows unrated,
+   *  keyed by repo. A key IS the attempt (a null value is a probe that found
+   *  nothing), so neither outcome is asked again this session. Behind a
+   *  catalog-at-scale index a new entry stays unrated in grim's catalog until
+   *  the index publishes new stats, but `grim rate` (0.15.0 and newer)
+   *  refetches once for an unrated row — so grim may know a vote target the
+   *  search row does not. */
+  private readonly probedRatings = new Map<string, RatingVM | null>();
+
   /** Test seam: isolate the snapshot cache in a per-test directory. */
   setCacheDir(dir: string): void {
     this.cache = new DetailsCache(dir);
@@ -290,7 +303,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       panel.title = this.titleFor(repo, true);
       panel.iconPath = this.iconUri();
       panel.reveal(undefined, true);
-      void this.paint(repo, panel);
+      // The webview posts `ready` once, so a retarget has to ask for the probe
+      // itself; the 'ready' handler covers the first repo.
+      void this.paint(repo, panel).then(() => this.probeRating(repo, panel));
       return;
     }
     const panel = this.createPanel(repo, true);
@@ -547,11 +562,12 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
   private stampVM(panel: vscode.WebviewPanel, vm: DetailsVM): DetailsVM {
     vm.isPreview = this.preview?.panel === panel;
     const voted = this.votes.get(vm.repo);
-    if (vm.rating) {
+    const rating = vm.rating ?? this.probedRatings.get(vm.repo) ?? null;
+    if (rating) {
       vm.rating = {
-        ...vm.rating,
+        ...rating,
         vote: voted?.vote ?? 'unknown',
-        up: voted?.up ?? vm.rating.up,
+        up: voted?.up ?? rating.up,
       };
     }
     vm.canVote = this.ratingSupported();
@@ -617,7 +633,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       case 'ready':
         await this.paint(repo, panel);
         // After the paint, never before it: the panel shows its (neutral,
-        // unknown) rating immediately and refines in the background.
+        // unknown) rating immediately and refines in the background. The probe
+        // goes first because refineVote only runs for a row that has a rating.
+        await this.probeRating(repo, panel);
         await this.refineVote(repo, panel);
         return;
       case 'openDetails':
@@ -747,9 +765,58 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  cached yet, which hides the affordance until the first snapshot lands
    *  rather than offering a button an older grim would reject with exit 64. */
   ratingSupported(): boolean {
-    const snapshot = this.scopes.cachedSnapshot();
-    const version = snapshot?.project?.context.version ?? snapshot?.global?.context.version;
+    const version = this.cachedGrimVersion();
     return version !== undefined && supportsRating(version);
+  }
+
+  private cachedGrimVersion(): string | undefined {
+    const snapshot = this.scopes.cachedSnapshot();
+    return snapshot?.project?.context.version ?? snapshot?.global?.context.version;
+  }
+
+  /** Whether `grim rate --dry-run` can find a target the search row lacks: it
+   *  refetches once for an unrated row from 0.15.0 on. */
+  private probeSupported(): boolean {
+    const version = this.cachedGrimVersion();
+    // grim-polyfill<0.15.0: grim before 0.15.0 never refetches an unrated row in rate --dry-run, so a probe only costs a spawn that may wait on a catalog refresh
+    return version !== undefined && supportsPaging(version);
+  }
+
+  /**
+   * For a row the catalog shows unrated, asks grim whether it knows a vote
+   * target anyway (`grim rate --dry-run`: uncredentialed, mutates nothing).
+   * Once per repo per session, success or not. A `--dry-run` without
+   * `--offline` may refresh the catalog, so it keeps runJson's long default
+   * deadline; passing `--offline` here would defeat the refetch.
+   *
+   * Anything short of a complete answer (error envelope, no url, no host or
+   * provider, spawn failure) leaves the vote hidden exactly as before.
+   */
+  private async probeRating(repo: string, panel: vscode.WebviewPanel): Promise<void> {
+    const row = this.searchRow(repo);
+    // No row: an artifact in no catalog has nothing grim could resolve a vote
+    // target from, and the dry run may cost a catalog refresh per repo. Returns
+    // before the remember-it write, so a row that lands later can still probe.
+    if (this.probedRatings.has(repo) || !this.probeSupported() || !row || row.rating) {
+      return;
+    }
+    this.probedRatings.set(repo, null);
+    const probe = await this.scopes.run<RateReport>(rateArgs(repo, { dryRun: true }), 'project');
+    // parseReport accepts any JSON document, so `null` or a bare scalar arrives as ok.
+    if (!probe.ok || typeof probe.value !== 'object' || probe.value === null) {
+      return;
+    }
+    const { url, host, provider, up } = probe.value;
+    if (typeof url !== 'string' || url === '' || !host || !provider) {
+      return;
+    }
+    // Same reading as a search row, so `up: null` is no rating, not a zero.
+    const rating = readRating({ up, url });
+    if (!rating) {
+      return;
+    }
+    this.probedRatings.set(repo, rating);
+    await this.postVM(repo, panel);
   }
 
   /**
@@ -766,7 +833,7 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
       return;
     }
     // Unrated rows have no thread to ask about; skip before spawning grim.
-    if (!this.searchRow(repo)?.rating) {
+    if (!this.searchRow(repo)?.rating && !this.probedRatings.get(repo)) {
       return;
     }
     this.refined.add(repo);
