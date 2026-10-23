@@ -5,6 +5,13 @@ All notable changes to the Grimoire VS Code extension.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] - 2026-10-23
+
+### Added
+
+- Load every Browse page in the background on paging grim releases (#30) *(search)*
+- Browse at catalog scale — windowed list, chunked posts, source status (P2c) (#31)
+
 ## [0.3.7] - 2026-09-15
 
 ### Fixed
@@ -271,6 +278,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename extension to grimoire-vscode
 - Display name 'Grimoire Marketplace'
 
+[0.3.8]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.7..v0.3.8
 [0.3.7]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.6..v0.3.7
 [0.3.6]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.5..v0.3.6
 [0.3.5]: https://github.com/grimoire-rs/grimoire-vscode/compare/v0.3.4..v0.3.5
