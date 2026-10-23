@@ -1,6 +1,6 @@
 // markdown-it factory for the details webview bodies. No vscode/DOM — kept pure
 // so tests can render with the exact same config the webview uses.
-import MarkdownIt from 'markdown-it';
+import MarkdownIt, { type MarkdownIt as MarkdownItInstance } from 'markdown-it';
 
 /** markdown-it configured for the details bodies: html:false keeps raw
  *  HTML inert, and validateLink additionally permits our
@@ -9,7 +9,7 @@ import MarkdownIt from 'markdown-it';
  *  inlined SVG renders as `<img src="">`. Everything else keeps the default
  *  behavior, so javascript:/other data: links stay neutralized. SVG via <img>
  *  can't execute script and the webview CSP already allows img-src data:. */
-export function createMarkdown(): MarkdownIt {
+export function createMarkdown(): MarkdownItInstance {
   const md = new MarkdownIt({ linkify: true });
   const defaultValidate = md.validateLink.bind(md);
   md.validateLink = (url) =>
