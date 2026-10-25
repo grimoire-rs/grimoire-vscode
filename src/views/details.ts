@@ -583,7 +583,15 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     panel: vscode.WebviewPanel,
     options: { check?: boolean } = {},
   ): Promise<void> {
-    await this.postBuilt(repo, panel, await this.buildVM(repo, options));
+    // Install state first, from cached content: the full pipeline re-probes the
+    // registry (describe + fetch + docs), seconds on a remote host, and an
+    // action's new row state (Complete Install → up to date) must not wait on it.
+    const snapshot = await this.scopes.snapshot(options);
+    const cached = await this.cache.load(repo).catch(() => null);
+    if (cached) {
+      await this.postBuilt(repo, panel, this.vmFromCache(repo, cached, snapshot));
+    }
+    await this.postBuilt(repo, panel, await this.buildVMFrom(repo, snapshot));
   }
 
   /** Posts an already-built VM to a panel, syncing its title + icon. */
@@ -1408,8 +1416,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
    *  `grim status --check` so an explicit "Check for updates" refresh gives open
    *  panels network-verified update/deprecation data, matching the sidebar. */
   async buildVM(repo: string, options: { check?: boolean } = {}): Promise<DetailsVM> {
-    // Hoisted: vmFromCache needs the same snapshot buildPipeline resolves.
-    const snapshot = await this.scopes.snapshot(options);
+    return this.buildVMFrom(repo, await this.scopes.snapshot(options));
+  }
+
+  private async buildVMFrom(repo: string, snapshot: Snapshot): Promise<DetailsVM> {
+    // vmFromCache needs the same snapshot buildPipeline resolves.
     const { vm, entry } = await this.buildPipeline(repo, snapshot);
     if (!entry) {
       // The fetch itself failed. This vm is the only one carrying vm.error, and

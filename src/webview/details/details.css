@@ -374,8 +374,27 @@ vscode-button.sm {
 .scope-actions .split-button .split-main {
   flex: 1;
   display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
   text-align: left;
+}
+
+/* Every row action reserves the widest label it can carry, so a row flipping
+   Uninstall → Complete Install, or Project and Global showing different
+   actions, never resizes the button. A zero-height ghost under the real label
+   sets the width — font-independent, unlike a px min-width. */
+.scope-actions .split-button .split-main::after,
+.scope-actions .via-bundle-btn .btn-label::after {
+  content: 'Complete Install';
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.scope-actions .via-bundle-btn .btn-label {
+  display: inline-flex;
+  flex-direction: column;
 }
 
 /* Muted "Not installed" cell in an empty scope row (item 1). */
@@ -633,7 +652,9 @@ vscode-button.sm {
   /* Label hugs the left edge, package icon the right — mirrors the split
      buttons' left text / right chevron geometry. */
   justify-content: space-between;
-  gap: 5px;
+  /* 11px gap + 14px icon = the split buttons' 25px chevron segment, so the
+     shared label ghost gives Bundle the same total width. */
+  gap: 11px;
   border: none;
   border-radius: 2px;
   background: var(--vscode-button-background);

@@ -1561,7 +1561,7 @@ function scopeUninstallButton(vm: DetailsVM, install: InstallVM): TemplateResult
   if (install.viaBundles.length > 0) {
     // ponytail: multiple providing bundles open the first; a per-bundle
     // picker menu would need its own dropdown — add if that ceiling matters.
-    return html`<button class="via-bundle-btn" data-action="open-details" data-repo="${install.viaBundles[0] ?? ''}" title="${viaBundleTitle(install.viaBundles)}">Bundle<span class="codicon codicon-package"></span></button>`;
+    return html`<button class="via-bundle-btn" data-action="open-details" data-repo="${install.viaBundles[0] ?? ''}" title="${viaBundleTitle(install.viaBundles)}"><span class="btn-label">Bundle</span><span class="codicon codicon-package"></span></button>`;
   }
   return html`<div class="split-button sm"><button class="split-main" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Uninstall</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button></div></div>`;
 }

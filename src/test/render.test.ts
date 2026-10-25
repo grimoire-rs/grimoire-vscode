@@ -2207,7 +2207,11 @@ suite('details rendering', () => {
         '<button class="via-bundle-btn" data-action="open-details" data-repo="ghcr.io/grimoire-rs/bundles/grim-essentials"',
       ),
     );
-    assert.ok(html.includes('Bundle<span class="codicon codicon-package"></span></button>'));
+    assert.ok(
+      html.includes(
+        '<span class="btn-label">Bundle</span><span class="codicon codicon-package"></span></button>',
+      ),
+    );
     assert.ok(
       html.includes(
         'title="Installed via bundle ghcr.io/grimoire-rs/bundles/grim-essentials — uninstall the bundle to remove it"',
@@ -2376,7 +2380,11 @@ suite('details rendering', () => {
     assert.ok(!html.includes('<img src=x'));
     assert.ok(!html.includes('"><img'));
     assert.ok(html.includes('&lt;img src=x'));
-    assert.ok(html.includes('>Bundle<span class="codicon codicon-package"></span></button>')); // fixed label regardless of hostile repo
+    assert.ok(
+      html.includes(
+        '<span class="btn-label">Bundle</span><span class="codicon codicon-package"></span></button>',
+      ),
+    ); // fixed label regardless of hostile repo
   });
 
   test('the Pin (Keep open) button renders only in preview mode (item 2)', async () => {
@@ -3581,11 +3589,17 @@ suite('windowed results (VX-R03)', () => {
           await litHtml(renderSidebarResults(loading(true), DEFAULT_FILTER, view, expanded)),
         );
         assert.ok(partial.length >= 3, `${view.mode}/${view.density}: rows carry a size`);
-        assert.ok(partial.every((n) => n === '-1'), `${view.mode}/${view.density}: ${partial}`);
+        assert.ok(
+          partial.every((n) => n === '-1'),
+          `${view.mode}/${view.density}: ${partial}`,
+        );
         const done = sizesOf(
           await litHtml(renderSidebarResults(loading(false), DEFAULT_FILTER, view, expanded)),
         );
-        assert.ok(done.every((n) => n !== '-1'), `${view.mode}/${view.density}: complete`);
+        assert.ok(
+          done.every((n) => n !== '-1'),
+          `${view.mode}/${view.density}: complete`,
+        );
       }
     });
 
