@@ -39,6 +39,8 @@ import { SettingsManager } from './views/settings';
 import { SidebarProvider, scopeStatuses } from './views/sidebar';
 import { Watchers } from './watchers';
 import { offerModifiedRefusal } from './views/updateRefusal';
+import { HookPrompter } from './views/hookPrompt';
+import { offerLock } from './views/staleLock';
 import {
   addRegistryPrompt,
   artifactName,
@@ -161,6 +163,8 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
     // and every global-scope change made outside this extension then goes
     // unnoticed. The refresh above already snapshotted global scope, so the
     // grim home is in hand — re-arm from it rather than probing again.
+    // Not awaited: the toast waits on the user, the refresh drain must not.
+    void hookPrompter.offer(scopes.cachedSnapshot()?.project);
     const grimHome = scopes.cachedSnapshot()?.global?.context.grim_home;
     if (grimHome !== undefined) {
       watchers.rebuild(grimHome);
@@ -544,6 +548,8 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
    *  what makes "every refresh" affordable: a burst (install → lock write →
    *  watcher event → completion refresh) lands ONE round, seconds after the
    *  last of them. */
+  const hookPrompter = new HookPrompter(scopes, context.workspaceState, output, refreshAll);
+
   const checkScheduler = new CheckScheduler(
     async () => {
       try {
@@ -742,6 +748,9 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
               output.appendLine(`error: grim update --${scope}: ${message}`);
               if (result.kind === 'error' && isForceable(result)) {
                 refusals.push(() => offerModifiedRefusal(scopes, scope, 'update', { message }));
+                return;
+              }
+              if (offerLock(result, updateArgs(), scope, scopes, output, refreshAll)) {
                 return;
               }
               notifyError(`Grimoire: grim update (${scope}): ${message}`);

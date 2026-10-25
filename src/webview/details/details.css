@@ -73,6 +73,9 @@ body {
     var(--vscode-foreground) 50%
   );
 }
+.kind-hook {
+  --kind-tint: var(--vscode-charts-red, #f14c4c);
+}
 .kind-unknown {
   --kind-tint: var(--vscode-descriptionForeground);
 }

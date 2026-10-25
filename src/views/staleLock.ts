@@ -4,7 +4,7 @@
 // The fix is a full resolve — bare `grim update` in the same scope — which may
 // legitimately bump other floating-tag artifacts, so we ask first.
 import * as vscode from 'vscode';
-import { updateArgs, type ActionReport, type GrimResult, type Scope } from '../grim';
+import { lockArgs, updateArgs, type ActionReport, type GrimResult, type Scope } from '../grim';
 import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
 
@@ -47,5 +47,51 @@ export async function offerFullUpdate(
     }
   });
   await onDone();
+  return true;
+}
+
+/**
+ * When a failed command carries reason "no-lock" (install/update with no
+ * grimoire.lock yet), offer **Run grim lock** on the error toast: it locks the
+ * scope, re-runs the failed command, and calls `onDone`. Returns true when it
+ * handled the failure (the caller must then skip its own error notification).
+ *
+ * Keyed on grim's `reason` alone, never on the message; a grim that does not
+ * tag it gets the plain toast from the caller. The toast is NOT awaited, for the
+ * same reason as offerInstallRefusal's: an unclicked notification must not hold
+ * the caller's busy lock and progress open.
+ */
+export function offerLock(
+  result: FailedResult,
+  args: string[],
+  scope: Scope,
+  scopes: ScopeService,
+  output: vscode.OutputChannel,
+  onDone: () => Promise<void>,
+): boolean {
+  if (result.kind !== 'error' || result.reason !== 'no-lock') {
+    return false;
+  }
+  output.appendLine(`error: grim ${args[0]} --${scope}: ${result.message}`);
+  const run = async (): Promise<void> => {
+    const choice = await vscode.window.showErrorMessage(
+      `Grimoire: grim ${args[0]}: ${result.message}`,
+      'Run grim lock',
+    );
+    if (choice !== 'Run grim lock') {
+      return;
+    }
+    await runWithStatusProgress('Locking', async () => {
+      for (const step of [lockArgs(), args]) {
+        const next = await scopes.run<ActionReport>(step, scope);
+        if (!next.ok) {
+          reportGrimFailure(next, output, `grim ${step[0]}`);
+          return;
+        }
+      }
+    });
+    await onDone();
+  };
+  run().catch((e) => output.appendLine(`lock offer failed: ${String(e)}`));
   return true;
 }

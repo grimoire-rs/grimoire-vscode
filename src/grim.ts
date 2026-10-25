@@ -142,6 +142,12 @@ export interface StatusOutput {
   path: string;
 }
 
+export interface HookArming {
+  client: string;
+  cause: string;
+  message: string;
+}
+
 export interface StatusItem {
   kind: string;
   name: string;
@@ -168,6 +174,11 @@ export interface StatusItem {
   // present-but-drifted output, which IS `state: "modified"` — different problem,
   // different remedy. Additive, so absent on a grim predating it; read as [].
   outputs_pending?: StatusOutput[];
+  // Hook rows only (experimental): one verdict per client the hook is NOT armed
+  // on, `[]` for every other kind and for a hook armed everywhere. Branch on
+  // `cause` (closed kebab enum, new values additive), show `message`. Additive,
+  // so absent on a grim predating hooks; read as [].
+  arming?: HookArming[];
   // The `--check` surface: grim's live catalog lookup. `deprecated`/`replaced_by`
   // mirror `grim search`'s fields; `update_available` re-resolves the DECLARED
   // reference, tag and all — it answers "would `grim update` move this pin?",
@@ -955,6 +966,18 @@ export function updateArgs(names: string[] = []): string[] {
  *  a version change, not a repair. */
 export function installArgs(): string[] {
   return ['install'];
+}
+
+/** Resolves grimoire.toml's declarations into grimoire.lock — the precondition
+ *  `grim install` refuses without. Re-resolves floating tags. */
+export function lockArgs(): string[] {
+  return ['lock'];
+}
+
+/** Records this workspace's consent to arm the hooks it declares (project
+ *  scope only — `--global` exits 64, global scope is always consented). */
+export function hookAllowArgs(): string[] {
+  return ['hook', 'allow'];
 }
 
 export function initArgs(options: { registry?: string } = {}): string[] {

@@ -1227,10 +1227,7 @@ suite('extension integration', () => {
     // Forcing a whole-lock install would discard local edits to OTHER artifacts.
     assert.ok(!install.includes('--force'), `never forced: ${install}`);
     // The remedy is install, not update — update would roll the pins forward.
-    assert.ok(
-      !argvLines(stub).some((l) => l.startsWith('update')),
-      'no update ran',
-    );
+    assert.ok(!argvLines(stub).some((l) => l.startsWith('update')), 'no update ran');
   });
 
   test('a refused Complete Install neither blocks the action nor skips its refresh', async function () {
@@ -1866,12 +1863,9 @@ suite('extension integration', () => {
       return undefined; // dismissed — never executes the open command here
     };
     try {
-      await offerModifiedRefusal(
-        scopes,
-        'global',
-        'update',
-        { message: 'demo is locally modified; rerun with --force' },
-      );
+      await offerModifiedRefusal(scopes, 'global', 'update', {
+        message: 'demo is locally modified; rerun with --force',
+      });
     } finally {
       window.showErrorMessage = original;
     }
@@ -1907,12 +1901,9 @@ suite('extension integration', () => {
       return undefined;
     };
     try {
-      await offerModifiedRefusal(
-        scopes,
-        'project',
-        'update',
-        { message: 'one is locally modified; rerun with --force' },
-      );
+      await offerModifiedRefusal(scopes, 'project', 'update', {
+        message: 'one is locally modified; rerun with --force',
+      });
     } finally {
       window.showErrorMessage = original;
     }
@@ -2116,6 +2107,42 @@ suite('extension integration', () => {
     assert.ok(full.includes('--global'), `full update stays in the same scope: ${full}`);
     assert.ok(warned, 'the stale-lock warning was shown');
     assert.ok(!errored, 'the per-name refusal produced no error toast');
+  });
+
+  test('no-lock install failure offers Run grim lock, then locks and re-runs the install', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    canned(stub, 'install', {
+      error: { code: 'not-found', exit: 79, message: 'no grimoire.lock found', reason: 'no-lock' },
+    });
+    canned(stub, 'lock', { items: [] });
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const originalError = window.showErrorMessage;
+    const offered: string[][] = [];
+    window.showErrorMessage = async (_message: string, ...items: string[]) => {
+      offered.push(items);
+      return items.includes('Run grim lock') ? 'Run grim lock' : undefined;
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({ type: 'complete-install', scope: 'global' });
+      await waitFor(() => argvLines(stub).filter((l) => l.startsWith('install')).length >= 2);
+    } finally {
+      window.showErrorMessage = originalError;
+      uncan(stub, 'install');
+      uncan(stub, 'lock');
+    }
+    const lines = argvLines(stub).filter((l) => /^(install|lock)\b/.test(l));
+    assert.deepStrictEqual(
+      lines.map((l) => l.split(' ')[0]),
+      ['install', 'lock', 'install'],
+      lines.join(' | '),
+    );
+    assert.ok(
+      lines.every((l) => l.includes('--global')),
+      'lock and retry stay in scope',
+    );
+    assert.deepStrictEqual(offered[0], ['Run grim lock'], 'the toast carries the button');
   });
 
   test('update failure without a reason keeps the plain error toast, runs no full update', async function () {
@@ -6505,7 +6532,11 @@ suite('extension integration', () => {
       [],
       'a junk link spawned grim rate',
     );
-    assert.strictEqual(api.providers.details.openRepos.length, before, 'a junk link opened a panel');
+    assert.strictEqual(
+      api.providers.details.openRepos.length,
+      before,
+      'a junk link opened a panel',
+    );
   });
 
   test('a vote link is refused BEFORE the panel on a grim without `rate`', async function () {
@@ -6611,7 +6642,10 @@ suite('extension integration', () => {
     });
 
     /** What a webview would hold after replaying everything posted so far. */
-    function replayed(posted: HostToSidebar[]): { repos: string[]; paging: PagingState | undefined } {
+    function replayed(posted: HostToSidebar[]): {
+      repos: string[];
+      paging: PagingState | undefined;
+    } {
       let repos: string[] = [];
       let paging: PagingState | undefined;
       for (const message of posted) {
@@ -6767,7 +6801,11 @@ suite('extension integration', () => {
         await api.providers.sidebar.handleMessage({ type: 'ready' });
         await waitFor(() => replayed(posted).paging?.failed === true);
         const failed = replayed(posted);
-        assert.strictEqual(states.at(-1)?.phase, 'ready', 'Browse does not drop to the error phase');
+        assert.strictEqual(
+          states.at(-1)?.phase,
+          'ready',
+          'Browse does not drop to the error phase',
+        );
         assert.strictEqual(failed.repos.length, 200);
         assert.strictEqual(failed.paging?.hasMore, true);
 
@@ -6777,7 +6815,11 @@ suite('extension integration', () => {
           token: (failed.paging?.token ?? 0) + 1,
         });
         await new Promise((resolve) => setTimeout(resolve, 300));
-        assert.strictEqual(searchLines().length, calls, 'a token naming no live list spawns nothing');
+        assert.strictEqual(
+          searchLines().length,
+          calls,
+          'a token naming no live list spawns nothing',
+        );
 
         cannedPage(200, 250);
         await api.providers.sidebar.handleMessage({
@@ -7001,7 +7043,12 @@ suite('view/title toolbar contributions (package.json)', () => {
     // Updates neither trees nor groups, so every control that shapes structure
     // is gated on the active tab having one. Density is NOT — Updates honours
     // it, and a toggle that works everywhere should not blink out on one tab.
-    for (const command of [...treeOnly, ...listOnly, 'grimoire.showTreeView', 'grimoire.showFlatList']) {
+    for (const command of [
+      ...treeOnly,
+      ...listOnly,
+      'grimoire.showTreeView',
+      'grimoire.showFlatList',
+    ]) {
       assert.ok(
         when(command).includes('grimoire.view.structured'),
         `${command} only shows on a tab that has a structure`,
@@ -7048,6 +7095,9 @@ grim-usage = "ghcr.io/grimoire-rs/skills/grim-usage:1.4.2"
 [mcp]
 grim = "ghcr.io/grimoire-rs/mcp/grim:latest"
 
+[hooks]
+shell-guard = "ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0"
+
 [options]
 clients = "claude"
 `;
@@ -7055,6 +7105,7 @@ clients = "claude"
     assert.deepStrictEqual(declared, {
       'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2',
       'mcp:grim': 'ghcr.io/grimoire-rs/mcp/grim:latest',
+      'hook:shell-guard': 'ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0',
     });
   });
 

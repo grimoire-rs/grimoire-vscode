@@ -2026,8 +2026,8 @@ suite('toggleKinds', () => {
     assert.deepStrictEqual(toggleKinds(['bundle'], 'bundle'), []);
   });
 
-  test('selecting all five kinds collapses to [] (All)', () => {
-    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp'], 'bundle'), []);
+  test('selecting every kind collapses to [] (All)', () => {
+    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), []);
   });
 
   test('unknown kinds toggle like any other (inert in filtering)', () => {

@@ -1,7 +1,7 @@
 {
   "name": "grimoire-vscode",
   "displayName": "Grimoire Marketplace",
-  "description": "Marketplace for AI artifacts — search, install, and manage grim skills, rules, agents, MCP servers, and bundles.",
+  "description": "Marketplace for AI artifacts — search, install, and manage grim skills, rules, agents, MCP servers, bundles, and hooks.",
   "version": "0.3.8",
   "publisher": "grimoire-rs",
   "license": "Apache-2.0",

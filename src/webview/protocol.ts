@@ -41,7 +41,7 @@ export interface PagingState {
   sort?: SortMode;
 }
 
-export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle';
+export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle' | 'hook';
 
 export type RowState = 'not-installed' | 'installed' | 'outdated' | 'deprecated';
 
@@ -63,7 +63,8 @@ export interface InstallVM {
    *  when there is none. */
   updateAvailable: boolean;
   clients: string[];
-  /** grim's raw state (installed|stale|modified|missing|outdated). */
+  /** grim's raw state (installed|stale|modified|missing|outdated; a hook
+   *  also gated|not-armed|untrusted). */
   state: string;
   kind: string;
   name: string;
@@ -87,6 +88,9 @@ export interface InstallVM {
    *  fault, and under client autodetect it can fire because some OTHER tool
    *  created a client's marker directory. Never badge it as damage. */
   outputsPending?: { client: string; path: string }[];
+  /** Hook only: per-client reasons the hook is not armed (grim status
+   *  `arming`). Installed but inert there — a warning, not damage. */
+  arming?: { client: string; cause: string; message: string }[];
   /** Per-status-item deprecation notice, populated only under `--check` (null
    *  otherwise) — buildInstalledCards' fallback source when the artifact isn't
    *  present in the browse catalog snapshot. */

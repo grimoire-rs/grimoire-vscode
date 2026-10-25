@@ -56,7 +56,7 @@ import {
 import { notifyError, reportGrimFailure, runWithStatusProgress } from '../notify';
 import { webviewHtml } from './html';
 import { offerForcedRetry, offerRefusedRetry } from './forceRetry';
-import { offerFullUpdate } from './staleLock';
+import { offerFullUpdate, offerLock } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 import { offerInstallRefusal } from './updateRefusal';
 
@@ -632,6 +632,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.delegate.refreshAll(),
         ))
       ) {
+        return;
+      }
+      // No lock yet: offer Run grim lock + retry. Falls through to the refresh.
+      if (
+        offerLock(result, args, scope, this.scopes, this.output, () => this.delegate.refreshAll())
+      ) {
+        await this.delegate.refreshAll();
         return;
       }
       // A forceable drift refusal offers an Overwrite confirm; an anchor-escape

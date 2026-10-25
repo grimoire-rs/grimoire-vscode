@@ -6,9 +6,9 @@
 
 A marketplace UI for [grim](https://github.com/grimoire-rs/grimoire) — the
 OCI-backed package manager for AI artifacts (skills, rules, agents, MCP servers,
-and bundles). Search the catalog, read the docs, and install, update, and remove
-artifacts without leaving the editor — the familiar Extensions view, but for the
-AI artifacts your tools rely on.
+bundles, and experimental hooks). Search the catalog, read the docs, and
+install, update, and remove artifacts without leaving the editor — the
+familiar Extensions view, but for the AI artifacts your tools rely on.
 
 ## What it does
 

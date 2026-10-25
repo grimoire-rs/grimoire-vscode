@@ -642,6 +642,41 @@ suite('card rendering', () => {
     );
   });
 
+  test('compact row slot warns on an unarmed hook, ignoring clients with no hook surface', async () => {
+    const base = {
+      scope: 'project' as const,
+      version: '1.0.0',
+      updateAvailable: false,
+      clients: ['claude'],
+      state: 'gated',
+      kind: 'hook',
+      name: 'shell-guard',
+      viaBundles: [],
+    };
+    const slot = async (install: Record<string, unknown>): Promise<string> =>
+      litHtml(renderCompactRow(card({ state: 'installed', installs: [install as never] })));
+
+    const gated = await slot({
+      ...base,
+      arming: [
+        { client: 'claude', cause: 'workspace-not-consented', message: 'run grim hook allow' },
+        { client: 'zed', cause: 'client-has-no-hook-surface', message: 'zed has no hooks' },
+      ],
+    });
+    assert.ok(gated.includes('row-warn'), 'a gated hook shows the warning glyph');
+    assert.ok(gated.includes('claude: run grim hook allow'), 'tooltip carries grim message');
+    assert.ok(!gated.includes('zed has no hooks'), 'declined client is not a warning');
+    assert.ok(
+      (
+        await slot({
+          ...base,
+          arming: [{ client: 'zed', cause: 'client-has-no-hook-surface', message: 'x' }],
+        })
+      ).includes('row-dot'),
+      'only declined clients falls through to the installed dot',
+    );
+  });
+
   test('scope-variant card shows a pending badge iff outputs_pending is non-empty', async () => {
     const installed = {
       scope: 'project' as const,
@@ -1333,6 +1368,10 @@ suite('sidebar split rendering (item 3)', () => {
       allActive.includes('class="kind-chip active" data-action="toggle-kind" data-kind="all"'),
     );
     assert.ok(allActive.includes('codicon-sparkle'), 'skill chip carries its codicon');
+    assert.ok(
+      allActive.includes('data-kind="hook"') && allActive.includes('codicon-symbol-event'),
+      'hook chip carries its codicon',
+    );
     // Two kinds selected → those chips active, All inactive.
     const multi = await litHtml(
       renderSidebarFilters(st, { ...DEFAULT_FILTER, kinds: ['skill', 'bundle'] }),

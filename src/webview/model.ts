@@ -75,6 +75,8 @@ export interface WireStatusItem {
   deprecated?: string | null;
   replaced_by?: string | null;
   update_available?: boolean | null;
+  /** Hook rows only: per-client reasons the hook is not armed. */
+  arming?: { client: string; cause: string; message: string }[];
 }
 
 /** Whether a card/install should surface an update. grim's authoritative
@@ -101,7 +103,7 @@ export function computeUpdateAvailable(item: {
   return item.update_available ?? item.state === 'outdated';
 }
 
-export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle'];
+export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'];
 
 /** Codicon per artifact kind. `agent` and `mcp` use the icons the codicon set
  *  added for exactly those concepts; the design mockups predate them and asked
@@ -112,6 +114,8 @@ export const KIND_ICONS: Record<ArtifactKind, string> = {
   agent: 'agent',
   mcp: 'mcp',
   bundle: 'package',
+  // No dedicated codicon yet; a hook is a lifecycle event handler.
+  hook: 'symbol-event',
 };
 
 export function normalizeKind(kind: string | null | undefined): ArtifactKind | null {
@@ -269,6 +273,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
       clientsMissing: item.clients_missing ?? [],
       clientsExtra: item.clients_extra ?? [],
       outputsPending: item.outputs_pending ?? [],
+      arming: item.arming ?? [],
       deprecated: item.deprecated ?? null,
       replacedBy: item.replaced_by ?? null,
     });
@@ -305,6 +310,26 @@ export function outputsPendingTooltip(install: Pick<InstallVM, 'outputsPending'>
   return ['An install would also write:', ...pending.map((o) => `${o.client} → ${o.path}`)].join(
     '\n',
   );
+}
+
+/** The arming verdicts worth a warning. `client-has-no-hook-surface` is the
+ *  declined path (that client simply has no hooks), not something to fix. */
+function unarmedVerdicts(install: Pick<InstallVM, 'arming'>): NonNullable<InstallVM['arming']> {
+  return (install.arming ?? []).filter((a) => a.cause !== 'client-has-no-hook-surface');
+}
+
+/** True when an installed hook is held back from arming on some client — it is
+ *  on disk but will not run there until the named gate clears. */
+export function isUnarmed(install: Pick<InstallVM, 'arming'>): boolean {
+  return unarmedVerdicts(install).length > 0;
+}
+
+/** Unarmed-hook tooltip: one "client: message" per line, grim's own wording. */
+export function unarmedTooltip(install: Pick<InstallVM, 'arming'>): string {
+  return [
+    'Hook not armed:',
+    ...unarmedVerdicts(install).map((a) => `${a.client}: ${a.message}`),
+  ].join('\n');
 }
 
 /** Drift badge tooltip: "Missing: a, b · Extra: c", either half omitted when

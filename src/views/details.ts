@@ -72,7 +72,7 @@ import { webviewHtml } from './html';
 import { scopeStatuses } from './sidebar';
 import { pickVersion } from './pickVersion';
 import { offerForcedRetry, offerRefusedRetry } from './forceRetry';
-import { offerFullUpdate } from './staleLock';
+import { offerFullUpdate, offerLock } from './staleLock';
 import { switchToReplacement } from './switchReplacement';
 import { offerInstallRefusal } from './updateRefusal';
 
@@ -123,6 +123,7 @@ const KIND_LABELS: Record<string, string> = {
   agent: 'Agent',
   mcp: 'MCP',
   bundle: 'Bundle',
+  hook: 'Hook',
 };
 
 /** True when a COMPLETE entry was written inside {@link OPEN_REVALIDATE_TTL_MS}.
@@ -955,6 +956,11 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
             await this.postVM(repo, panel);
             return;
           }
+          // No lock yet: offer Run grim lock + retry instead of the error toast.
+          if (offerLock(result, args, scope, this.scopes, this.output, () => this.onDidChange())) {
+            await this.postVM(repo, panel);
+            return;
+          }
           // A forceable drift refusal offers an Overwrite confirm; an anchor-escape
           // refusal gets a non-modal notice with no override — both handled instead
           // of the plain error toast below. The modal opens over the active
@@ -1514,7 +1520,6 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
     });
   }
 
-
   /** The SWR short-circuit, shared by the on-open revalidate and the prefetch
    *  re-probe: a live describe proves the cached content current when BOTH the
    *  artifact manifest digest and the companion digest still match. A describe
@@ -1790,6 +1795,7 @@ export function installState(
           viaBundles: parseViaBundles(item.source),
           floating: item.pinned === null,
           outputsPending: item.outputs_pending ?? [],
+          arming: item.arming ?? [],
         });
       }
     }
