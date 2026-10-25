@@ -7670,6 +7670,10 @@ suite('update badge', () => {
   // hangs off the sidebar's WebviewView, which VS Code only resolves when the
   // view first becomes visible, so the count is the part that exists either way.
   const countOf = (api: GrimoireApi): number => api.providers.sidebar.updateCount();
+  // An awaited refresh() returns early when a newer one (e.g. a watcher round)
+  // supersedes it, so the count is awaited rather than read once.
+  const countBecomes = (api: GrimoireApi, n: number): Promise<void> =>
+    waitFor(() => countOf(api) === n);
 
   /** A run override serving one installed artifact whose status `state` the
    *  caller picks — the field the badge count ultimately derives from on a
@@ -7717,15 +7721,12 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(countOf(api), 1, 'an outdated install badges the activity bar');
+      await countBecomes(api, 1); // an outdated install badges the activity bar
       // What `grim update` leaves behind: the same artifact, no longer outdated.
       api.scopes.run = statusRun('installed');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(
-        countOf(api),
-        0,
-        'the badge must clear after the update — a stale count reads as "still outdated"',
-      );
+      // The badge must clear after the update — a stale count reads as "still outdated".
+      await countBecomes(api, 0);
     } finally {
       api.scopes.run = originalRun;
     }
@@ -7740,7 +7741,7 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(countOf(api), 1);
+      await countBecomes(api, 1);
       // The executable disappeared (uninstalled, PATH changed). That is a
       // definite answer, not a degraded one — the count must not survive it
       // pointing at an Updates tab that now renders the no-grim state.
@@ -7751,7 +7752,7 @@ suite('update badge', () => {
           message: 'grim not found',
         }) as GrimResult<T>) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
-      assert.strictEqual(countOf(api), 0);
+      await countBecomes(api, 0);
     } finally {
       api.scopes.run = originalRun;
     }
@@ -7766,7 +7767,7 @@ suite('update badge', () => {
     try {
       api.scopes.run = statusRun('outdated');
       await api.providers.sidebar.refresh();
-      assert.strictEqual(countOf(api), 1);
+      await countBecomes(api, 1);
       // Install state is now UNKNOWN, not empty. The badge deliberately holds
       // its last value rather than clearing to a "no updates" claim it cannot
       // make. The Updates tab must not contradict it with a bare 0 either —
@@ -7785,6 +7786,7 @@ suite('update badge', () => {
         return statusRun('outdated')(args, 'global') as Promise<GrimResult<T>>;
       }) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
+      await waitFor(() => states.at(-1)?.installStateUnknown !== undefined);
       const last = states.at(-1);
       assert.ok(last);
       assert.strictEqual(last.phase, 'ready', 'the catalog is fine — browsing stays available');
