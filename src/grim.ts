@@ -368,6 +368,11 @@ export interface ConfigEntry {
   default: string | null;
   values: string[] | null;
   constraints: ConfigConstraints | null;
+  /** Settings panel this key belongs to — additive, so absent on an older
+   *  grim. Open set; see model.ts's sectionOf for the fallback. */
+  section?: string;
+  /** Hidden behind the "Show advanced settings" toggle — additive. */
+  advanced?: boolean;
 }
 
 /** One row of `grim config registry list`. Exactly one of `oci`/`index` is

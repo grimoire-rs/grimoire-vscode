@@ -20,8 +20,10 @@ import {
   addRegistryDraftValid,
   CLOSED_ADD_REGISTRY,
   enumSelectedValue,
+  hasAdvancedRows,
   LOCATOR_PLACEHOLDER,
   splitList,
+  visibleGroups,
   type AddRegistryDraft,
   type AddRegistryUI,
 } from './model';
@@ -191,12 +193,23 @@ function renderRow(row: SettingsRowVM): TemplateResult {
 </div>`;
 }
 
+function renderSubsection(row: SettingsRowVM): TemplateResult {
+  return html`<h3 class="group-subheader">${row.title}</h3>${renderRow(row)}`;
+}
+
 function renderGroup(group: SettingsGroupVM): TemplateResult {
   return html`
 <div class="settings-group">
   <h2 class="group-header">${group.title}</h2>
-  ${repeat(group.rows, (r) => r.key, renderRow)}
+  ${repeat(group.rows, (r) => r.key, group.subsections ? renderSubsection : renderRow)}
 </div>`;
+}
+
+/** Shown only when some row is advanced — a toggle that hides nothing is noise. */
+function renderAdvancedToggle(state: SettingsState, showAdvanced: boolean): TemplateResult | typeof nothing {
+  return hasAdvancedRows(state.groups)
+    ? html`<vscode-checkbox toggle class="advanced-toggle" ?checked="${showAdvanced}">Show advanced settings</vscode-checkbox>`
+    : nothing;
 }
 
 // --- Registries ---
@@ -626,6 +639,7 @@ function renderSettingsBody(
   state: SettingsState,
   addRegistry: AddRegistryUI,
   registryError: string | null,
+  showAdvanced: boolean,
 ): TemplateResult {
   switch (state.phase) {
     case 'no-grim':
@@ -641,7 +655,7 @@ function renderSettingsBody(
     case 'error':
       return html`<div class="error-state"><span class="codicon codicon-error"></span>${state.error ?? 'Unknown error'}</div>`;
     case 'ready':
-      return html`${state.groups.map(renderGroup)}${renderRegistries(state, addRegistry, registryError)}`;
+      return html`${renderAdvancedToggle(state, showAdvanced)}${visibleGroups(state.groups, showAdvanced).map(renderGroup)}${renderRegistries(state, addRegistry, registryError)}`;
     default: {
       const exhaustive: never = state.phase;
       throw new Error(`Unhandled settings phase: ${String(exhaustive)}`);
@@ -722,8 +736,9 @@ export function renderSettingsContent(
    *  on the SAME wrapper, never a different template shape, so it dims the
    *  form in place instead of swapping it out. */
   refreshing = false,
+  showAdvanced = false,
 ): TemplateResult {
-  return html`<div class="settings-content${refreshing ? ' refreshing' : ''}">${renderScopeMismatch(state)}${renderSettingsBody(state, addRegistry, registryError)}</div>`;
+  return html`<div class="settings-content${refreshing ? ' refreshing' : ''}">${renderScopeMismatch(state)}${renderSettingsBody(state, addRegistry, registryError, showAdvanced)}</div>`;
 }
 
 export function renderSettings(
@@ -731,6 +746,7 @@ export function renderSettings(
   addRegistry: AddRegistryUI = CLOSED_ADD_REGISTRY,
   registryError: string | null = null,
   refreshing = false,
+  showAdvanced = false,
 ): TemplateResult {
-  return html`${renderSettingsTabs(state)}${renderSettingsContent(state, addRegistry, registryError, refreshing)}${renderSettingsFooter()}`;
+  return html`${renderSettingsTabs(state)}${renderSettingsContent(state, addRegistry, registryError, refreshing, showAdvanced)}${renderSettingsFooter()}`;
 }

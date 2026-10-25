@@ -26,8 +26,49 @@ export function wireConfigEntry(overrides: Partial<WireConfigEntry> = {}): WireC
   };
 }
 
-/** The 9 fixed `options.*` keys grim returns, in stable order. */
+/** The 9 fixed `options.*` keys grim returns, in stable order, with the
+ *  `section`/`advanced` fields a current grim adds (strip them for the
+ *  pre-section fallback path). */
 export function wireConfigEntries(): WireConfigEntry[] {
+  return fixedConfigEntries().map((e) => ({
+    ...e,
+    section: e.key.startsWith('options.tui.') ? 'tui' : 'general',
+    advanced: false,
+  }));
+}
+
+/** The keys a current grim lists beyond the 9 fixed ones: the experimental
+ *  hooks gate and one of the `plugin.*` project export keys (advanced). */
+export function wireSectionedExtras(): WireConfigEntry[] {
+  return [
+    wireConfigEntry({
+      key: 'options.experimental.hooks',
+      value: null,
+      set: false,
+      type: 'boolean',
+      title: 'Hooks',
+      description: 'Enables the experimental `hook` artifact kind.',
+      default: 'false',
+      values: null,
+      section: 'experimental',
+      advanced: false,
+    }),
+    wireConfigEntry({
+      key: 'plugin.name',
+      value: null,
+      set: false,
+      type: 'string',
+      title: 'Plugin name',
+      description: 'Name `grim export` writes into the plugin manifest.',
+      default: null,
+      values: null,
+      section: 'plugin',
+      advanced: true,
+    }),
+  ];
+}
+
+function fixedConfigEntries(): WireConfigEntry[] {
   return [
     wireConfigEntry({
       key: 'options.default_registry',

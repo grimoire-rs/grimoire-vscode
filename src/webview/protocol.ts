@@ -649,11 +649,16 @@ export interface SettingsRowVM {
   /** Item-shape guard for a list-valued row's chip editor (model.ts's
    *  isValidChip) — see {@link SettingsRowConstraints}. */
   constraints: SettingsRowConstraints | null;
+  /** Hidden unless the "Show advanced settings" toggle is on. */
+  advanced: boolean;
 }
 
 export interface SettingsGroupVM {
   title: string;
   rows: SettingsRowVM[];
+  /** Each row renders under its own subsection header (the Experimental
+   *  panel: one feature per row). */
+  subsections?: boolean;
 }
 
 /** grim's presentation metadata for the add-registry form's oci/index/

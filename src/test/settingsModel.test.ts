@@ -1,10 +1,11 @@
 import * as assert from 'assert';
-import type { WireRegistryEntry } from '../webview/settings/model';
+import type { WireConfigEntry, WireRegistryEntry } from '../webview/settings/model';
 import {
   addRegistryDraftValid,
   allRows,
   appendPattern,
   buildGroups,
+  hasAdvancedRows,
   buildRegistryRow,
   buildSettingsRow,
   buildSettingsVM,
@@ -34,6 +35,7 @@ import {
   shouldBlockNumberWheel,
   splitList,
   toggleRegistryHelp,
+  visibleGroups,
 } from '../webview/settings/model';
 import {
   registryFieldVMs,
@@ -42,6 +44,7 @@ import {
   settingsState,
   wireConfigEntries,
   wireConfigEntry,
+  wireSectionedExtras,
   wireRegistryEntry,
 } from './fixtures/settingsVms';
 
@@ -157,11 +160,11 @@ suite('defaultHint', () => {
 });
 
 suite('buildGroups', () => {
-  test('groups the 9 fixed keys into Options (3) / TUI (6), stable order, no empty groups', () => {
+  test('groups the 9 fixed keys into General (3) / TUI (6), stable order, no empty groups', () => {
     const groups = buildGroups(wireConfigEntries());
     assert.deepStrictEqual(
       groups.map((g) => g.title),
-      ['Options', 'TUI'],
+      ['General', 'TUI'],
     );
     assert.deepStrictEqual(
       groups[0]?.rows.map((r) => r.key),
@@ -180,9 +183,9 @@ suite('buildGroups', () => {
     );
   });
 
-  test('membership follows the `options.tui.` prefix, not a fixed key list', () => {
+  test('without `section`, membership follows the `options.tui.` prefix, not a fixed key list', () => {
     // grim's `[options.tui]` sub-table grows additively; a hardcoded table
-    // dropped `sort` and `sort_order` into Options when they shipped.
+    // dropped `sort` and `sort_order` into the first panel when they shipped.
     const groups = buildGroups([wireConfigEntry({ key: 'options.tui.future_knob' })]);
     assert.deepStrictEqual(
       groups.map((g) => g.title),
@@ -190,10 +193,10 @@ suite('buildGroups', () => {
     );
   });
 
-  test('an unrecognized future key falls into Options rather than being dropped', () => {
+  test('an unrecognized future key falls into General rather than being dropped', () => {
     const groups = buildGroups([wireConfigEntry({ key: 'options.future_thing' })]);
     assert.strictEqual(groups.length, 1);
-    assert.strictEqual(groups[0]?.title, 'Options');
+    assert.strictEqual(groups[0]?.title, 'General');
   });
 
   test('empty input yields no groups (empty panels omitted)', () => {
@@ -202,7 +205,7 @@ suite('buildGroups', () => {
 
   test('drops the per-registry rows `config list --all` emits', () => {
     // grim lists `registry.<alias>.<field>` alongside the fixed keys. Left in,
-    // shortKey strips the prefix and every one lands in Options as an
+    // shortKey strips the prefix and every one lands in General as an
     // unlabelled duplicate of the Registries table — and the two `string-list`
     // filter rows would get the COMMA-JOINING chip editor, which splits
     // `{tools,libs}/**` into two fragments that no longer compile.
@@ -217,6 +220,104 @@ suite('buildGroups', () => {
       groups.flatMap((g) => g.rows.map((r) => r.key)),
       ['options.tui.expand_levels'],
     );
+  });
+});
+
+suite('buildGroups — grim section', () => {
+  const titles = (groups: { title: string }[]): string[] => groups.map((g) => g.title);
+  /** The same rows as a grim ≤ 0.15 reports them: no section, no advanced. */
+  const legacy = (entries: WireConfigEntry[]): WireConfigEntry[] =>
+    entries.map((e) => {
+      const rest = { ...e };
+      delete rest.section;
+      delete rest.advanced;
+      return rest;
+    });
+
+  test('panels follow `section`, in General/TUI/Experimental/Vendors/Plugin order', () => {
+    const groups = buildGroups([
+      ...wireSectionedExtras().reverse(),
+      wireConfigEntry({ key: 'options.vendors.claude.x', section: 'vendors' }),
+      ...wireConfigEntries(),
+    ]);
+    assert.deepStrictEqual(titles(groups), ['General', 'TUI', 'Experimental', 'Vendors', 'Plugin']);
+  });
+
+  test('`section` wins over the key prefix', () => {
+    const groups = buildGroups([wireConfigEntry({ key: 'options.tui.odd', section: 'general' })]);
+    assert.deepStrictEqual(titles(groups), ['General']);
+  });
+
+  test('an unknown section literal lands in General (open set)', () => {
+    const groups = buildGroups([wireConfigEntry({ key: 'options.tui.x', section: 'telemetry' })]);
+    assert.deepStrictEqual(titles(groups), ['General']);
+  });
+
+  test('`registry` section rows are dropped whatever their key', () => {
+    assert.deepStrictEqual(
+      buildGroups([wireConfigEntry({ key: 'options.odd', section: 'registry' })]),
+      [],
+    );
+  });
+
+  test('only Experimental renders per-row subsections', () => {
+    const groups = buildGroups([...wireConfigEntries(), ...wireSectionedExtras()]);
+    assert.deepStrictEqual(
+      groups.filter((g) => g.subsections === true).map((g) => g.title),
+      ['Experimental'],
+    );
+  });
+
+  test('`advanced` comes from grim when present', () => {
+    const rows = buildGroups([
+      ...wireSectionedExtras(),
+      wireConfigEntry({ key: 'plugin.version', section: 'plugin', advanced: false }),
+    ]).flatMap((g) => g.rows);
+    assert.deepStrictEqual(
+      rows.map((r) => [r.key, r.advanced]),
+      [
+        ['options.experimental.hooks', false],
+        ['plugin.name', true],
+        ['plugin.version', false],
+      ],
+    );
+  });
+
+  test('without the fields: prefix fallback, `plugin.*` advanced', () => {
+    const groups = buildGroups(
+      legacy([
+        ...wireConfigEntries(),
+        ...wireSectionedExtras(),
+        wireConfigEntry({ key: 'options.vendors.claude.x' }),
+      ]),
+    );
+    assert.deepStrictEqual(titles(groups), ['General', 'TUI', 'Experimental', 'Vendors', 'Plugin']);
+    assert.deepStrictEqual(
+      groups.flatMap((g) => g.rows.filter((r) => r.advanced).map((r) => r.key)),
+      ['plugin.name'],
+    );
+  });
+});
+
+suite('visibleGroups', () => {
+  const groups = buildGroups([...wireConfigEntries(), ...wireSectionedExtras()]);
+
+  test('hides advanced rows and omits a panel left empty', () => {
+    const shown = visibleGroups(groups, false);
+    assert.deepStrictEqual(
+      shown.map((g) => g.title),
+      ['General', 'TUI', 'Experimental'],
+    );
+    assert.ok(!shown.some((g) => g.rows.some((r) => r.advanced)));
+  });
+
+  test('shows everything when the toggle is on', () => {
+    assert.strictEqual(visibleGroups(groups, true), groups);
+  });
+
+  test('hasAdvancedRows', () => {
+    assert.strictEqual(hasAdvancedRows(groups), true);
+    assert.strictEqual(hasAdvancedRows(buildGroups(wireConfigEntries())), false);
   });
 });
 

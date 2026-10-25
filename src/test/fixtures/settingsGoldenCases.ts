@@ -20,6 +20,7 @@ import {
   wireConfigEntries,
   wireConfigEntry,
   wireRegistryEntry,
+  wireSectionedExtras,
 } from './settingsVms';
 
 export interface GoldenCase {
@@ -65,7 +66,7 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
   );
   const readyGroups = [
     {
-      title: 'Options',
+      title: 'General',
       rows: rows.filter((r) =>
         ['options.default_registry', 'options.clients', 'options.show_deprecated'].includes(r.key),
       ),
@@ -127,6 +128,21 @@ export function settingsGoldenCases(r: typeof render): GoldenCase[] {
   });
 
   add('settings-ready-full', r.renderSettings(readyState));
+  // Section-driven panels: Experimental's per-row subsection header, the
+  // advanced toggle, and the Plugin panel it reveals.
+  add(
+    'settings-ready-sections-advanced',
+    r.renderSettings(
+      settingsState({
+        groups: buildGroups([...wireConfigEntries(), ...wireSectionedExtras()]),
+        registries: [],
+      }),
+      CLOSED_ADD_REGISTRY,
+      null,
+      false,
+      true,
+    ),
+  );
   add(
     'settings-ready-empty-registries',
     r.renderSettings(settingsState({ groups: readyGroups, registries: [] })),

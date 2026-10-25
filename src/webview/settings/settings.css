@@ -102,6 +102,18 @@ body {
   font-weight: 600;
 }
 
+.group-subheader {
+  margin: 12px 0 0;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.advanced-toggle {
+  display: block;
+  margin: 0 0 16px;
+}
+
 /* --- Row (item 3) --- */
 .settings-row {
   padding: 12px 14px;

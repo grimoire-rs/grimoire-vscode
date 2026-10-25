@@ -46,8 +46,8 @@ import { renderSettings } from './render';
 
 declare function acquireVsCodeApi(): {
   postMessage(message: SettingsToHost): void;
-  getState(): { scope?: Scope } | undefined;
-  setState(state: { scope?: Scope }): void;
+  getState(): { scope?: Scope; showAdvanced?: boolean } | undefined;
+  setState(state: { scope?: Scope; showAdvanced?: boolean }): void;
 };
 
 const vscode = acquireVsCodeApi();
@@ -59,6 +59,9 @@ const root = document.getElementById('root') as HTMLElement;
 const projectOpen = root.dataset['projectOpen'] === 'true';
 const saved = vscode.getState();
 let currentScope: Scope = saved?.scope ?? (projectOpen ? 'project' : 'global');
+// ponytail: webview state, so it lasts as long as the panel's state does, not
+// the workspace; move to the host's workspaceState if it must survive a close.
+let showAdvanced = saved?.showAdvanced === true;
 
 let vm: SettingsState | null = null;
 // Last state seen per scope — lets a switch back to an already-visited scope
@@ -93,7 +96,7 @@ let pendingRegistryAlias: string | null = null;
 let registryError: string | null = null;
 
 function persist(): void {
-  vscode.setState({ scope: currentScope });
+  vscode.setState({ scope: currentScope, showAdvanced });
 }
 
 function post(message: SettingsToHost): void {
@@ -108,7 +111,7 @@ function render(): void {
   if (!vm) {
     return;
   }
-  litRender(renderSettings(vm, addRegistry, registryError, refreshing), root);
+  litRender(renderSettings(vm, addRegistry, registryError, refreshing, showAdvanced), root);
   // lit renders synchronously, so an open editor is measurable before paint —
   // see sizePatternEdit, which owns the one-sizing-path invariant.
   const editor = root.querySelector<HTMLInputElement>('.pattern-edit');
@@ -705,6 +708,12 @@ root.addEventListener('change', (event) => {
       ...addRegistry,
       draft: { ...addRegistry.draft, [field]: (target as HTMLInputElement).checked },
     };
+    render();
+    return;
+  }
+  if (target.classList.contains('advanced-toggle')) {
+    showAdvanced = (target as HTMLInputElement).checked;
+    persist();
     render();
     return;
   }

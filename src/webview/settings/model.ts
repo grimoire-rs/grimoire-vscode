@@ -34,6 +34,9 @@ export interface WireConfigEntry {
   default: string | null;
   values: string[] | null;
   constraints: WireConfigConstraints | null;
+  /** Additive (see grim.ts's ConfigEntry) — absent on an older grim. */
+  section?: string;
+  advanced?: boolean;
 }
 
 export interface WireRegistryEntry {
@@ -140,6 +143,10 @@ export function buildSettingsRow(entry: WireConfigEntry): SettingsRowVM {
     constraints: entry.constraints
       ? { itemPattern: entry.constraints.item_pattern, itemWidth: entry.constraints.item_width }
       : null,
+    // `=== true`: absent on an older grim, where `plugin.*` (project export
+    // metadata) is the only advanced set.
+    advanced:
+      entry.advanced === true || (entry.advanced === undefined && entry.key.startsWith('plugin.')),
   };
 }
 
@@ -160,38 +167,78 @@ export function buildRegistryRow(entry: WireRegistryEntry): SettingsRegistryVM {
   };
 }
 
-/** Fixed group order (design item 2: "Options" / "TUI"). Membership follows
- *  the key itself — `options.tui.*` is the `[options.tui]` sub-table grim's
- *  config file spells — so a TUI key grim adds later lands in the right panel
- *  without a table edit here (frozen/additive tolerance: `sort` and
- *  `sort_order` fell into "Options" under a hardcoded membership table). */
-const GROUP_ORDER = ['Options', 'TUI'] as const;
-const groupOf = (key: string): (typeof GROUP_ORDER)[number] =>
-  key.startsWith('options.tui.') ? 'TUI' : 'Options';
+/** Panel order, keyed by grim's `section` literal. `registry` is absent on
+ *  purpose: those rows belong to the Registries table (see buildGroups). */
+const SECTIONS = [
+  ['general', 'General'],
+  ['tui', 'TUI'],
+  ['experimental', 'Experimental'],
+  ['vendors', 'Vendors'],
+  ['plugin', 'Plugin'],
+] as const;
+type SectionId = (typeof SECTIONS)[number][0] | 'registry';
+
+/** Key prefixes standing in for `section` when grim omits it (≤ 0.15) — the
+ *  config file's own sub-tables, so a key grim adds later under one still
+ *  lands in the right panel. */
+const PREFIX_SECTIONS: readonly [string, SectionId][] = [
+  ['registry.', 'registry'],
+  ['options.tui.', 'tui'],
+  ['options.experimental.', 'experimental'],
+  ['options.vendors.', 'vendors'],
+  ['plugin.', 'plugin'],
+];
+
+/** grim's `section` when present (an unknown literal is `general` — open
+ *  set), else the key-prefix fallback. */
+export function sectionOf(entry: Pick<WireConfigEntry, 'key' | 'section'>): SectionId {
+  if (typeof entry.section === 'string') {
+    if (entry.section === 'registry') {
+      return 'registry';
+    }
+    return SECTIONS.find(([id]) => id === entry.section)?.[0] ?? 'general';
+  }
+  return PREFIX_SECTIONS.find(([prefix]) => entry.key.startsWith(prefix))?.[1] ?? 'general';
+}
 
 /** `config list --all` emits one row per registry per field
  *  (`registry.<alias>.oci`, `.include`, …) alongside the fixed `options.*`
  *  keys. Those belong to the Registries table, which reads them from
  *  `registry list` instead — left in, every one of them would land in
- *  "Options" as an unlabelled duplicate. Worse for
+ *  "General" as an unlabelled duplicate. Worse for
  *  the two filter lists: their wire type is `string-list`, so renderControl
  *  would hand them the comma-joining chip editor, and editing one there splits
  *  `{tools,libs}/**` into two fragments that no longer compile. */
 export function buildGroups(entries: WireConfigEntry[]): SettingsGroupVM[] {
-  const byTitle = new Map<string, SettingsRowVM[]>();
+  const bySection = new Map<SectionId, SettingsRowVM[]>();
   for (const entry of entries) {
-    if (entry.key.startsWith('registry.')) {
+    const section = sectionOf(entry);
+    if (section === 'registry') {
       continue;
     }
-    const title = groupOf(entry.key);
-    byTitle.set(title, [...(byTitle.get(title) ?? []), buildSettingsRow(entry)]);
+    bySection.set(section, [...(bySection.get(section) ?? []), buildSettingsRow(entry)]);
   }
-  // Empty panels are omitted (CLAUDE.md convention) — a group with no rows
-  // (only possible with a partial/test fixture; real grim always returns every fixed key).
-  return GROUP_ORDER.filter((title) => byTitle.has(title)).map((title) => ({
+  // Empty panels are omitted (CLAUDE.md convention).
+  return SECTIONS.filter(([id]) => bySection.has(id)).map(([id, title]) => ({
     title,
-    rows: byTitle.get(title) ?? [],
+    rows: bySection.get(id) ?? [],
+    ...(id === 'experimental' ? { subsections: true } : {}),
   }));
+}
+
+/** The groups the panel shows: advanced rows dropped unless the toggle is on,
+ *  and a panel left with no rows omitted. */
+export function visibleGroups(groups: SettingsGroupVM[], showAdvanced: boolean): SettingsGroupVM[] {
+  if (showAdvanced) {
+    return groups;
+  }
+  return groups
+    .map((g) => ({ ...g, rows: g.rows.filter((r) => !r.advanced) }))
+    .filter((g) => g.rows.length > 0);
+}
+
+export function hasAdvancedRows(groups: SettingsGroupVM[]): boolean {
+  return groups.some((g) => g.rows.some((r) => r.advanced));
 }
 
 export interface SettingsSource {
