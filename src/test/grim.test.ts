@@ -34,6 +34,7 @@ import {
   searchArgs,
   statusArgs,
   uninstallArgs,
+  uninstallNotice,
   updateArgs,
   withFlags,
   type ConfigEntry,
@@ -144,6 +145,12 @@ suite('grim arg builders', () => {
     // check:true opts into the network-verified re-check.
     assert.deepStrictEqual(statusArgs({ check: true }), ['status', '--check']);
     assert.deepStrictEqual(contextArgs(), ['context']);
+  });
+
+  test('uninstallNotice knows kept-by-dependency', () => {
+    assert.ok(
+      uninstallNotice({ name: 'a', status: 'kept-by-dependency' })?.includes('required by'),
+    );
   });
 
   test('add/remove/uninstall/update/init args', () => {

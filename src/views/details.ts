@@ -41,9 +41,10 @@ import {
   computeUpdateAvailable,
   declaredKey,
   findAssetPath,
+  installHolders,
+  isHeld,
   isOpenableUrl,
   normalizeKind,
-  parseViaBundles,
   readRating,
   refRepo,
   refTag,
@@ -706,10 +707,10 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
         // scopes", so derive the scope set + install identity from the snapshot
         // for repoOf(panel) — never the webview — matching the install posture.
         // Only `replacedBy` (grim-validated) is taken from the message. Skip
-        // bundle-held rows: their old copy can't be removed here (kept-by-bundle).
+        // held rows (bundle or dependency): their old copy can't be removed here.
         const snapshot = this.scopes.cachedSnapshot() ?? (await this.scopes.snapshot());
         const targets = installState(repo, scopeStatuses(snapshot))
-          .installs.filter((i) => i.viaBundles.length === 0)
+          .installs.filter((i) => !isHeld(i))
           .map((i) => ({ scope: i.scope, kind: i.kind, name: i.name }));
         await switchToReplacement({
           scopes: this.scopes,
@@ -1803,7 +1804,7 @@ export function installState(
           state: item.state,
           kind: item.kind,
           name: item.name,
-          viaBundles: parseViaBundles(item.source),
+          ...installHolders(item, scope),
           floating: item.pinned === null,
           outputsPending: item.outputs_pending ?? [],
           arming: item.arming ?? [],

@@ -611,6 +611,53 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
     ),
   );
   add(
+    'details-dependencies-populated',
+    r.renderDetails(
+      detailsVM({
+        dependencies: [
+          {
+            kind: 'rule',
+            name: 'style',
+            id: '../rules/style:1',
+            version: '1',
+            repo: 'ghcr.io/grimoire-rs/rules/style',
+            description: 'House style rules',
+          },
+          {
+            kind: 'skill',
+            name: 'external',
+            id: 'registry.example/acme/skills/external:2',
+            version: '2',
+            repo: 'registry.example/acme/skills/external',
+            description: null,
+          },
+        ],
+      }),
+    ),
+  );
+  add(
+    'details-held-by-dependency',
+    r.renderDetails(
+      detailsVM({
+        installs: [
+          {
+            scope: 'global',
+            version: '1.0.0',
+            updateAvailable: false,
+            clients: ['claude'],
+            state: 'installed',
+            kind: 'skill',
+            name: 'grim-usage',
+            viaBundles: [],
+            requiredBy: [
+              { kind: 'agent', name: 'reviewer', repo: 'ghcr.io/grimoire-rs/agents/reviewer' },
+            ],
+          },
+        ],
+      }),
+    ),
+  );
+  add(
     'details-mcp-contentjson',
     r.renderDetails(
       detailsVM({

@@ -7,7 +7,7 @@ import { render as litRender } from 'lit-html';
 import type { DetailsToHost, DetailsVM, HostToDetails, RevalidateState, Scope } from '../protocol';
 import { isMutating } from '../actions';
 import { armBrokenImages } from '../brokenImage';
-import { isInteractiveTarget, shouldResetUi } from '../model';
+import { isHeld, isInteractiveTarget, shouldResetUi } from '../model';
 import { renderDetails, revalidateIndicator } from '../render';
 
 declare function acquireVsCodeApi(): {
@@ -253,7 +253,7 @@ root.addEventListener('click', (event) => {
       // the scope set + identity from its own snapshot, so the message carries a
       // representative install (kind/name/scope, uniform for one artifact) plus
       // the grim-validated replacement ref from the VM.
-      const install = vm?.installs.find((i) => i.viaBundles.length === 0);
+      const install = vm?.installs.find((i) => !isHeld(i));
       if (vm?.replacedBy && install) {
         vscode.postMessage({
           type: 'switch',
