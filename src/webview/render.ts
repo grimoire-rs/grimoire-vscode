@@ -60,7 +60,9 @@ import {
   resultIsPartial,
   rowLabel,
   scopeRowMenuEntries,
-  viaBundleTitle,
+  heldTitle,
+  isHeld,
+  uninstallTitle,
   windowRows,
   PAGING_CAP_NOTE,
   type CardGroup,
@@ -1344,26 +1346,15 @@ function renderInstallationPanel(vm: DetailsVM): TemplateResult {
   return html`<div class="rail-panel"><div class="rail-title">${title}</div>${panels}</div>`;
 }
 
-/** Members render as fully clickable boxes/rows: the whole container carries
+/** Members render as fully clickable boxes: the whole container carries
  *  the open-details action + role="button"/tabindex when the member resolves to
  *  a repo (main.ts maps Enter/Space to a click); unresolved members stay inert
  *  plain text. Keeping the action on the container (not a nested button) avoids
  *  double-nested interactive elements. The four attributes are a closed set keyed
- *  on `repo` — bound inline via ifDefined at each call site (member-row/-box),
+ *  on `repo` — bound inline via ifDefined at the call site (memberBox),
  *  since lit has no spliceable attribute fragment. */
 function memberNameEl(name: string, clickable: boolean): TemplateResult {
   return html`<span class="member-name${clickable ? ' member-name-link' : ''}">${name}</span>`;
-}
-
-function renderContentsPanel(vm: DetailsVM): TemplateResult | typeof nothing {
-  if (vm.kind !== 'bundle' || vm.members.length === 0) {
-    return nothing;
-  }
-  const rows = vm.members.map(
-    (m) =>
-      html`<div class="member-row" data-action="${ifDefined(m.repo ? 'open-details' : undefined)}" data-repo="${ifDefined(m.repo ?? undefined)}" role="${ifDefined(m.repo ? 'button' : undefined)}" tabindex="${ifDefined(m.repo ? '0' : undefined)}"><span class="codicon codicon-${kindIcon(m.kind)} ${kindClass(m.kind)}"></span>${memberNameEl(m.name, m.repo !== null)}${m.version ? html`<span class="mono member-version">${m.version}</span>` : nothing}</div>`,
-  );
-  return html`<div class="rail-panel"><div class="rail-title">CONTENTS</div>${rows}</div>`;
 }
 
 function renderPackagePanel(vm: DetailsVM): TemplateResult {
@@ -1530,7 +1521,7 @@ function renderDeprecationBanner(vm: DetailsVM): TemplateResult | typeof nothing
   // in every installed scope, then uninstall this one). The host derives the
   // scope set + identity; the read-only preview link above stays. Bundle-held
   // installs can't be torn down here, so they don't count as switchable.
-  const switchable = vm.replacedBy !== null && vm.installs.some((i) => i.viaBundles.length === 0);
+  const switchable = vm.replacedBy !== null && vm.installs.some((i) => !isHeld(i));
   const switchButton = switchable
     ? html`<button class="deprecation-switch" data-action="switch">Switch to replacement</button>`
     : nothing;
@@ -1553,17 +1544,29 @@ function scopeInstallButton(vm: DetailsVM, scope: Scope): TemplateResult {
 /** Per-scope Uninstall split button (design 2a gear-first rework): main
  *  uninstalls that scope, chevron opens "Switch to specific version…" — the
  *  pick-version flow doubles as downgrade/pin since installing an older tag
- *  overwrites the current one. Bundle-held installs can't be uninstalled
- *  directly, so the cell shows a plain "Bundle" nav button instead — it
- *  follows to the providing bundle's details (identity of all providing
- *  bundles lives in the tooltip via viaBundleTitle). */
+ *  overwrites the current one. Held installs (via a bundle, or required by
+ *  another artifact) can't be uninstalled directly, so the cell shows the
+ *  holder's nav button instead (holderNavButton). */
 function scopeUninstallButton(vm: DetailsVM, install: InstallVM): TemplateResult {
-  if (install.viaBundles.length > 0) {
-    // ponytail: multiple providing bundles open the first; a per-bundle
-    // picker menu would need its own dropdown — add if that ceiling matters.
-    return html`<button class="via-bundle-btn" data-action="open-details" data-repo="${install.viaBundles[0] ?? ''}" title="${viaBundleTitle(install.viaBundles)}"><span class="btn-label">Bundle</span><span class="codicon codicon-package"></span></button>`;
+  if (isHeld(install)) {
+    return holderNavButton(install);
   }
-  return html`<div class="split-button sm"><button class="split-main" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Uninstall</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button></div></div>`;
+  return html`<div class="split-button sm"><button class="split-main" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}" title="${ifDefined(uninstallTitle(install))}">Uninstall</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button></div></div>`;
+}
+
+/** A held row's nav button in place of Uninstall: "Bundle", or "Required by"
+ *  plus the requiring artifact's kind icon; it opens that holder's details. The bundle
+ *  wins over a requiring artifact, as in grim's `source` precedence; every
+ *  holder is named in the tooltip.
+ *  ponytail: several holders open the first; a per-holder picker would need its
+ *  own dropdown — add if that ceiling matters. */
+function holderNavButton(install: InstallVM): TemplateResult {
+  const bundle = install.viaBundles[0];
+  const parent = install.requiredBy?.[0];
+  const kind = bundle !== undefined ? 'bundle' : (parent?.kind ?? null);
+  const repo = bundle ?? parent?.repo ?? undefined;
+  const label = bundle !== undefined ? 'Bundle' : 'Required by';
+  return html`<button class="via-bundle-btn" data-action="${ifDefined(repo ? 'open-details' : undefined)}" data-repo="${ifDefined(repo)}" ?disabled=${!repo} title="${heldTitle(install)}"><span class="btn-label">${label}</span><span class="codicon codicon-${kindIcon(kind)}"></span></button>`;
 }
 
 /** Per-scope Update split button (item 1): when a direct install is outdated,
@@ -1571,7 +1574,7 @@ function scopeUninstallButton(vm: DetailsVM, install: InstallVM): TemplateResult
  *  that scope, chevron opens "Switch to specific version…" (downgrade/pin) AND
  *  "Uninstall". Same geometry as the Install/Uninstall split buttons. */
 function scopeUpdateButton(vm: DetailsVM, install: InstallVM): TemplateResult {
-  return html`<div class="split-button sm"><button class="split-main" data-action="update" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Update</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}"><span class="menu-label">Uninstall</span></button></div></div>`;
+  return html`<div class="split-button sm"><button class="split-main" data-action="update" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}">Update</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}" title="${ifDefined(uninstallTitle(install))}"><span class="menu-label">Uninstall</span></button></div></div>`;
 }
 
 /** Per-scope Complete Install split button: shown when grim reports outputs an
@@ -1583,7 +1586,7 @@ function scopeUpdateButton(vm: DetailsVM, install: InstallVM): TemplateResult {
  *  artifact positional: it re-materializes the whole scope's lock. Naming one
  *  artifact's button "Repair" would promise a narrower action than it performs. */
 function scopeCompleteInstallButton(vm: DetailsVM, install: InstallVM): TemplateResult {
-  return html`<div class="split-button sm"><button class="split-main" data-action="complete-install" data-scope="${install.scope}" title="${outputsPendingTooltip(install)}">Complete Install</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}"><span class="menu-label">Uninstall</span></button></div></div>`;
+  return html`<div class="split-button sm"><button class="split-main" data-action="complete-install" data-scope="${install.scope}" title="${outputsPendingTooltip(install)}">Complete Install</button><button class="split-arrow" data-action="scope-menu" title="More options"><span class="codicon codicon-chevron-down"></span></button><div class="scope-menu hidden"><button class="menu-item" data-action="pick-version" data-repo="${vm.repo}" data-scope="${install.scope}"><span class="menu-label">Switch Version</span></button><button class="menu-item" data-action="uninstall" data-kind="${install.kind}" data-name="${install.name}" data-scope="${install.scope}" title="${ifDefined(uninstallTitle(install))}"><span class="menu-label">Uninstall</span></button></div></div>`;
 }
 
 /** Row gear (design 2a gear-first rework): sits first in the actions cell on
@@ -1672,9 +1675,9 @@ function installedScopeRow(vm: DetailsVM, install: InstallVM, divided: boolean):
   // Bundle nav button (its update path stays in the gear), and rows with nothing
   // outstanding show Uninstall.
   let button: TemplateResult;
-  if (install.updateAvailable && install.viaBundles.length === 0) {
+  if (install.updateAvailable && !isHeld(install)) {
     button = scopeUpdateButton(vm, install);
-  } else if (pending && install.viaBundles.length === 0) {
+  } else if (pending && !isHeld(install)) {
     button = scopeCompleteInstallButton(vm, install);
   } else {
     button = scopeUninstallButton(vm, install);
@@ -1705,7 +1708,16 @@ function renderHeaderActions(vm: DetailsVM): TemplateResult {
       ? installedScopeRow(vm, install, index > 0)
       : notInstalledScopeRow(vm, scope, index > 0);
   });
-  return html`<div class="scope-box">${rows}</div>`;
+  // Pre-add: what an install here would also bring in. Skipped once every
+  // shown scope already has it installed.
+  const requires = vm.dependencies ?? [];
+  const note =
+    requires.length > 0 &&
+    !vm.scopesPending &&
+    scopes.some((s) => !vm.installs.some((i) => i.scope === s))
+      ? html`<div class="scope-requires">This will also install ${requires.map((r) => `${r.kind}/${r.name}`).join(', ')}</div>`
+      : nothing;
+  return html`<div class="scope-box">${rows}</div>${note}`;
 }
 
 /** Placeholder rail panels at roughly the final panel heights, so the 300px
@@ -1888,12 +1900,16 @@ export function renderDetails(vm: DetailsVM): TemplateResult {
   // ripple to main.ts panel ids + #md-details + CSS for no user-visible gain).
   const disabledDetailsTab = html`<button class="tab" data-tab="details" disabled title="No README available">README</button>`;
   const disabledChangelogTab = html`<button class="tab" data-tab="changelog" disabled title="No changelog available">CHANGELOG</button>`;
+  // DEPENDENCIES always closes the strip: disabled when none are declared, or
+  // when grim can't say (null: foreign manifest, a grim without `requires`).
+  const disabledDependenciesTab = (title: string): TemplateResult =>
+    html`<button class="tab" data-tab="dependencies" disabled title="${title}">DEPENDENCIES</button>`;
   if (vm.loading) {
     return html`${revalidateHost}${header}
 ${renderDeprecationBanner(vm)}
 <div class="details-body">
   <div class="reading-column"><div class="reading-content">
-    <div class="tabs">${disabledDetailsTab}<button class="tab active" data-tab="contents">CONTENTS</button>${disabledChangelogTab}</div>
+    <div class="tabs">${disabledDetailsTab}<button class="tab active" data-tab="contents">CONTENTS</button>${disabledChangelogTab}${disabledDependenciesTab('No dependencies')}</div>
     <div class="tab-panel" id="panel-contents"><div class="details-loading"><vscode-progress-ring></vscode-progress-ring></div></div>
   </div></div>
   <div class="right-rail">${renderRailSkeleton()}</div>
@@ -1909,10 +1925,15 @@ ${renderDeprecationBanner(vm)}
   const first = hasDetails ? 'details' : 'contents';
   const tab = (id: string, label: string): TemplateResult =>
     html`<button class="tab${first === id ? ' active' : ''}" data-tab="${id}">${label}</button>`;
-  const tabs = html`${hasDetails ? tab('details', 'README') : disabledDetailsTab}${tab('contents', 'CONTENTS')}${hasChangelog ? tab('changelog', 'CHANGELOG') : disabledChangelogTab}`;
+  const dependencies = vm.dependencies ?? [];
+  const dependenciesTab =
+    dependencies.length > 0
+      ? tab('dependencies', 'DEPENDENCIES')
+      : disabledDependenciesTab(vm.dependencies ? 'No dependencies' : 'Dependencies unknown');
+  const tabs = html`${hasDetails ? tab('details', 'README') : disabledDetailsTab}${tab('contents', 'CONTENTS')}${hasChangelog ? tab('changelog', 'CHANGELOG') : disabledChangelogTab}${dependenciesTab}`;
   const panel = (id: string, active: boolean, inner: unknown): TemplateResult =>
     html`<div class="tab-panel${active ? '' : ' hidden'}" id="panel-${id}">${inner}</div>`;
-  const panels = html`${hasDetails ? panel('details', first === 'details', html`<div class="md-body" id="md-details">${mdBody(vm.readmeMarkdown)}</div>`) : nothing}${panel('contents', first === 'contents', renderContentsBody(vm))}${hasChangelog ? panel('changelog', false, html`<div class="md-body" id="md-changelog">${mdBody(vm.changelogMarkdown)}</div>`) : nothing}`;
+  const panels = html`${hasDetails ? panel('details', first === 'details', html`<div class="md-body" id="md-details">${mdBody(vm.readmeMarkdown)}</div>`) : nothing}${panel('contents', first === 'contents', renderContentsBody(vm))}${hasChangelog ? panel('changelog', false, html`<div class="md-body" id="md-changelog">${mdBody(vm.changelogMarkdown)}</div>`) : nothing}${dependencies.length > 0 ? panel('dependencies', false, dependencies.map(memberBox)) : nothing}`;
   // A cold fetch failure (no content) surfaces in-body, inside the reading
   // column where the loading spinner sat — content area only, nothing above the
   // header shifts. Warm revalidate failures never repost a VM (the cached paint
@@ -1931,7 +1952,6 @@ ${renderDeprecationBanner(vm)}
   </div></div>
   <div class="right-rail">
     ${renderInstallationPanel(vm)}
-    ${renderContentsPanel(vm)}
     ${renderRatingPanel(vm)}
     ${renderDownloadsPanel(vm)}
     ${renderPackagePanel(vm)}

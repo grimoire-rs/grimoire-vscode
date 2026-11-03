@@ -344,7 +344,7 @@ vscode-button.sm {
   padding: 3px 4px;
 }
 
-/* Install, Uninstall and Bundle share one look and one total width (design 2a
+/* Install, Uninstall, Bundle and Required by share one look and one total width (design 2a
    gear-first rework) so all three actions line up across scope rows despite
    the label-length difference. 120px = split-main's old content min-width
    (7em @ 11px = 77px) + its 2*9px padding (95px) + the chevron segment
@@ -369,6 +369,13 @@ vscode-button.sm {
 .scope-actions .via-bundle-btn {
   padding-top: 0;
   padding-bottom: 0;
+}
+
+/* Labels never wrap: a wrapped label would grow the button past its pinned
+   height on a narrow panel. */
+.scope-actions .split-button .split-main,
+.scope-actions .via-bundle-btn {
+  white-space: nowrap;
 }
 
 .scope-actions .split-button .split-main {
@@ -466,6 +473,7 @@ vscode-button.sm {
   border-radius: 4px;
   margin-top: 6px;
   max-width: var(--content-width);
+  container-type: inline-size;
 }
 
 .scope-row {
@@ -570,10 +578,25 @@ vscode-button.sm {
   color: var(--vscode-editorInfo-foreground, var(--vscode-descriptionForeground));
 }
 
-.scope-clients {
+/* The one elastic cell: on a narrow editor it shrinks and clips its chips so
+   the fixed-width action button never spills out of the scope box (the rail's
+   INSTALLATION panel still lists every client). One line, so clipping never
+   changes the row height. Row-qualified to outrank the later .chip-list. */
+.scope-row .scope-clients {
   display: inline-flex;
   gap: 5px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Too narrow for even one chip beside the fixed columns (24 padding + 4x10
+   gaps + 14 icon + 170 id + 190 version + 146 actions + ~56 chip): drop the
+   cell rather than show a clipped sliver of a chip. */
+@container (max-width: 640px) {
+  .scope-row .scope-clients {
+    display: none;
+  }
 }
 
 .chip-list {
@@ -665,8 +688,14 @@ vscode-button.sm {
   cursor: pointer;
 }
 
-.via-bundle-btn:hover {
+.via-bundle-btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
+}
+
+/* A holder whose repo could not be named: nothing to open. */
+.via-bundle-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .via-bundle-btn .codicon {
@@ -874,15 +903,13 @@ vscode-button.sm {
   background: var(--vscode-list-hoverBackground);
 }
 
-/* Resolved members are fully clickable boxes/rows (item 1): the whole box is
+/* Resolved members are fully clickable boxes (item 1): the whole box is
    the hit target and keyboard-operable via role="button". */
-.member-box[role='button'],
-.member-row[role='button'] {
+.member-box[role='button'] {
   cursor: pointer;
 }
 
-.member-box[role='button']:focus-visible,
-.member-row[role='button']:focus-visible {
+.member-box[role='button']:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
 }
@@ -917,8 +944,7 @@ vscode-button.sm {
   color: var(--vscode-textLink-foreground);
 }
 
-.member-box[role='button']:hover .member-name-link,
-.member-row[role='button']:hover .member-name-link {
+.member-box[role='button']:hover .member-name-link {
   text-decoration: underline;
 }
 
@@ -1113,29 +1139,6 @@ vscode-button.sm {
 .keyword-chip:hover {
   border-color: var(--vscode-focusBorder);
   color: var(--vscode-textLink-foreground);
-}
-
-.member-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 4px 0;
-}
-
-.member-row .codicon {
-  font-size: 13px;
-  color: var(--kind-tint, var(--vscode-descriptionForeground));
-}
-
-.member-row .member-name {
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.member-row .member-version {
-  margin-left: auto;
-  font-size: 10px;
 }
 
 /* CONTENTS JSON block (item 6): fills the reading column; scrolls horizontally

@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import { card as cardFixture, installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
+  installHolders,
+  isHeld,
   browseSortRequest,
   formatCount,
   applyAppend,
@@ -994,6 +996,56 @@ suite('details view model', () => {
     assert.strictEqual(vm.state, 'not-installed');
   });
 
+  test('requires: enriched like bundle members — linked whenever the id resolves', () => {
+    const repo = 'ghcr.io/acme/skills/pr';
+    const base = {
+      ref: `${repo}:1`,
+      digest: 'sha256:a',
+      kind: 'skill',
+      name: 'pr',
+      title: 'pr',
+      description: '',
+      summary: '',
+      version: '1',
+      license: null,
+      repository: null,
+      revision: null,
+      created: null,
+      keywords: [],
+      deprecated: null,
+      replaced_by: null,
+      tags: [],
+    };
+    const vmWith = (requires: { kind: string; name: string; id: string }[] | null | undefined) =>
+      buildDetailsVM({
+        repo,
+        searchItem: searchItem(),
+        describe: requires === undefined ? base : { ...base, requires },
+        fetch: null,
+        installs: [],
+        scopes: scopesVM,
+        logoUri: null,
+        catalog: [{ ...searchItem(), repo: 'ghcr.io/acme/rules/style', kind: 'rule' }],
+      });
+    const vm = vmWith([
+      { kind: 'rule', name: 'style', id: '../rules/style:1' },
+      { kind: 'rule', name: 'other', id: 'ghcr.io/zed/rules/other:2' },
+    ]);
+    // ../ resolves against the declarer's repo (like bundle members); an
+    // absolute id outside the catalog still links — details opens it like a
+    // deep link. Catalog hits carry their description.
+    assert.deepStrictEqual(
+      vm.dependencies?.map((r) => [r.repo, r.version]),
+      [
+        ['ghcr.io/acme/rules/style', '1'],
+        ['ghcr.io/zed/rules/other', '2'],
+      ],
+    );
+    assert.deepStrictEqual(vmWith([]).dependencies, []);
+    assert.strictEqual(vmWith(null).dependencies, null);
+    assert.strictEqual(vmWith(undefined).dependencies, null);
+  });
+
   test('fetch-only fallback (no describe) uses frontmatter', () => {
     const vm = buildDetailsVM({
       repo: 'ghcr.io/x/skills/y',
@@ -1402,6 +1454,34 @@ suite('card menu entries', () => {
     assert.strictEqual(entry.action, undefined); // disabled: no action wiring
     assert.strictEqual(entry.hint, 'via grim-essentials');
     assert.ok(entry.title?.includes('ghcr.io/grimoire-rs/bundles/grim-essentials'));
+  });
+
+  test('dependency-held install yields a disabled uninstall entry naming the holder', () => {
+    const card = menuCard({
+      state: 'installed',
+      installs: [
+        install({ requiredBy: [{ kind: 'skill', name: 'pr', repo: 'ghcr.io/o/skills/pr' }] }),
+      ],
+    });
+    const entry = cardMenuEntries(card, { projectOpen: true, context: true }).find(
+      (e): e is MenuItem => e !== 'separator' && e.label === 'Uninstall (Global)',
+    );
+    assert.ok(entry);
+    assert.strictEqual(entry.action, undefined);
+    assert.strictEqual(entry.hint, 'required by pr');
+    assert.ok(entry.title?.includes('dependency of skill/pr'));
+  });
+
+  test('direct install something else needs keeps Uninstall, hinting it stays', () => {
+    const card = menuCard({
+      state: 'installed',
+      installs: [install({ alsoRequiredBy: ['rule/commit-conventions'] })],
+    });
+    const entry = cardMenuEntries(card, { projectOpen: true, context: true }).find(
+      (e): e is MenuItem => e !== 'separator' && e.label === 'Uninstall (Global)',
+    );
+    assert.strictEqual(entry?.action, 'uninstall');
+    assert.strictEqual(entry.hint, 'also required by rule/commit-conventions');
   });
 
   test('context menu adds Open Details and Copy share link', () => {
@@ -3915,10 +3995,7 @@ suite('row windowing', () => {
         new Set(['primary']),
         true,
       );
-      assert.deepStrictEqual(
-        new Set(sizes(grouped).filter((n) => n !== null)),
-        new Set([-1]),
-      );
+      assert.deepStrictEqual(new Set(sizes(grouped).filter((n) => n !== null)), new Set([-1]));
       const tree = flattenRows(
         cards,
         'browse',
@@ -4022,5 +4099,70 @@ suite('row windowing', () => {
       const first = viewportReport(null, rows, undefined);
       assert.strictEqual(viewportReport(first.key, rows, undefined).report, false);
     });
+  });
+});
+
+suite('installHolders', () => {
+  const st = (kind: string, name: string, extra: object = {}) => ({
+    kind,
+    name,
+    pinned: null,
+    state: 'installed',
+    outputs: [],
+    ...extra,
+  });
+  const scope = {
+    status: [
+      st('bundle', 'pack', { pinned: 'ghcr.io/o/bundles/pack:1' }),
+      st('skill', 'pr', { pinned: 'ghcr.io/o/skills/pr:1' }),
+    ],
+    declared: { 'skill:pr': 'ghcr.io/o/skills/pr:2' },
+  };
+  test('dependency-only: bundle and requiring parents split, each resolved to its repo', () => {
+    const item = st('rule', 'style', {
+      direct: false,
+      source: 'bundle: ghcr.io/o/bundles/pack',
+      required_by: [
+        { kind: 'bundle', name: 'pack' },
+        { kind: 'skill', name: 'pr' },
+        { kind: 'agent', name: 'gone' },
+      ],
+    });
+    assert.deepStrictEqual(installHolders(item, scope), {
+      viaBundles: ['ghcr.io/o/bundles/pack'],
+      // declared ref wins over pinned; an unknown parent keeps a null repo.
+      requiredBy: [
+        { kind: 'skill', name: 'pr', repo: 'ghcr.io/o/skills/pr' },
+        { kind: 'agent', name: 'gone', repo: null },
+      ],
+    });
+  });
+  test('direct row has no holders even with parents — its Uninstall must stay', () => {
+    const item = st('rule', 'style', {
+      direct: true,
+      required_by: [
+        { kind: 'bundle', name: 'pack' },
+        { kind: 'skill', name: 'pr' },
+      ],
+    });
+    const held = installHolders(item, scope);
+    assert.deepStrictEqual(held, {
+      viaBundles: [],
+      requiredBy: [],
+      // …but its parents feed the Uninstall tooltip (grim keeps the files).
+      alsoRequiredBy: ['bundle/pack', 'skill/pr'],
+    });
+    assert.strictEqual(isHeld(held), false);
+    const lone = installHolders(st('rule', 'x', { direct: true, required_by: [] }), scope);
+    assert.deepStrictEqual(lone, { viaBundles: [], requiredBy: [] });
+  });
+  test('fallback: absent or null required_by parses the source prose', () => {
+    const src = { source: 'bundle: ghcr.io/o/b/x' };
+    for (const item of [st('skill', 's', src), st('skill', 's', { ...src, required_by: null })]) {
+      assert.deepStrictEqual(installHolders(item, scope), {
+        viaBundles: ['ghcr.io/o/b/x'],
+        requiredBy: [],
+      });
+    }
   });
 });

@@ -38,7 +38,14 @@ import {
   revalidateIndicator,
   type ResultsWindow,
 } from '../webview/render';
-import type { CardVM, GrimOrigin, SidebarState, ViewOptions } from '../webview/protocol';
+import type {
+  BundleMemberVM,
+  CardVM,
+  GrimOrigin,
+  InstallVM,
+  SidebarState,
+  ViewOptions,
+} from '../webview/protocol';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 import {
@@ -1499,6 +1506,145 @@ suite('sidebar split rendering (item 3)', () => {
 });
 
 suite('details rendering', () => {
+  const held = (overrides: Partial<InstallVM>): InstallVM => ({
+    scope: 'global',
+    version: '1.0.0',
+    updateAvailable: false,
+    clients: [],
+    state: 'installed',
+    kind: 'rule',
+    name: 'style',
+    viaBundles: [],
+    ...overrides,
+  });
+
+  test('dependency-held row: holder nav button in place of Uninstall/Update', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          installs: [
+            held({
+              updateAvailable: true,
+              state: 'outdated',
+              requiredBy: [{ kind: 'skill', name: '<b>pr</b>', repo: 'ghcr.io/o/skills/pr' }],
+            }),
+          ],
+        }),
+      ),
+    );
+    // "Required by" + the holder's kind icon, opening the holder — like Bundle.
+    assert.match(
+      html,
+      /class="via-bundle-btn" data-action="open-details" data-repo="ghcr\.io\/o\/skills\/pr"[^>]*title="Installed as a dependency of skill\/&lt;b&gt;pr&lt;\/b&gt;[^"]*"><span class="btn-label">Required by<\/span><span class="codicon codicon-sparkle">/,
+    );
+    assert.ok(!html.includes('data-action="uninstall"'));
+    // Update moves to the row gear, exactly as for a via-bundle row.
+    assert.ok(html.includes('data-action="scope-gear"'));
+    assert.ok(!html.includes('scope-required-by'), 'no stray line under the scope box');
+  });
+
+  test('bundle holder wins over a requiring one; an unnamed holder repo is inert', async () => {
+    const both = await litHtml(
+      renderDetails(
+        detailsVM({
+          installs: [
+            held({
+              viaBundles: ['ghcr.io/o/bundles/pack'],
+              requiredBy: [{ kind: 'skill', name: 'pr', repo: 'ghcr.io/o/skills/pr' }],
+            }),
+          ],
+        }),
+      ),
+    );
+    assert.ok(both.includes('data-repo="ghcr.io/o/bundles/pack"'));
+    assert.ok(both.includes('<span class="btn-label">Bundle</span>'));
+    const inert = await litHtml(
+      renderDetails(
+        detailsVM({ installs: [held({ requiredBy: [{ kind: 'agent', name: 'a', repo: null }] })] }),
+      ),
+    );
+    assert.match(inert, /class="via-bundle-btn"[^>]*disabled/);
+    assert.ok(!inert.includes('data-action="open-details" data-repo'));
+  });
+
+  test('DEPENDENCIES tab: boxes like bundle contents; always present, disabled when empty', async () => {
+    const dep = (name: string, repo: string | null) => ({
+      kind: 'rule',
+      name,
+      id: `../rules/${name}:1`,
+      version: '1',
+      repo,
+      description: null,
+    });
+    const deps = await litHtml(
+      renderDetails(
+        detailsVM({ dependencies: [dep('style', 'ghcr.io/a/rules/style'), dep('<b>x</b>', null)] }),
+      ),
+    );
+    assert.ok(deps.includes('<button class="tab" data-tab="dependencies">DEPENDENCIES</button>'));
+    assert.ok(deps.includes('id="panel-dependencies"'));
+    // Lists live in tabs only — no rail copy.
+    assert.ok(!deps.includes('rail-title">DEPENDENCIES'));
+    assert.strictEqual(deps.match(/class="member-box"/g)?.length, 2);
+    assert.strictEqual(deps.match(/data-repo="ghcr\.io\/a\/rules\/style"/g)?.length, 1);
+    assert.ok(deps.includes('&lt;b&gt;x&lt;/b&gt;'));
+    assert.ok(!deps.includes('<b>x</b>'));
+    const cases: [BundleMemberVM[] | null, string][] = [
+      [[], 'No dependencies'],
+      [null, 'Dependencies unknown'],
+    ];
+    for (const [dependencies, title] of cases) {
+      const none = await litHtml(renderDetails(detailsVM({ dependencies })));
+      assert.ok(
+        none.includes(
+          `<button class="tab" data-tab="dependencies" disabled title="${title}">DEPENDENCIES</button>`,
+        ),
+      );
+      assert.ok(!none.includes('id="panel-dependencies"'));
+    }
+  });
+
+  test('direct install something else needs: every Uninstall says the files stay', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          installs: [
+            held({ updateAvailable: true, state: 'outdated', alsoRequiredBy: ['rule/<b>c</b>'] }),
+          ],
+        }),
+      ),
+    );
+    // Update leads; its dropdown Uninstall carries the escaped tooltip.
+    assert.ok(html.includes('data-action="update"'));
+    assert.match(
+      html,
+      /data-action="uninstall"[^>]*title="Also required by rule\/&lt;b&gt;c&lt;\/b&gt; — uninstalling keeps it installed as a dependency"/,
+    );
+    const plain = await litHtml(renderDetails(detailsVM({ installs: [held({})] })));
+    assert.match(plain, /data-action="uninstall"/);
+    assert.ok(!plain.includes('Also required by'));
+  });
+
+  test('pre-add note names what an install also brings in', async () => {
+    const bare = await litHtml(
+      renderDetails(
+        detailsVM({
+          dependencies: [
+            {
+              kind: 'rule',
+              name: 'style',
+              id: 'r/style:1',
+              version: '1',
+              repo: null,
+              description: null,
+            },
+          ],
+        }),
+      ),
+    );
+    assert.ok(bare.includes('This will also install rule/style'));
+  });
+
   test('header without stars: name, badge, version, repo path, actions', async () => {
     const html = await litHtml(renderDetails(detailsVM()));
     assert.ok(html.includes('grim-usage'));
@@ -1817,7 +1963,7 @@ suite('details rendering', () => {
     );
     assert.ok(html.includes('data-tab="contents"'));
     assert.ok(html.includes('CONTENTS'));
-    assert.ok(html.includes('member-row'));
+    assert.ok(html.includes('member-box'));
   });
 
   test('null fields render "Not provided"; empty Resources panel is omitted', async () => {
@@ -2118,32 +2264,6 @@ suite('details rendering', () => {
     // The unresolved box carries no action / role / tabindex.
     assert.ok(html.includes('<div class="member-box">'), 'unresolved box stays plain');
     assert.ok(!html.includes('<button class="member-link"'), 'no nested member-link button');
-  });
-
-  test('rail Contents member row is a whole-row button when resolved (item 1)', async () => {
-    const html = await litHtml(
-      renderDetails(
-        detailsVM({
-          kind: 'bundle',
-          contentMarkdown: null,
-          members: [
-            {
-              kind: 'skill',
-              name: 'grim-usage',
-              id: '../skills/grim-usage:1',
-              version: '1',
-              repo: 'ghcr.io/grimoire-rs/skills/grim-usage',
-              description: null,
-            },
-          ],
-        }),
-      ),
-    );
-    assert.ok(
-      html.includes(
-        '<div class="member-row" data-action="open-details" data-repo="ghcr.io/grimoire-rs/skills/grim-usage" role="button" tabindex="0">',
-      ),
-    );
   });
 
   test('keyword chips are clickable search-tag buttons (item 2)', async () => {

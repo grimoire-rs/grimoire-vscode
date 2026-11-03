@@ -14,6 +14,7 @@ import type {
   HostToSidebar,
   RatingVM,
   RegistryVM,
+  RequiredByVM,
   RowState,
   Scope,
   ScopesVM,
@@ -58,6 +59,10 @@ export interface WireStatusItem {
   kind: string;
   name: string;
   source?: string;
+  /** Structured "why is this here" (additive; absent on a grim predating
+   *  dependencies). `required_by` null = graph not computable from the lock. */
+  direct?: boolean;
+  required_by?: { kind: string; name: string }[] | null;
   // null for unlocked artifacts (grim emits `pinned: null`). Never deref raw.
   pinned: string | null;
   state: string;
@@ -218,6 +223,48 @@ export function declaredKey(kind: string, name: string): string {
   return `${kind.toLowerCase()}:${name}`;
 }
 
+/**
+ * Who holds a non-direct install, from grim status `direct` + `required_by`.
+ * Each parent resolves to its repo through its own status row in the same scope
+ * (declared ref first, else pinned): bundle parents become `viaBundles`, the
+ * rest `requiredBy`. A direct row has no holders — grim's uninstall drops its
+ * declaration even while something still requires it, so its parents land in
+ * `alsoRequiredBy` for the Uninstall tooltip instead. With `required_by` absent
+ * (older grim) or null (graph incomputable from the lock) only the `source`
+ * prose is left, which names bundle repos and never dependency parents.
+ */
+export function installHolders(
+  item: WireStatusItem,
+  scope: Pick<ScopeStatus, 'status' | 'declared'>,
+): Pick<InstallVM, 'viaBundles' | 'requiredBy' | 'alsoRequiredBy'> & {
+  requiredBy: RequiredByVM[];
+} {
+  if (!item.required_by) {
+    return { viaBundles: parseViaBundles(item.source), requiredBy: [] };
+  }
+  const viaBundles: string[] = [];
+  const requiredBy: RequiredByVM[] = [];
+  if (item.direct === true) {
+    const also = item.required_by.map((p) => `${p.kind}/${p.name}`);
+    return also.length > 0
+      ? { viaBundles, requiredBy, alsoRequiredBy: also }
+      : { viaBundles, requiredBy };
+  }
+  for (const parent of item.required_by) {
+    const row = (scope.status ?? []).find((s) => s.kind === parent.kind && s.name === parent.name);
+    const ref = row ? (scope.declared[declaredKey(row.kind, row.name)] ?? row.pinned) : null;
+    const repo = ref ? refRepo(ref) : null;
+    if (parent.kind === 'bundle') {
+      if (repo) {
+        viaBundles.push(repo);
+      }
+    } else {
+      requiredBy.push({ kind: parent.kind, name: parent.name, repo });
+    }
+  }
+  return { viaBundles, requiredBy };
+}
+
 export interface ScopeStatus {
   scope: Scope;
   /** Null when the scope's install state is unknown (see ScopeSnapshot.status);
@@ -268,7 +315,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
       state: item.state,
       kind: item.kind,
       name: item.name,
-      viaBundles: parseViaBundles(item.source),
+      ...installHolders(item, scope),
       floating: item.pinned === null,
       clientsMissing: item.clients_missing ?? [],
       clientsExtra: item.clients_extra ?? [],
@@ -1950,6 +1997,38 @@ export function viaBundleTitle(viaBundles: string[]): string {
   return `Installed via bundle ${viaBundles.join(', ')} — uninstall the bundle to remove it`;
 }
 
+/** True when something else holds this install (a bundle, or an artifact that
+ *  requires it), so it can't be uninstalled or switched on its own. */
+export function isHeld(install: Pick<InstallVM, 'viaBundles' | 'requiredBy'>): boolean {
+  return install.viaBundles.length > 0 || (install.requiredBy?.length ?? 0) > 0;
+}
+
+/** Tooltip naming what holds a held install; the bundle wins, as in grim's
+ *  `source` precedence. */
+export function heldTitle(install: Pick<InstallVM, 'viaBundles' | 'requiredBy'>): string {
+  if (install.viaBundles.length > 0) {
+    return viaBundleTitle(install.viaBundles);
+  }
+  const names = (install.requiredBy ?? []).map((p) => `${p.kind}/${p.name}`).join(', ');
+  return `Installed as a dependency of ${names} — uninstall that to remove it`;
+}
+
+/** Tooltip for a direct install's Uninstall when something else still needs it:
+ *  grim drops the declaration but keeps the files. Undefined otherwise. */
+export function uninstallTitle(install: Pick<InstallVM, 'alsoRequiredBy'>): string | undefined {
+  const also = install.alsoRequiredBy ?? [];
+  return also.length > 0
+    ? `Also required by ${also.join(', ')} — uninstalling keeps it installed as a dependency`
+    : undefined;
+}
+
+/** Muted sub-line for a held install's disabled Uninstall menu row. */
+export function heldHint(install: Pick<InstallVM, 'viaBundles' | 'requiredBy'>): string {
+  return install.viaBundles.length > 0
+    ? `via ${viaBundleNames(install.viaBundles)}`
+    : `required by ${(install.requiredBy ?? []).map((p) => p.name).join(', ')}`;
+}
+
 export interface MenuItem {
   label: string;
   /** Omitted => disabled row (no action wiring). */
@@ -2019,17 +2098,19 @@ export function cardMenuEntries(
   }
   for (const install of card.installs) {
     const label = install.scope === 'project' ? 'Project' : 'Global';
-    if (install.viaBundles.length > 0) {
+    if (isHeld(install)) {
       entries.push({
         label: `Uninstall (${label})`,
-        title: viaBundleTitle(install.viaBundles),
-        hint: `via ${viaBundleNames(install.viaBundles)}`,
+        title: heldTitle(install),
+        hint: heldHint(install),
       });
     } else {
+      const also = install.alsoRequiredBy ?? [];
       entries.push({
         label: `Uninstall (${label})`,
         action: 'uninstall',
         data: { kind: install.kind, name: install.name, scope: install.scope },
+        ...(also.length > 0 ? { hint: `also required by ${also.join(', ')}` } : {}),
       });
       // Deprecated with a named successor → offer a one-click switch next to
       // Uninstall, per scope (install replacement here, then uninstall this).
@@ -2068,7 +2149,7 @@ export function cardMenuEntries(
  * other row's gear is empty and hidden (see scopeGear).
  */
 export function scopeRowMenuEntries(install: InstallVM | null): MenuEntry[] {
-  if (!install || install.viaBundles.length === 0) {
+  if (!install || !isHeld(install)) {
     return [];
   }
   const entries: MenuEntry[] = [];
@@ -2552,6 +2633,7 @@ export interface DetailsSources {
     documentation?: string | null;
     compatibility?: string | null;
     support?: WireSupport;
+    requires?: { kind: string; name: string; id: string }[] | null;
   } | null;
   fetch: {
     ref: string;
@@ -2671,6 +2753,28 @@ export function isInteractiveTarget(el: { closest(selector: string): unknown } |
   return (el?.closest(INTERACTIVE_SELECTOR) ?? null) !== null;
 }
 
+/** Resolves members (a bundle's, or an artifact's `requires`) against the
+ *  declaring repo and enriches them from the catalog. Clickable whenever the id
+ *  resolves — the details panel opens a non-catalog repo like a deep link. */
+function enrichMembers(
+  repo: string,
+  members: BundleMemberVM[],
+  catalog: WireSearchItem[],
+): BundleMemberVM[] {
+  for (const member of members) {
+    const resolved = resolveMemberRepo(repo, member.id);
+    const item =
+      catalog.find((i) => i.repo === resolved) ??
+      catalog.find(
+        (i) => artifactName(i.repo) === member.name && normalizeKind(i.kind) === member.kind,
+      ) ??
+      null;
+    member.repo = item?.repo ?? resolved;
+    member.description = item?.description ?? item?.summary ?? null;
+  }
+  return members;
+}
+
 /** Merges describe/search/fetch sources into the details view model. */
 export function buildDetailsVM(sources: DetailsSources): DetailsVM {
   const { repo, searchItem, describe, fetch, installs, scopes } = sources;
@@ -2681,19 +2785,7 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
   let members: BundleMemberVM[] = [];
   if (fetch) {
     if (kind === 'bundle') {
-      members = parseBundleMembers(fetch.content);
-      const catalog = sources.catalog ?? [];
-      for (const member of members) {
-        const resolved = resolveMemberRepo(repo, member.id);
-        const item =
-          catalog.find((i) => i.repo === resolved) ??
-          catalog.find(
-            (i) => artifactName(i.repo) === member.name && normalizeKind(i.kind) === member.kind,
-          ) ??
-          null;
-        member.repo = item?.repo ?? resolved;
-        member.description = item?.description ?? item?.summary ?? null;
-      }
+      members = enrichMembers(repo, parseBundleMembers(fetch.content), sources.catalog ?? []);
       // The raw manifest sits under the member boxes in the CONTENTS tab.
       contentJson = prettyJson(fetch.content);
     } else {
@@ -2746,6 +2838,18 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     documentation: describe?.documentation ?? null,
     compatibility: describe?.compatibility ?? null,
     support: readSupport(describe?.support),
+    dependencies: describe?.requires
+      ? enrichMembers(
+          repo,
+          describe.requires.map((r) => ({
+            ...r,
+            version: refTag(r.id),
+            repo: null,
+            description: null,
+          })),
+          sources.catalog ?? [],
+        )
+      : null,
     keywords: describe?.keywords ?? frontmatter?.keywords ?? null,
     logoUri: sources.logoUri,
     // Only `grim search` publishes a rating or a pull count; describe/fetch

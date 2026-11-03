@@ -70,6 +70,15 @@ export interface InstallVM {
   name: string;
   /** Bundle repos providing this member (status `source` "bundle: …"); empty for direct installs. */
   viaBundles: string[];
+  /** Non-bundle artifacts holding this dependency-only install (grim status
+   *  `required_by`, `direct: false`), each resolved to its repo through the same
+   *  scope's status — null when that repo can't be named. Empty or absent for a
+   *  direct install, a bundle-only one, or a grim without the field. */
+  requiredBy?: RequiredByVM[];
+  /** "kind/name" of what else needs a DIRECT install (bundles included).
+   *  Uninstalling it only drops the declaration — grim keeps the files for
+   *  them — so the Uninstall control says so. Absent when nothing else does. */
+  alsoRequiredBy?: string[];
   /** True when the lock has no pinned entry (grim `pinned: null`) — the install
    *  tracks a floating tag rather than an exact pin. */
   floating?: boolean;
@@ -402,11 +411,7 @@ export type HostToSidebar =
 
 /** The title-bar view controls, named after what they do. */
 export type ViewAction =
-  | 'toggle-density'
-  | 'toggle-mode'
-  | 'toggle-grouping'
-  | 'expand-all'
-  | 'collapse-all';
+  'toggle-density' | 'toggle-mode' | 'toggle-grouping' | 'expand-all' | 'collapse-all';
 
 export type Density = 'comfortable' | 'compact';
 export type ViewMode = 'list' | 'tree';
@@ -447,6 +452,13 @@ export interface ViewFlags {
    *  so the tree keeps the same number of title-bar icons as the list and
    *  nothing shifts when the mode flips. */
   anyExpanded: boolean;
+}
+
+/** One artifact holding a dependency-only install. */
+export interface RequiredByVM {
+  kind: string;
+  name: string;
+  repo: string | null;
 }
 
 export interface BundleMemberVM {
@@ -521,6 +533,9 @@ export interface DetailsVM {
    *  with no digest change on any artifact version — the details cache already
    *  compares the companion digest, so nothing special is needed to see it. */
   support: SupportVM;
+  /** grim describe `requires` — what an add also installs — enriched like bundle
+   *  members. Absent or null when unknown (foreign manifest, older grim). */
+  dependencies?: BundleMemberVM[] | null;
   /** Tags panel (keywords). */
   keywords: string[] | null;
   /** data: URI for the artifact logo, when the package ships one. */

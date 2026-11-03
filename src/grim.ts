@@ -256,6 +256,8 @@ export interface DescribeResult {
   // serializes all four keys (null when unset), so only the object itself is
   // optional here, for a grim predating the surface.
   support?: SupportChannels;
+  /** Declared dependencies `[{kind, name, id}]`; null for a foreign manifest. */
+  requires?: { kind: string; name: string; id: string }[] | null;
 }
 
 /** `DescribeResult.support` — the companion manifest's channel links. Naming
@@ -278,7 +280,8 @@ export interface ActionReport {
 }
 
 /** `grim uninstall` single-item report status (bundle members are a no-op). */
-export type UninstallStatus = 'uninstalled' | 'kept-by-bundle' | 'not-installed';
+export type UninstallStatus =
+  'uninstalled' | 'kept-by-bundle' | 'kept-by-dependency' | 'not-installed';
 /** `grim remove` single-item report status (undeclare a bundle). */
 export type RemoveStatus = 'removed' | 'absent';
 
@@ -949,6 +952,9 @@ export function uninstallNotice(report: ActionReport): string | null {
   const name = report.name ?? 'This artifact';
   if (report.status === 'kept-by-bundle') {
     return `${name} is installed via a bundle — uninstall the bundle to remove it.`;
+  }
+  if (report.status === 'kept-by-dependency') {
+    return `${name} is required by another installed artifact — remove that one first.`;
   }
   if (report.status === 'not-installed') {
     return `${name} was not installed.`;
