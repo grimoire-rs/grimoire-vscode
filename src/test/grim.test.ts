@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { recordedSettingsRaw } from './fixtures/recorded';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -22,6 +23,9 @@ import {
   positionalOf,
   rateArgs,
   refusedNames,
+  refusedPieces,
+  dialogText,
+  refusedPiecesDetail,
   editRegistrySteps,
   registryAddArgs,
   registrySetArgs,
@@ -37,6 +41,8 @@ import {
   uninstallNotice,
   updateArgs,
   withFlags,
+  withRefusedPieces,
+  type RefusedPiece,
   type ConfigEntry,
   type ConfigWriteResult,
   type ItemsEnvelope,
@@ -1393,6 +1399,167 @@ suite('incompleteSources', () => {
     for (const env of [null, undefined, 'x', 7, []]) {
       assert.deepStrictEqual(incompleteSources(env, 'WARN x'), ['WARN x'], String(env));
       assert.deepStrictEqual(incompleteSources(env, undefined), [], String(env));
+    }
+  });
+});
+
+suite('refused settings pieces', () => {
+  const raw = recordedSettingsRaw;
+  const exitOf = (name: string): number | undefined =>
+    (JSON.parse(raw('exits')) as Record<string, number>)[name];
+  const piece = (extra: Partial<RefusedPiece> = {}): RefusedPiece => ({
+    package: 'team-defaults',
+    client: 'claude',
+    file: '.claude/settings.local.json',
+    pointer: '/model',
+    element: null,
+    marked: 'overwrite',
+    state: 'modified',
+    ...extra,
+  });
+  const errorDoc = (pieces: unknown, extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({ error: { code: 'data', exit: 65, message: 'm', pieces, ...extra } });
+  const parsed = (stdout: string) => {
+    const r = parseReport<unknown>(stdout, 65, '');
+    assert.strictEqual(r.ok, false);
+    return r as Extract<typeof r, { ok: false; kind: 'error' }>;
+  };
+
+  test('the recorded modified refusal parses to its piece, forceable, without values', () => {
+    assert.strictEqual(exitOf('install-modified'), 65);
+    const r = parsed(raw('install-modified'));
+    assert.deepStrictEqual(r.pieces, [piece()]);
+    assert.strictEqual(r.forceable, true);
+    assert.strictEqual(r.reason, 'modified');
+    assert.strictEqual(r.exitCode, 65);
+    assert.deepStrictEqual(Object.keys(r.pieces?.[0] ?? {}).sort(), Object.keys(piece()).sort());
+    assert.strictEqual(isForceable(r), true);
+  });
+
+  test('a conflict refusal carries its pieces but stays non-forceable', () => {
+    const doc = errorDoc([piece({ file: null, marked: 'conflict', state: null })], {
+      code: 'config',
+      exit: 78,
+    });
+    const r = parseReport<unknown>(doc, 78, '') as Extract<
+      ReturnType<typeof parseReport>,
+      { ok: false; kind: 'error' }
+    >;
+    assert.strictEqual(r.exitCode, 78);
+    assert.strictEqual(r.pieces?.[0]?.marked, 'conflict');
+    assert.strictEqual(r.pieces?.[0]?.file, null);
+    assert.strictEqual(isForceable(r), false);
+  });
+
+  test('malformed pieces are dropped, valid siblings are kept', () => {
+    assert.ok(!('pieces' in parsed(errorDoc('nope'))));
+    assert.ok(!('pieces' in parsed(errorDoc([]))));
+    assert.ok(
+      !(
+        'pieces' in
+        parsed(errorDoc([null, 7, { client: 'claude' }, piece({ pointer: 5 as never })]))
+      ),
+    );
+    assert.deepStrictEqual(parsed(errorDoc([{ client: 1 }, piece()])).pieces, [piece()]);
+    assert.strictEqual(parsed(errorDoc([piece()], { forceable: false })).forceable, false);
+  });
+
+  test('refusedPieces reads the update report, refusedNames the row', () => {
+    const report = JSON.parse(raw('update-modified')) as unknown;
+    assert.deepStrictEqual(refusedPieces(report), [piece()]);
+    assert.deepStrictEqual(refusedNames(report), ['team-defaults']);
+    assert.strictEqual(exitOf('update-modified'), 65);
+    assert.deepStrictEqual(refusedPieces(null), []);
+    assert.deepStrictEqual(refusedPieces({ pieces: 'x' }), []);
+    assert.deepStrictEqual(refusedPieces({ items: [] }), []);
+  });
+
+  test('refusedPiecesDetail lists package, client, file and pointer', () => {
+    assert.strictEqual(refusedPiecesDetail([]), '');
+    assert.strictEqual(
+      refusedPiecesDetail([piece()]),
+      'Refused settings values:\nteam-defaults: claude .claude/settings.local.json /model',
+    );
+    assert.strictEqual(
+      refusedPiecesDetail([piece({ element: 'Bash(ls)' })]),
+      'Refused settings values:\nteam-defaults: claude .claude/settings.local.json /model [Bash(ls)]',
+    );
+    assert.strictEqual(
+      refusedPiecesDetail([piece({ file: null })]),
+      'Refused settings values:\nteam-defaults: claude (conflict) /model',
+    );
+  });
+
+  test('bidi, zero-width, separator and BOM characters become spaces', () => {
+    assert.strictEqual(dialogText('a\u202eb\u2066c\u200bd\u2028e\ufeff'), 'a b c d e ');
+    const out = refusedPiecesDetail([piece({ client: 'c\u202e', element: 'e\u200b' })]);
+    assert.ok(!/[\u202e\u200b]/.test(out));
+  });
+
+  test('every other format, surrogate and separator character becomes a space', () => {
+    assert.strictEqual(
+      dialogText('a\u00adb\u061cc\u180ed\ufff9e\u{e0041}f\ud800g\udc00h\u{1d173}i\u2029j'),
+      'a b c d e f g h i j',
+    );
+  });
+
+  test('default-ignorable characters outside Cf become spaces too', () => {
+    assert.strictEqual(dialogText('a\u034fb\u3164c\ufe0fd\u{e0100}e'), 'a b c d e');
+  });
+
+  test('a huge value is capped by code points, and a non-string is read as text', () => {
+    assert.strictEqual(dialogText('x'.repeat(5_000_000), 3), 'xxx\u2026');
+    assert.strictEqual(dialogText('\u{1f600}'.repeat(100), 2), '\u{1f600}\u{1f600}\u2026');
+    assert.strictEqual(dialogText(42 as unknown as string), '42');
+  });
+
+  test('a notification link or a codicon in a value stays plain text', () => {
+    assert.strictEqual(dialogText('[x](command:y) $(alert)'), '[x] (command:y) $ (alert)');
+  });
+
+  test('the cap counts code points and never splits a surrogate pair', () => {
+    assert.strictEqual(dialogText('\u{1f600}\u{1f600}\u{1f600}', 2), '\u{1f600}\u{1f600}\u2026');
+    assert.strictEqual(dialogText('\u{1f600}\u{1f600}', 2), '\u{1f600}\u{1f600}');
+  });
+
+  test('a long field is capped with an ellipsis', () => {
+    const out = refusedPiecesDetail([piece({ pointer: '/' + 'x'.repeat(10_000) })]);
+    assert.ok(out.length < 400);
+    assert.ok(out.includes('…'));
+    assert.strictEqual(dialogText('abcdef', 3), 'abc…');
+  });
+
+  test('control characters in any field become one space', () => {
+    const out = refusedPiecesDetail([piece({ pointer: '/a\nb\u001bc\u009bd\u007fe' })]);
+    assert.strictEqual(
+      out,
+      'Refused settings values:\nteam-defaults: claude .claude/settings.local.json /a b c d e',
+    );
+  });
+
+  test('past max, the rest collapse into one line', () => {
+    const many = Array.from({ length: 12 }, (_, i) => piece({ pointer: `/p${i}` }));
+    const lines = refusedPiecesDetail(many, 10).split('\n');
+    assert.strictEqual(lines.length, 12);
+    assert.strictEqual(lines[10], 'team-defaults: claude .claude/settings.local.json /p9');
+    assert.strictEqual(lines[11], '…and 2 more');
+  });
+
+  test('withRefusedPieces appends after a blank line and is a no-op for none', () => {
+    assert.strictEqual(withRefusedPieces('detail', []), 'detail');
+    assert.strictEqual(
+      withRefusedPieces('detail', [piece()]),
+      'detail\n\nRefused settings values:\nteam-defaults: claude .claude/settings.local.json /model',
+    );
+  });
+
+  test('the user value never reaches the dialog text', () => {
+    const fromError = parsed(raw('install-modified')).pieces ?? [];
+    const fromReport = refusedPieces(JSON.parse(raw('update-modified')));
+    for (const pieces of [fromError, fromReport]) {
+      const text = withRefusedPieces('detail', pieces);
+      assert.ok(!text.includes('opus'));
+      assert.ok(!text.includes('sonnet'));
     }
   });
 });

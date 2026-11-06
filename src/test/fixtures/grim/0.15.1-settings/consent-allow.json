@@ -1,0 +1,8 @@
+{
+  "workspace": "/home/u/project",
+  "action": "consented",
+  "hooks": [
+    "settings:team-defaults@ghcr.io/acme/settings/team-defaults"
+  ],
+  "record": "/home/u/.grimoire/hooks/consent/3d3556177f977a47192d10ddb0bcd0f08fed7517f3bba090799d36cad8405cad.json"
+}

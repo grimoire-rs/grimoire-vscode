@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { recordedSettings } from './fixtures/recorded';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -11,7 +12,7 @@ import {
   ScopeService,
   withGlobalFlag,
 } from '../scopes';
-import type { Snapshot } from '../scopes';
+import type { ScopeSnapshot, Snapshot } from '../scopes';
 import { artifactName } from '../webview/model';
 import type {
   DetailsVM,
@@ -34,6 +35,7 @@ import {
   type GrimResult,
   type ItemsEnvelope,
   type Scope,
+  type StatusItem,
   type UpdateEntry,
 } from '../grim';
 import { DEFAULT_EXECUTABLE } from '../config';
@@ -46,6 +48,9 @@ import {
   REGISTRY_EDIT_GRIM_VERSION,
 } from '../installer';
 import { offerForcedRetry, offerRefusedRetry } from '../views/forceRetry';
+import { HookPrompter } from '../views/hookPrompt';
+import { reportGrimFailure } from '../notify';
+import { offerLock } from '../views/staleLock';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 
 const isWindows = process.platform === 'win32';
@@ -1653,6 +1658,55 @@ suite('extension integration', () => {
     assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
   });
 
+  test('pickVersion wiring: a refused settings value is named in the Overwrite modal, never its content', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'describe', {
+      ref: 'ghcr.io/acme/settings/team-defaults:latest',
+      digest: 'sha256:1',
+      kind: 'settings',
+      name: 'team-defaults',
+      title: null,
+      description: null,
+      summary: null,
+      version: '1.5.0',
+      license: null,
+      repository: null,
+      revision: null,
+      created: null,
+      keywords: null,
+      deprecated: null,
+      replaced_by: null,
+      tags: ['1.5.0', '1.4.2'],
+      annotations: {},
+    });
+    // grim's recorded refusal, byte for byte, with its recorded exit code.
+    const recorded = recordedSettings('install-modified');
+    canned(stub, 'add', recorded);
+    const undoExit = cannedExit(stub, 'add', 65);
+    const window = vscode.window as unknown as { showQuickPick: unknown };
+    const originalQuickPick = window.showQuickPick;
+    window.showQuickPick = async () => '1.4.2';
+    const dialogs = stubForceDialogs(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'pickVersion',
+        repo: 'ghcr.io/acme/settings/team-defaults',
+      });
+      await waitFor(() => dialogs.warningCalls.length > 0);
+    } finally {
+      window.showQuickPick = originalQuickPick;
+      dialogs.restore();
+      undoExit();
+      restoreAddUninstall();
+    }
+    const detail = dialogs.warningCalls[0]?.options?.detail ?? '';
+    assert.ok(detail.includes('Refused settings values:'), `names the values: ${detail}`);
+    assert.ok(detail.includes('/model'), `names the pointer: ${detail}`);
+    assert.ok(!detail.includes('opus'), `never the user's value: ${detail}`);
+  });
+
   test('pickVersion wiring: a plain refusal falls through to the normal error toast', async function () {
     this.timeout(20000);
     const api = await activateExtension();
@@ -1910,6 +1964,37 @@ suite('extension integration', () => {
     const [call] = calls;
     assert.ok(call?.[0]?.includes('one, two'), `names every modified artifact: ${call?.[0]}`);
     assert.ok(!call?.some((c) => c.startsWith('Open ')), 'no single artifact to open');
+  });
+
+  test('a refused settings package name is flattened in the dialog and the button', async () => {
+    const name = 'evil\n\u202Ename';
+    const scopes = {
+      cachedSnapshot: () => ({
+        project: {
+          status: [{ kind: 'settings', name, state: 'modified', pinned: null, outputs: [] }],
+          declared: { [`settings:${name}`]: 'ghcr.io/o/settings/evil:1.0.0' },
+        },
+      }),
+    } as unknown as ScopeService;
+    const errors = captureErrors();
+    try {
+      await offerModifiedRefusal(scopes, 'project', 'update', { refused: [name] });
+      await offerModifiedRefusal(scopes, 'project', 'update', { message: 'bad\u202E\nmessage' });
+    } finally {
+      errors.restore();
+    }
+    assert.strictEqual(errors.calls.length, 2);
+    for (const call of errors.calls) {
+      for (const text of call) {
+        assert.ok(
+          !/[\n\u202E]/.test(text),
+          `no line break or bidi override: ${JSON.stringify(text)}`,
+        );
+      }
+    }
+    assert.ok(errors.calls[0]?.[0]?.includes('evil  name'));
+    assert.ok(errors.calls[0]?.includes('Open evil  name'));
+    assert.ok(errors.calls[1]?.[0]?.includes('bad  message'));
   });
 
   // --- Complete Install's refusal (offerInstallRefusal) ---
@@ -2472,6 +2557,554 @@ suite('extension integration', () => {
     assert.strictEqual(argvLines(stub).length, 0, 'declining issues no second grim call');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'declining shows no error toast');
     assert.strictEqual(onDoneCalled, false, 'nothing changed, so no refresh is triggered');
+  });
+
+  test('force-confirm: control, bidi and codicon text in the name and message stays plain', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs(undefined);
+    const refusal = { ...forceableRefusal(), message: 'line one\nline two\u202eevil $(alert)' };
+    try {
+      await offerForcedRetry(
+        refusal,
+        addArgs('ghcr.io/acme/bad\u202ename$(x)'),
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.strictEqual(call.message, 'Grimoire: overwrite `bad name$ (x)`?');
+    const detail = call.options?.detail ?? '';
+    assert.ok(detail.includes('local changes to `bad name$ (x)`'), detail);
+    assert.ok(detail.includes('line one line two evil $ (alert)'), detail);
+    assert.ok(!detail.includes('\u202e'), detail);
+  });
+
+  test('a grim failure toast flattens the message, the output keeps it verbatim', function () {
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const shown: string[] = [];
+    window.showErrorMessage = async (message: string) => {
+      shown.push(message);
+      return undefined;
+    };
+    const lines: string[] = [];
+    const message = 'bad [open](command:x.y)\nnext line $(alert)';
+    try {
+      reportGrimFailure(
+        { ok: false, kind: 'error', code: 'config', exitCode: 78, message },
+        recordingOutput(lines),
+        'grim install',
+      );
+    } finally {
+      window.showErrorMessage = original;
+    }
+    assert.deepStrictEqual(shown, [
+      'Grimoire: grim install: bad [open] (command:x.y) next line $ (alert)',
+    ]);
+    assert.deepStrictEqual(lines, [`error: ${message}`]);
+  });
+
+  test('the no-lock toast flattens the message, the output keeps it verbatim', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const shown: string[][] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      shown.push([message, ...items]);
+      return undefined;
+    };
+    const lines: string[] = [];
+    const message = 'no lock [run](command:x.y)\nnext\u202eline $(alert)';
+    try {
+      const handled = offerLock(
+        { ok: false, kind: 'error', code: 'not-found', exitCode: 79, message, reason: 'no-lock' },
+        installArgs(),
+        'global',
+        api.scopes,
+        recordingOutput(lines),
+        async () => {},
+      );
+      assert.strictEqual(handled, true, 'a no-lock failure is the offer, not the plain toast');
+      await waitFor(() => shown.length === 1);
+    } finally {
+      window.showErrorMessage = original;
+    }
+    assert.deepStrictEqual(shown, [
+      ['Grimoire: grim install: no lock [run] (command:x.y) next line $ (alert)', 'Run grim lock'],
+    ]);
+    assert.deepStrictEqual(lines, [`error: grim install --global: ${message}`]);
+  });
+
+  test('a refused settings update names each refused value, never the value', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    try {
+      handled = await offerRefusedRetry(
+        recordedSettings('update-modified'),
+        updateArgs(['team-defaults']),
+        'project',
+        api.scopes,
+        recordingOutput([]),
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, true, 'the refused row gets the Overwrite confirm');
+    const detail = dialogs.warningCalls[0]?.options?.detail ?? '';
+    assert.ok(
+      detail.includes(
+        'Refused settings values:\nteam-defaults: claude .claude/settings.local.json /model',
+      ),
+      detail,
+    );
+    assert.ok(!detail.includes('opus') && !detail.includes('sonnet'), detail);
+    assert.strictEqual(argvLines(stub).length, 0, 'declining runs no forced retry');
+  });
+
+  // --- hook and settings gate prompts (HookPrompter) ---
+
+  const gateRow = (kind: string, name: string, cause?: string): StatusItem =>
+    ({
+      kind,
+      name,
+      source: 'direct',
+      pinned: `ghcr.io/acme/${name}@sha256:1`,
+      state: cause ? 'gated' : 'installed',
+      outputs: [],
+      clients_missing: [],
+      clients_extra: [],
+      arming: cause ? [{ client: 'claude', cause, message: cause }] : [],
+    }) as unknown as StatusItem;
+
+  const projectOf = (rows: StatusItem[]): ScopeSnapshot =>
+    ({ status: rows }) as unknown as ScopeSnapshot;
+
+  function memento(): vscode.Memento {
+    const store = new Map<string, unknown>();
+    return {
+      keys: () => [...store.keys()],
+      get: (key: string, fallback?: unknown) => (store.has(key) ? store.get(key) : fallback),
+      update: async (key: string, value: unknown) => {
+        store.set(key, value);
+      },
+    } as unknown as vscode.Memento;
+  }
+
+  /** Holds every gate toast open until the test answers it, oldest first. */
+  function stubGateToasts(): {
+    restore: () => Promise<void>;
+    messages: string[];
+    answer: (choice: string | undefined) => void;
+  } {
+    const window = vscode.window as unknown as {
+      showWarningMessage: (...args: unknown[]) => Promise<string | undefined>;
+    };
+    const original = window.showWarningMessage;
+    const messages: string[] = [];
+    const pending: ((choice: string | undefined) => void)[] = [];
+    let closed = false;
+    window.showWarningMessage = (message: unknown) => {
+      messages.push(message as string);
+      return closed ? Promise.resolve(undefined) : new Promise((resolve) => pending.push(resolve));
+    };
+    return {
+      restore: async () => {
+        // Settle any toast a failed test left open while the stub still
+        // answers: a settled toast re-offers, and that toast must not reach
+        // the real window. Only then hand the window back.
+        closed = true;
+        for (const resolve of pending.splice(0)) {
+          resolve(undefined);
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+        window.showWarningMessage = original;
+      },
+      messages,
+      answer: (choice) => pending.shift()?.(choice),
+    };
+  }
+
+  test('gate prompts: one toast at a time, then the next gate', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    const older = projectOf([
+      gateRow('hook', 'guard', 'feature-flag-off'),
+      gateRow('settings', 'old-team', 'feature-flag-off'),
+    ]);
+    const project = projectOf([
+      gateRow('hook', 'guard', 'feature-flag-off'),
+      gateRow('settings', 'team', 'feature-flag-off'),
+    ]);
+    try {
+      const first = prompter.offer(older);
+      await prompter.offer(project);
+      assert.strictEqual(toasts.messages.length, 1, 'a refresh stacks no second toast');
+      assert.ok(toasts.messages[0]?.includes('experimental hooks (guard)'), toasts.messages[0]);
+      toasts.answer(undefined);
+      // The next gate follows the answer without waiting for a refresh, from
+      // the newest snapshot offered while the first toast was open.
+      await waitFor(() => toasts.messages.length === 2);
+      assert.ok(toasts.messages[1]?.includes('settings packages (team)'), toasts.messages[1]);
+      assert.ok(!toasts.messages[1]?.includes('old-team'), toasts.messages[1]);
+      toasts.answer(undefined);
+      await first;
+      await prompter.offer(project);
+      assert.strictEqual(toasts.messages.length, 2, 'each gate at most once per session');
+    } finally {
+      await toasts.restore();
+    }
+  });
+
+  test('gate prompts: consent asked for hooks still asks for a settings package added later', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    try {
+      const first = prompter.offer(
+        projectOf([gateRow('hook', 'guard', 'workspace-not-consented')]),
+      );
+      toasts.answer(undefined);
+      await first;
+      const later = prompter.offer(
+        projectOf([
+          gateRow('hook', 'guard'),
+          gateRow('settings', 'team', 'workspace-not-consented'),
+        ]),
+      );
+      assert.strictEqual(toasts.messages.length, 2, 'the settings package gets its own prompt');
+      assert.ok(toasts.messages[1]?.includes('team'), toasts.messages[1]);
+      toasts.answer(undefined);
+      await later;
+    } finally {
+      await toasts.restore();
+    }
+  });
+
+  test('gate prompts: a No is stored for each kind the gate holds', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const state = memento();
+    fs.rmSync(stub.argvLog, { force: true });
+    const prompter = new HookPrompter(api.scopes, state, recordingOutput([]), async () => {});
+    try {
+      const asked = prompter.offer(
+        projectOf([
+          gateRow('hook', 'guard', 'workspace-not-consented'),
+          gateRow('settings', 'team', 'workspace-not-consented'),
+        ]),
+      );
+      toasts.answer('No');
+      await asked;
+    } finally {
+      await toasts.restore();
+    }
+    assert.strictEqual(state.get('grimoire.hookPrompt.consent.declined'), true);
+    assert.strictEqual(state.get('grimoire.hookPrompt.consent-settings.declined'), true);
+    assert.strictEqual(argvLines(stub).length, 0, 'a No runs no grim command');
+  });
+
+  test('gate prompts: a No leaves a kind the gate does not hold free to ask later', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const state = memento();
+    const prompter = new HookPrompter(api.scopes, state, recordingOutput([]), async () => {});
+    try {
+      const asked = prompter.offer(
+        projectOf([
+          gateRow('hook', 'guard'),
+          gateRow('settings', 'team', 'workspace-not-consented'),
+        ]),
+      );
+      assert.ok(toasts.messages[0]?.includes('guard, team'), toasts.messages[0]);
+      toasts.answer('No');
+      await asked;
+    } finally {
+      await toasts.restore();
+    }
+    assert.strictEqual(state.get('grimoire.hookPrompt.consent-settings.declined'), true);
+    assert.strictEqual(
+      state.get('grimoire.hookPrompt.consent.declined'),
+      undefined,
+      'consent for hooks was never asked',
+    );
+  });
+
+  test('gate prompts: a restricted-mode window is never asked', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    try {
+      await whileUntrusted(async () => {
+        await prompter.offer(projectOf([gateRow('hook', 'guard', 'workspace-not-consented')]));
+      });
+    } finally {
+      await toasts.restore();
+    }
+    assert.strictEqual(toasts.messages.length, 0);
+  });
+
+  /** The project-scope grim commands an answer ran, subcommand words only. */
+  const gateSteps = (): string[] =>
+    argvLines(stub)
+      .filter((l) => !l.includes('--global') && /^(status|hook|config|install)\b/.test(l))
+      .map((l) => (l.split(' -- ')[0] ?? l).replace(' --format json', ''));
+
+  test('gate prompts: Allow re-reads the status, then records consent and installs', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const rows = [gateRow('hook', 'guard', 'workspace-not-consented'), gateRow('settings', 'team')];
+    canned(stub, 'status', { items: rows });
+    canned(stub, 'hook', {
+      workspace: '/w',
+      action: 'consented',
+      hooks: ['hook:guard@ghcr.io/acme/guard'],
+      record: '/h/consent.json',
+    });
+    canned(stub, 'install', { items: [] });
+    fs.rmSync(stub.argvLog, { force: true });
+    let refreshes = 0;
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {
+      refreshes++;
+    });
+    try {
+      const asked = prompter.offer(projectOf(rows));
+      assert.ok(toasts.messages[0]?.includes('(guard, team)'), toasts.messages[0]);
+      toasts.answer('Allow');
+      await asked;
+    } finally {
+      await toasts.restore();
+      canned(stub, 'status', { items: [] });
+      uncan(stub, 'hook', 'install');
+    }
+    assert.deepStrictEqual(gateSteps(), ['status', 'hook allow', 'install']);
+    assert.strictEqual(refreshes, 1, 'the answer triggers one refresh');
+  });
+
+  test('gate prompts: Allow asks again when the workspace declared a package meanwhile', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const shown = [gateRow('hook', 'guard', 'workspace-not-consented')];
+    const now = [...shown, gateRow('hook', 'late\u202ename', 'workspace-not-consented')];
+    canned(stub, 'status', { items: now });
+    fs.rmSync(stub.argvLog, { force: true });
+    const lines: string[] = [];
+    let refreshes = 0;
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput(lines), async () => {
+      refreshes++;
+    });
+    try {
+      const asked = prompter.offer(projectOf(shown));
+      toasts.answer('Allow');
+      await asked;
+      assert.deepStrictEqual(gateSteps(), ['status'], 'no consent recorded, nothing installed');
+      assert.strictEqual(refreshes, 1, 'a refresh brings the new snapshot');
+      assert.ok(
+        lines.some((l) => l.includes('Allow would now also cover late name')),
+        lines.join('\n'),
+      );
+      // The refresh offers the new snapshot, and consent is asked again.
+      const again = prompter.offer(projectOf(now));
+      assert.strictEqual(toasts.messages.length, 2, 'the consent prompt comes back');
+      assert.ok(toasts.messages[1]?.includes('(guard, late name)'), toasts.messages[1]);
+      toasts.answer(undefined);
+      await again;
+    } finally {
+      await toasts.restore();
+      canned(stub, 'status', { items: [] });
+    }
+  });
+
+  test('gate prompts: a failed status check under Allow records no consent, asks again later', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const errors = captureErrors();
+    const rows = [gateRow('hook', 'guard', 'workspace-not-consented')];
+    canned(stub, 'status', { error: { code: 'config', exit: 78, message: 'bad lock' } });
+    fs.rmSync(stub.argvLog, { force: true });
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    try {
+      const asked = prompter.offer(projectOf(rows));
+      toasts.answer('Allow');
+      await asked;
+      assert.deepStrictEqual(gateSteps(), ['status']);
+      assert.deepStrictEqual(
+        errors.calls.map((c) => c[0]),
+        ['Grimoire: grim status: bad lock'],
+      );
+      const again = prompter.offer(projectOf(rows));
+      assert.strictEqual(toasts.messages.length, 2, 'nothing was consented, so it asks again');
+      toasts.answer(undefined);
+      await again;
+    } finally {
+      await toasts.restore();
+      errors.restore();
+      canned(stub, 'status', { items: [] });
+    }
+  });
+
+  test('gate prompts: a status without its rows under Allow records no consent, asks again later', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const rows = [gateRow('hook', 'guard', 'workspace-not-consented')];
+    canned(stub, 'status', { checked: false });
+    fs.rmSync(stub.argvLog, { force: true });
+    const lines: string[] = [];
+    const prompter = new HookPrompter(
+      api.scopes,
+      memento(),
+      recordingOutput(lines),
+      async () => {},
+    );
+    try {
+      const asked = prompter.offer(projectOf(rows));
+      toasts.answer('Allow');
+      await asked;
+      assert.deepStrictEqual(gateSteps(), ['status'], 'no consent recorded, nothing installed');
+      assert.ok(
+        lines.some((l) => l.includes('grim status did not report its rows')),
+        lines.join('\n'),
+      );
+      const again = prompter.offer(projectOf(rows));
+      assert.strictEqual(toasts.messages.length, 2, 'nothing was consented, so it asks again');
+      toasts.answer(undefined);
+      await again;
+    } finally {
+      await toasts.restore();
+      canned(stub, 'status', { items: [] });
+    }
+  });
+
+  test('gate prompts: a failed grim hook allow runs no install, asks again later', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const errors = captureErrors();
+    const rows = [gateRow('hook', 'guard', 'workspace-not-consented')];
+    canned(stub, 'status', { items: rows });
+    canned(stub, 'hook', { error: { code: 'io', exit: 74, message: 'record not writable' } });
+    fs.rmSync(stub.argvLog, { force: true });
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    try {
+      const asked = prompter.offer(projectOf(rows));
+      toasts.answer('Allow');
+      await asked;
+      assert.deepStrictEqual(gateSteps(), ['status', 'hook allow']);
+      assert.deepStrictEqual(
+        errors.calls.map((c) => c[0]),
+        ['Grimoire: grim hook: record not writable'],
+      );
+      const again = prompter.offer(projectOf(rows));
+      assert.strictEqual(toasts.messages.length, 2, 'nothing was consented, so it asks again');
+      toasts.answer(undefined);
+      await again;
+    } finally {
+      await toasts.restore();
+      errors.restore();
+      canned(stub, 'status', { items: [] });
+      uncan(stub, 'hook');
+    }
+  });
+
+  test('gate prompts: a failed install after Allow asks again once the lock pins the row', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const errors = captureErrors();
+    // No grimoire.lock yet: consent holds the row, and nothing is pinned.
+    const unlocked = [{ ...gateRow('hook', 'guard', 'workspace-not-consented'), pinned: null }];
+    canned(stub, 'status', { items: unlocked });
+    canned(stub, 'hook', {
+      workspace: '/w',
+      action: 'consented',
+      hooks: [],
+      record: '/h/consent.json',
+    });
+    canned(stub, 'install', {
+      error: { code: 'not-found', exit: 79, message: 'no grimoire.lock found', reason: 'no-lock' },
+    });
+    fs.rmSync(stub.argvLog, { force: true });
+    const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+    try {
+      const asked = prompter.offer(projectOf(unlocked));
+      toasts.answer('Allow');
+      await asked;
+      assert.deepStrictEqual(gateSteps(), ['status', 'hook allow', 'install']);
+      assert.deepStrictEqual(errors.calls[0]?.slice(1), ['Run grim lock'], 'the lock is offered');
+      // After `grim lock` the row is pinned, and the empty record has drifted.
+      const locked = projectOf([gateRow('hook', 'guard', 'consent-drifted')]);
+      const again = prompter.offer(locked);
+      assert.strictEqual(toasts.messages.length, 2, 'the consent prompt comes back');
+      await prompter.offer(locked);
+      assert.strictEqual(toasts.messages.length, 2, 'a refresh stacks no second toast');
+      toasts.answer(undefined);
+      await again;
+    } finally {
+      await toasts.restore();
+      errors.restore();
+      canned(stub, 'status', { items: [] });
+      uncan(stub, 'hook', 'install');
+    }
+  });
+
+  test('gate prompts: Enable sets the flag, then installs, and stops at a failed step', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const toasts = stubGateToasts();
+    const errors = captureErrors();
+    const rows = [gateRow('settings', 'team', 'feature-flag-off')];
+    canned(stub, 'config', { error: { code: 'config', exit: 78, message: 'not writable' } });
+    canned(stub, 'install', { items: [] });
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      const failing = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+      const failed = failing.offer(projectOf(rows));
+      toasts.answer('Enable');
+      await failed;
+      assert.deepStrictEqual(gateSteps(), ['config set'], 'a failed flag write runs no install');
+      assert.deepStrictEqual(
+        errors.calls.map((c) => c[0]),
+        ['Grimoire: grim config: not writable'],
+      );
+      canned(stub, 'config', {
+        action: 'set',
+        key: 'options.experimental.settings',
+        value: 'true',
+        scope: 'project',
+        dry_run: false,
+      });
+      fs.rmSync(stub.argvLog, { force: true });
+      const prompter = new HookPrompter(api.scopes, memento(), recordingOutput([]), async () => {});
+      const enabled = prompter.offer(projectOf(rows));
+      toasts.answer('Enable');
+      await enabled;
+      assert.deepStrictEqual(gateSteps(), ['config set', 'install']);
+      const set = argvLines(stub).find((l) => l.startsWith('config set'));
+      assert.strictEqual(set, 'config set --format json -- options.experimental.settings true');
+    } finally {
+      await toasts.restore();
+      errors.restore();
+      uncan(stub, 'config', 'install');
+    }
   });
 
   test("force-confirm dialog names the artifact by the ref's last path segment, not the full path", async function () {
@@ -7098,6 +7731,9 @@ grim = "ghcr.io/grimoire-rs/mcp/grim:latest"
 [hooks]
 shell-guard = "ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0"
 
+[settings]
+team-defaults = "ghcr.io/acme/settings/team-defaults:1"
+
 [options]
 clients = "claude"
 `;
@@ -7106,6 +7742,21 @@ clients = "claude"
       'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2',
       'mcp:grim': 'ghcr.io/grimoire-rs/mcp/grim:latest',
       'hook:shell-guard': 'ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0',
+      'settings:team-defaults': 'ghcr.io/acme/settings/team-defaults:1',
+    });
+  });
+
+  test('a settings entry and a skill entry with one name stay two keys', () => {
+    const declared = parseDeclaredRefs(`
+[settings]
+shared = "ghcr.io/acme/settings/shared:1"
+
+[skills]
+shared = "ghcr.io/acme/skills/shared:2"
+`);
+    assert.deepStrictEqual(declared, {
+      'settings:shared': 'ghcr.io/acme/settings/shared:1',
+      'skill:shared': 'ghcr.io/acme/skills/shared:2',
     });
   });
 

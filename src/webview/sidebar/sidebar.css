@@ -110,6 +110,9 @@ body {
 .kind-hook {
   --kind-tint: var(--vscode-charts-red, #f14c4c);
 }
+.kind-settings {
+  --kind-tint: var(--vscode-terminal-ansiCyan, #29b8db);
+}
 .kind-unknown {
   --kind-tint: var(--vscode-descriptionForeground);
 }

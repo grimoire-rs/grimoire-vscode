@@ -1,0 +1,41 @@
+{
+  "kind": "settings",
+  "name": "team-defaults",
+  "status": "uninstalled",
+  "retained": [],
+  "abandoned_entries": [],
+  "settings_changes": [
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/extraKnownMarketplaces/acme",
+      "element": null,
+      "action": "removed"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/model",
+      "element": null,
+      "action": "removed"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/allow",
+      "element": "Bash(git status:*)",
+      "action": "removed"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/deny",
+      "element": "Bash(rm:*)",
+      "action": "removed"
+    }
+  ]
+}

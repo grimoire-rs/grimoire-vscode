@@ -13,11 +13,12 @@ import type { CachedCardMeta } from '../detailsCache';
 import { describeArgs, fetchArgs } from '../grim';
 import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { ScopeService, ScopeSnapshot, Snapshot } from '../scopes';
-import { DetailsManager } from '../views/details';
+import { DetailsManager, installState } from '../views/details';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import { DEFAULT_FILTER, isValidRepo } from '../webview/model';
+import { DEFAULT_FILTER, declaredKey, isValidRepo, type WireStatusItem } from '../webview/model';
 import type { GrimOrigin, HostToSidebar, SidebarState } from '../webview/protocol';
 import { renderDetails, renderSidebar } from '../webview/render';
+import { recordedSettings } from './fixtures/recorded';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 
@@ -611,5 +612,22 @@ suite('viewport prefetch: the visible report', () => {
       assert.notStrictEqual(sep, -1, `builder emits a separator: ${args.join(' ')}`);
       assert.strictEqual(args[sep + 1], evil, 'the name sits behind it, parsed as a positional');
     }
+  });
+});
+
+suite('details installs: clients', () => {
+  test('a recorded settings row lists each client once', () => {
+    const row = recordedSettings<{ items: WireStatusItem[] }>('status-consented')
+      .items[0] as WireStatusItem;
+    assert.ok(row.outputs.length > 1, 'precondition: several outputs share a client');
+    const repo = String(row.pinned).split('@')[0] ?? '';
+    const { installs } = installState(repo, [
+      {
+        scope: 'project',
+        status: [row],
+        declared: { [declaredKey(row.kind, row.name)]: `${repo}:1.0.0` },
+      },
+    ]);
+    assert.deepStrictEqual(installs[0]?.clients, ['claude']);
   });
 });

@@ -45,6 +45,7 @@ import {
   isHeld,
   isOpenableUrl,
   normalizeKind,
+  outputClients,
   readRating,
   refRepo,
   refTag,
@@ -53,6 +54,7 @@ import {
   type ScopeStatus,
 } from '../webview/model';
 import type {
+  ArtifactKind,
   DetailsToHost,
   DetailsVM,
   HostToDetails,
@@ -125,7 +127,8 @@ const KIND_LABELS: Record<string, string> = {
   mcp: 'MCP',
   bundle: 'Bundle',
   hook: 'Hook',
-};
+  settings: 'Settings',
+} satisfies Record<ArtifactKind, string>;
 
 /** True when a COMPLETE entry was written inside {@link OPEN_REVALIDATE_TTL_MS}.
  *  Pure; exported for the open-path test. A future-dated `savedAt` (clock skew)
@@ -1800,7 +1803,7 @@ export function installState(
           scope: scope.scope,
           version: declared ? refTag(declared) : null,
           updateAvailable: computeUpdateAvailable(item),
-          clients: item.outputs.map((o) => o.client),
+          clients: outputClients(item.outputs),
           state: item.state,
           kind: item.kind,
           name: item.name,

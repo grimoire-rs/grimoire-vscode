@@ -35,8 +35,9 @@ the rig and stops both containers.
 |---|---|---|
 | **Run Extension (manual rig — project)** | `test/manual/project` | The full catalog: version matrix, deprecated `old-reviewer`, the folded `playbooks/ci/release` chain, outdated rows after `release-update.sh` |
 | **Run Extension (manual rig — multi-registry)** | `test/manual/project-multi` | Two registry roots in the tree, registry grouping, the private-registry lock |
+| **Run Extension (manual rig — settings)** | `test/manual/project-settings` | The experimental settings kind: the consent prompt, held-back rows, the Overwrite confirm for a refused value. See [Settings](#settings-experimental) |
 
-Both configs put the rig's `grim` first on `PATH` and point `GRIM_HOME` at
+All three configs put the rig's `grim` first on `PATH` and point `GRIM_HOME` at
 `test/manual/.grim-home`, so nothing touches your real `~/.grimoire`. If your
 grim checkout is not at `../grimoire`, edit the paths in `.vscode/launch.json`.
 
@@ -173,6 +174,26 @@ Install state unknown (the banner, and the empty trailing slots that go with
 it): launch with `GRIM_HOME` pointing at a path that does not exist, or stop the
 registries with `docker compose -f test/manual/docker-compose.yml down` and hit
 Refresh.
+
+## Settings (experimental)
+
+`project-settings` declares the `team-defaults` settings package and commits
+the settings flag, but not consent, as a team would. Its walkthrough is § 13 of
+`../grimoire/test/manual/README.md`; run `grim lock` there once, then launch
+**Run Extension (manual rig — settings)** in a trusted window.
+
+| Step | Expect |
+|---|---|
+| Open the workspace | A toast: "This workspace declares settings packages (team-defaults)", with **Allow** and **No**. The Installed card warns, the row reads **not applied**, and its tooltip starts `Settings not applied:` and quotes grim's message. |
+| **Allow** | The progress reads "Allowing settings"; grim records consent and installs. `.claude/settings.local.json` appears in the project (gitignored), and the row reads up to date. |
+| Hand-edit `/model` in that file, then **Install Version** from the row's menu and pick the pinned version (it runs `grim add`) | The modal Overwrite confirm lists `team-defaults: claude .claude/settings.local.json /model` under "Refused settings values". Neither the old value nor the new one appears. |
+| `grim hook revoke` in the project, then Refresh | The values stay in the file. The row reads **held back**, its tooltip `Settings held back, values already written stay in place:`. |
+| `grim config set options.experimental.settings false`, then reload the window | The **Enable** prompt replaces the consent one. **No** silences only that gate in this workspace. |
+| `grim config set options.experimental.settings true` in the project | The rig's committed flag is back for the next run. |
+| A restricted-mode window | No prompt at all. |
+
+Part e of § 13 (Codex and Copilot at global scope) writes outside the project.
+Run it only through `in_rig`, as that section says, never from the debug host.
 
 ## Ratings and download counts
 

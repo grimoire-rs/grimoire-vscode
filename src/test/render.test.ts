@@ -291,6 +291,7 @@ suite('card rendering', () => {
     assert.strictEqual(kindIcon('agent'), 'agent');
     assert.strictEqual(kindIcon('mcp'), 'mcp');
     assert.strictEqual(kindIcon('bundle'), 'package');
+    assert.strictEqual(kindIcon('settings'), 'settings');
     assert.strictEqual(kindIcon(null), 'question');
   });
 
@@ -682,6 +683,56 @@ suite('card rendering', () => {
       ).includes('row-dot'),
       'only declined clients falls through to the installed dot',
     );
+  });
+
+  test('compact row slot words settings drift and gating for settings', async () => {
+    const base = {
+      scope: 'project' as const,
+      version: '1.0.0',
+      updateAvailable: false,
+      clients: ['claude'],
+      kind: 'settings',
+      name: 'team-defaults',
+      viaBundles: [],
+    };
+    const slot = async (install: Record<string, unknown>): Promise<string> =>
+      litHtml(renderCompactRow(card({ state: 'installed', installs: [install as never] })));
+    assert.ok(
+      (await slot({ ...base, state: 'modified' })).includes('Settings values were changed locally'),
+    );
+    assert.ok((await slot({ ...base, state: 'missing' })).includes('Settings values are missing'));
+    const arming = [{ client: 'claude', cause: 'feature-flag-off', message: 'settings are gated' }];
+    const gated = await slot({ ...base, clients: [], state: 'gated', arming });
+    assert.ok(gated.includes('Settings not applied:'));
+    assert.ok(gated.includes('claude: settings are gated'));
+    const kept = await slot({ ...base, state: 'gated', arming });
+    assert.ok(kept.includes('Settings held back, values already written stay in place:'));
+    const skill = await slot({ ...base, kind: 'skill', state: 'modified' });
+    assert.ok(skill.includes('Installed files were modified locally'));
+  });
+
+  test('details scope row labels an unarmed row by kind', async () => {
+    const row = (kind: string, state: string, cause: string, clients: string[] = []) => ({
+      scope: 'project' as const,
+      version: '1.0.0',
+      updateAvailable: false,
+      clients,
+      state,
+      kind,
+      name: 'x',
+      viaBundles: [],
+      arming: [{ client: 'claude', cause, message: 'm' }],
+    });
+    const hint = async (install: ReturnType<typeof row>): Promise<string> =>
+      litHtml(renderDetails(detailsVM({ installs: [install as never] })));
+    const gated = await hint(row('settings', 'gated', 'feature-flag-off'));
+    assert.ok(gated.includes('>not applied<'));
+    const kept = await hint(row('settings', 'gated', 'feature-flag-off', ['claude']));
+    assert.ok(kept.includes('>held back<'));
+    const tracked = await hint(row('settings', 'installed', 'local-file-tracked', ['claude']));
+    assert.ok(tracked.includes('>needs attention<'));
+    const hook = await hint(row('hook', 'gated', 'workspace-not-consented'));
+    assert.ok(hook.includes('>not armed<'));
   });
 
   test('scope-variant card shows a pending badge iff outputs_pending is non-empty', async () => {
@@ -1378,6 +1429,14 @@ suite('sidebar split rendering (item 3)', () => {
     assert.ok(
       allActive.includes('data-kind="hook"') && allActive.includes('codicon-symbol-event'),
       'hook chip carries its codicon',
+    );
+    assert.ok(
+      allActive.includes('data-kind="settings"') && allActive.includes('>Settings<'),
+      'settings chip present',
+    );
+    assert.ok(
+      allActive.indexOf('data-kind="settings"') > allActive.indexOf('data-kind="hook"'),
+      'settings chip follows hook',
     );
     // Two kinds selected → those chips active, All inactive.
     const multi = await litHtml(
@@ -2736,6 +2795,21 @@ suite('details rendering', () => {
     assert.ok(html.includes('tag-overflow'));
     assert.ok(html.includes('data-action="toggle-tags"'));
     assert.ok(html.includes('+2 more'));
+  });
+
+  test('settings CONTENTS renders a full-width highlighted JSON block, no markdown', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          kind: 'settings',
+          contentMarkdown: null,
+          contentJson: '{"claude": {"extraKnownMarketplaces": {}}}',
+        }),
+      ),
+    );
+    assert.ok(html.includes('class="json-code"'), 'full-width json block present');
+    assert.ok(html.includes('extraKnownMarketplaces'));
+    assert.ok(!html.includes('id="md-contents"'), 'settings bypasses markdown-it');
   });
 
   test('mcp CONTENTS renders a full-width highlighted JSON block, no markdown (item 6)', async () => {

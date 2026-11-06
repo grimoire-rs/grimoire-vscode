@@ -1,0 +1,22 @@
+{
+  "add-settings": 0,
+  "config-list-all": 0,
+  "consent-allow": 0,
+  "describe-settings": 0,
+  "fetch-settings": 0,
+  "install-consented": 0,
+  "install-force": 0,
+  "install-modified": 65,
+  "search-settings": 0,
+  "status-client-config-absent": 0,
+  "status-consented": 0,
+  "status-flag-off": 0,
+  "status-local-tracked": 0,
+  "status-modified": 0,
+  "status-no-applicable": 0,
+  "status-not-consented": 0,
+  "status-root-in-workspace": 0,
+  "status-root-relative": 0,
+  "uninstall-settings": 0,
+  "update-modified": 65
+}

@@ -4,7 +4,14 @@
 // The fix is a full resolve — bare `grim update` in the same scope — which may
 // legitimately bump other floating-tag artifacts, so we ask first.
 import * as vscode from 'vscode';
-import { lockArgs, updateArgs, type ActionReport, type GrimResult, type Scope } from '../grim';
+import {
+  dialogText,
+  lockArgs,
+  updateArgs,
+  type ActionReport,
+  type GrimResult,
+  type Scope,
+} from '../grim';
 import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
 
@@ -75,7 +82,7 @@ export function offerLock(
   output.appendLine(`error: grim ${args[0]} --${scope}: ${result.message}`);
   const run = async (): Promise<void> => {
     const choice = await vscode.window.showErrorMessage(
-      `Grimoire: grim ${args[0]}: ${result.message}`,
+      `Grimoire: grim ${args[0]}: ${dialogText(result.message, 1000)}`,
       'Run grim lock',
     );
     if (choice !== 'Run grim lock') {

@@ -50,6 +50,26 @@
       "preLaunchTask": "npm: watch"
     },
     {
+      // Manual rig, settings kind: team-defaults declared with the flag
+      // committed and consent not, so a fresh open shows the Allow prompt.
+      // Run `grim lock` in that project first (docs/manual-testing.md).
+      "name": "Run Extension (manual rig — settings)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/../grimoire/test/manual/project-settings"
+      ],
+      "env": {
+        "PATH": "${workspaceFolder}/../grimoire/test/bin:${env:PATH}",
+        "GRIM_HOME": "${workspaceFolder}/../grimoire/test/manual/.grim-home",
+        "GRIM_DEFAULT_REGISTRY": "localhost:5050",
+        "GRIM_INSECURE_REGISTRIES": "localhost:5050,localhost:5051"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: watch"
+    },
+    {
       "name": "Extension Tests",
       "type": "extensionHost",
       "request": "launch",

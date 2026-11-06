@@ -1,11 +1,17 @@
 import * as assert from 'assert';
+import { recordedSettings } from './fixtures/recorded';
 import { card as cardFixture, installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
   installHolders,
   isHeld,
   browseSortRequest,
+  armingLabel,
+  driftTitle,
+  isUnarmed,
+  unarmedTooltip,
   formatCount,
+  outputClients,
   applyAppend,
   foldHostPost,
   pagingSummary,
@@ -166,6 +172,9 @@ suite('ref helpers', () => {
     assert.strictEqual(normalizeKind('SKILL'), 'skill');
     assert.strictEqual(normalizeKind('unknown'), null);
     assert.strictEqual(normalizeKind(null), null);
+    assert.strictEqual(normalizeKind('settings'), 'settings');
+    assert.strictEqual(normalizeKind('Settings'), 'settings');
+    assert.strictEqual(normalizeKind('setting'), null);
   });
 });
 
@@ -534,6 +543,182 @@ suite('client drift', () => {
   });
 });
 
+suite('outputClients', () => {
+  test('empty stays empty', () => {
+    assert.deepStrictEqual(outputClients([]), []);
+  });
+
+  test('repeated clients collapse to one', () => {
+    assert.deepStrictEqual(outputClients([{ client: 'claude' }, { client: 'claude' }]), ['claude']);
+  });
+
+  test('first-seen order is kept', () => {
+    assert.deepStrictEqual(
+      outputClients([{ client: 'claude' }, { client: 'copilot' }, { client: 'claude' }]),
+      ['claude', 'copilot'],
+    );
+  });
+
+  test('a settings status row with four claude outputs lists claude once', () => {
+    const fixture = recordedSettings<{ items: WireStatusItem[] }>('status-consented');
+    const row = fixture.items[0] as WireStatusItem;
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [row],
+      declared: { 'settings:team-defaults': 'ghcr.io/acme/settings/team-defaults:1.0.0' },
+    };
+    const cards = buildCards(
+      [searchItem({ kind: 'settings', repo: 'ghcr.io/acme/settings/team-defaults' })],
+      [scope],
+    );
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clients, ['claude']);
+  });
+});
+
+suite('settings arming wording', () => {
+  const install = (file: string): InstallVM => {
+    const row = recordedSettings<{ items: WireStatusItem[] }>(file.replace(/\.json$/, ''))
+      .items[0] as WireStatusItem;
+    const repo = String(row.pinned).split('@')[0] ?? '';
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [row],
+      declared: { [`settings:${row.name}`]: `${repo}:1.0.0` },
+    };
+    const cards = buildCards([searchItem({ kind: 'settings', repo })], [scope]);
+    return cards[0]?.installs[0] as InstallVM;
+  };
+  const row = (state: string, cause?: string, kind = 'settings', clients: string[] = []) =>
+    ({
+      kind,
+      state,
+      clients,
+      arming: cause ? [{ client: 'claude', cause, message: 'msg' }] : [],
+    }) as Pick<InstallVM, 'arming' | 'state' | 'kind' | 'clients'>;
+
+  test('recorded gated rows warn with "Settings not applied:" and grim message', () => {
+    for (const [file, cause] of [
+      ['status-flag-off.json', 'settings are gated'],
+      ['status-not-consented.json', 'not been consented'],
+      ['status-client-config-absent.json', 'cli-config.json'],
+    ] as const) {
+      const vm = install(file);
+      assert.strictEqual(isUnarmed(vm), true, file);
+      const tip = unarmedTooltip(vm);
+      assert.ok(tip.startsWith('Settings not applied:\n'), file);
+      assert.ok(tip.includes(cause), file);
+      assert.strictEqual(armingLabel(vm), 'not applied');
+    }
+  });
+
+  test('a git-tracked local file needs attention while the values stay applied', () => {
+    const vm = install('status-local-tracked.json');
+    assert.strictEqual(isUnarmed(vm), true);
+    assert.ok(unarmedTooltip(vm).startsWith('Settings need attention:\n'));
+    assert.strictEqual(armingLabel(vm), 'needs attention');
+  });
+
+  test('no-applicable-settings is silent on an installed row, shown when gated', () => {
+    assert.strictEqual(isUnarmed(install('status-no-applicable.json')), false);
+    assert.strictEqual(isUnarmed(row('gated', 'no-applicable-settings')), true);
+  });
+
+  test('consented and modified rows are not unarmed', () => {
+    assert.strictEqual(isUnarmed(install('status-consented.json')), false);
+    assert.strictEqual(isUnarmed(install('status-modified.json')), false);
+  });
+
+  test('consent-drifted, not-armed and unknown causes are kept', () => {
+    assert.strictEqual(isUnarmed(row('installed', 'consent-drifted')), true);
+    assert.strictEqual(isUnarmed(row('not-armed', 'something-new')), true);
+    assert.ok(unarmedTooltip(row('not-armed', 'not-armed')).startsWith('Settings not applied:'));
+  });
+
+  test('client-has-no-hook-surface is always dropped', () => {
+    assert.strictEqual(isUnarmed(row('gated', 'client-has-no-hook-surface', 'hook')), false);
+  });
+
+  test('hook and other kinds keep their own header and label', () => {
+    assert.ok(
+      unarmedTooltip(row('gated', 'workspace-not-consented', 'hook')).startsWith(
+        'Hook not armed:\n',
+      ),
+    );
+    assert.ok(
+      unarmedTooltip(row('gated', 'workspace-not-consented', 'mcp')).startsWith('Not armed:\n'),
+    );
+    assert.strictEqual(armingLabel(row('gated', undefined, 'hook')), 'not armed');
+    assert.strictEqual(armingLabel(row('gated', undefined, 'mcp')), 'not armed');
+  });
+
+  test('a held-back row whose values are still on disk says they stay in place', () => {
+    // A cleared flag, a revoked consent and a root fence all leave the values
+    // grim wrote, and grim status still lists them in outputs.
+    for (const [state, cause] of [
+      ['gated', 'feature-flag-off'],
+      ['gated', 'workspace-not-consented'],
+      ['not-armed', 'settings-root-in-workspace'],
+    ] as const) {
+      const vm = row(state, cause, 'settings', ['claude']);
+      assert.strictEqual(isUnarmed(vm), true, cause);
+      assert.strictEqual(
+        unarmedTooltip(vm),
+        'Settings held back, values already written stay in place:\nclaude: msg',
+        cause,
+      );
+      assert.strictEqual(armingLabel(vm), 'held back', cause);
+      assert.strictEqual(armingLabel(row(state, cause)), 'not applied', cause);
+    }
+  });
+
+  test('a note that gates the row never says values stay in place', () => {
+    // client-config-absent gates a row only when no client can take a value.
+    const vm = row('gated', 'client-config-absent', 'settings', ['claude']);
+    assert.ok(unarmedTooltip(vm).startsWith('Settings not applied:\n'));
+    assert.strictEqual(armingLabel(vm), 'not applied');
+    const stale = row('stale', 'client-config-absent');
+    assert.strictEqual(armingLabel(stale), 'not applied');
+    assert.strictEqual(isUnarmed(row('stale', 'no-applicable-settings')), true);
+    assert.strictEqual(
+      isUnarmed(row('stale', 'no-applicable-settings', 'settings', ['claude'])),
+      false,
+    );
+  });
+
+  test('a stale row reads its gate from arming', () => {
+    const held = row('stale', 'feature-flag-off');
+    assert.ok(unarmedTooltip(held).startsWith('Settings not applied:\n'));
+    assert.strictEqual(armingLabel(held), 'not applied');
+    assert.strictEqual(
+      armingLabel(row('stale', 'feature-flag-off', 'settings', ['claude'])),
+      'held back',
+    );
+    assert.strictEqual(
+      armingLabel(row('stale', 'local-file-tracked', 'settings', ['claude'])),
+      'needs attention',
+    );
+  });
+
+  test('driftTitle words settings values apart from installed files', () => {
+    assert.strictEqual(
+      driftTitle({ kind: 'settings', state: 'modified' }),
+      'Settings values were changed locally',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'settings', state: 'missing' }),
+      'Settings values are missing',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'skill', state: 'modified' }),
+      'Installed files were modified locally',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'skill', state: 'missing' }),
+      'Installed files are missing',
+    );
+  });
+});
+
 suite('materialization drift (outputs_pending)', () => {
   const pending = [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }];
 
@@ -734,6 +919,21 @@ suite('filters', () => {
       2,
     );
     assert.strictEqual(filterCards(cards, DEFAULT_FILTER).length, cards.length);
+  });
+
+  test('kind filter: settings keeps only settings cards', () => {
+    const mixed = buildCards(
+      [
+        searchItem({ kind: 'settings', repo: 'ghcr.io/acme/settings/team-defaults' }),
+        searchItem({ kind: 'skill', repo: 'ghcr.io/grimoire-rs/skills/grim-usage' }),
+      ],
+      [],
+    );
+    const kept = filterCards(mixed, { ...DEFAULT_FILTER, kinds: ['settings'] });
+    assert.deepStrictEqual(
+      kept.map((c) => c.kind),
+      ['settings'],
+    );
   });
 
   test('DEFAULT_FILTER kinds is empty (All)', () => {
@@ -1319,6 +1519,43 @@ suite('details view model', () => {
     assert.strictEqual(vm.contentMarkdown, null, 'JSON does not route through markdown');
     assert.ok(!vm.contentJson?.includes('```'), 'no fenced-block wrapping');
     assert.match(vm.contentJson ?? '', /"command": "grim"/, 'pretty-printed with spacing');
+  });
+
+  test('settings JSON content lands on contentJson like mcp', () => {
+    const fixture =
+      recordedSettings<Parameters<typeof buildDetailsVM>[0]['fetch']>('fetch-settings');
+    const vm = buildDetailsVM({
+      repo: 'ghcr.io/acme/settings/team-defaults',
+      searchItem: null,
+      describe: null,
+      fetch: fixture,
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.kind, 'settings');
+    assert.strictEqual(vm.contentMarkdown, null);
+    assert.match(vm.contentJson ?? '', /"extraKnownMarketplaces"/);
+  });
+
+  test('a non-JSON settings body stays markdown', () => {
+    const vm = buildDetailsVM({
+      repo: 'ghcr.io/x/settings/y',
+      searchItem: null,
+      describe: null,
+      fetch: {
+        ref: 'ghcr.io/x/settings/y:1',
+        digest: 'sha256:1',
+        kind: 'settings',
+        name: 'y',
+        content: 'plain text',
+      },
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.contentJson, null);
+    assert.strictEqual(vm.contentMarkdown, 'plain text');
   });
 
   test('deprecated + installed state', () => {
@@ -2107,7 +2344,21 @@ suite('toggleKinds', () => {
   });
 
   test('selecting every kind collapses to [] (All)', () => {
-    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), []);
+    assert.deepStrictEqual(
+      toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'], 'settings'),
+      [],
+    );
+  });
+
+  test('six of seven kinds selected keeps the selection', () => {
+    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), [
+      'skill',
+      'rule',
+      'agent',
+      'mcp',
+      'bundle',
+      'hook',
+    ]);
   });
 
   test('unknown kinds toggle like any other (inert in filtering)', () => {

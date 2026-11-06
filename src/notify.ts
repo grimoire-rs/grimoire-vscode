@@ -3,7 +3,7 @@
 // banner on top of the details panel shifts the whole UI) — progress lives in
 // the status bar, warnings/errors in the VS Code notification popup.
 import * as vscode from 'vscode';
-import type { GrimResult } from './grim';
+import { dialogText, type GrimResult } from './grim';
 
 let item: vscode.StatusBarItem | undefined;
 let refs = 0;
@@ -111,7 +111,9 @@ export function reportGrimFailure(
 ): void {
   const message = result.kind === 'not-found' ? 'grim executable not found' : result.message;
   output.appendLine(`error: ${message}`);
-  notifyError(`Grimoire: ${context ? `${context}: ` : ''}${message}`);
+  // grim's message can quote a registry or the workspace's config, and a
+  // notification renders `[label](command:…)` as a link.
+  notifyError(`Grimoire: ${context ? `${context}: ` : ''}${dialogText(message, 1000)}`);
 }
 
 /** Test seam: observable status-bar state (StatusBarItem exposes no `visible`). */

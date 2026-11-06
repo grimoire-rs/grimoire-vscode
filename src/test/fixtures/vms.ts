@@ -4,14 +4,19 @@
 // today's string-based render.ts, and post-migration parity.test.ts runs the
 // SAME cases against the lit-html render.ts. Exported so both can import one
 // source of truth for "what to render" instead of drifting.
+import { recordedSettings } from './recorded';
 import {
   buildCards,
+  buildDetailsVM,
+  buildInstalledCards,
   buildTree,
   collectNodeIds,
   DEFAULT_FILTER,
   DEFAULT_VIEW,
+  type DetailsSources,
   type ScopeStatus,
   type WireSearchItem,
+  type WireStatusItem,
 } from '../../webview/model';
 import type {
   CardVM,
@@ -171,6 +176,32 @@ export function bothInstalled(scope: 'project' | 'global'): InstallVM {
   };
 }
 
+const settingsFixture = recordedSettings;
+
+/** The one installed card a recorded settings status row produces, built
+ *  through the real funnel so the golden shows what grim's output renders as. */
+function settingsInstalledCard(fixture: string): CardVM {
+  const row = settingsFixture<{ items: WireStatusItem[] }>(fixture).items[0];
+  if (!row) {
+    throw new Error(`settings fixture ${fixture} has no row`);
+  }
+  const repo = String(row.pinned).split('@')[0] ?? '';
+  const [built] = buildInstalledCards(
+    [],
+    [
+      {
+        scope: 'project',
+        status: [row],
+        declared: { [`settings:${row.name}`]: `${repo}:1.0.0` },
+      },
+    ],
+  );
+  if (!built) {
+    throw new Error(`settings fixture ${fixture} produced no card`);
+  }
+  return built;
+}
+
 export interface GoldenCase {
   name: string;
   out: unknown;
@@ -285,6 +316,21 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       { variant: 'scope', scope: 'global' },
     ),
   );
+
+  // --- settings kind: the three recorded installed-row states ---
+  for (const [name, fixture] of [
+    ['card-installed-settings-gated', 'status-not-consented'],
+    ['card-installed-settings-tracked', 'status-local-tracked'],
+    ['card-installed-settings-applied', 'status-consented'],
+  ] as const) {
+    // The compact row carries the warning slot; the scope card carries the
+    // Client drift badge and client chips. One golden pins both.
+    const built = settingsInstalledCard(fixture);
+    add(name, [
+      r.renderCompactRow(built),
+      r.renderCard(built, { variant: 'scope', scope: 'project' }),
+    ]);
+  }
 
   // --- card menus: gear (installed) + right-click context menu ---
   add(
@@ -664,6 +710,20 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
         kind: 'mcp',
         contentMarkdown: null,
         contentJson: JSON.stringify({ command: 'npx', args: ['-y', 'grim-mcp'] }, null, 2),
+      }),
+    ),
+  );
+  add(
+    'details-settings-contentjson',
+    r.renderDetails(
+      buildDetailsVM({
+        repo: 'ghcr.io/acme/settings/team-defaults',
+        searchItem: null,
+        describe: settingsFixture<DetailsSources['describe']>('describe-settings'),
+        fetch: settingsFixture<DetailsSources['fetch']>('fetch-settings'),
+        installs: settingsInstalledCard('status-consented').installs,
+        scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
+        logoUri: null,
       }),
     ),
   );
