@@ -131,6 +131,15 @@ otherwise). Environment knobs for debugging sessions:
   `../grimoire/target/release/grim`) instead of the `PATH` one.
 - `GRIM_LIVE_NETWORK=1` — also run the checks that resolve through a real
   registry (off by default so `npm test` stays offline).
+- `GRIM_LIVE_REQUIRED=1` — fail the live suite instead of skipping it when the
+  grim under test is missing, too old, or predates a check's grim change. CI
+  sets it on Linux, where it builds grim at the commit `GRIM_COMMIT` names in
+  `.github/workflows/ci.yml`.
+
+The live suite also drives the per-artifact Update action against that grim
+(grimoire-rs/grimoire#269). It works in a private `HOME` and `GRIM_HOME`
+handed over through `grimoire.extraEnv`, offline, on local path sources, so it
+needs no registry and leaves your own configuration alone.
 
 Markup regression baselines live in `src/test/fixtures/goldens/` and are
 checked by `src/test/parity.test.ts` against `src/webview/render.ts`'s
