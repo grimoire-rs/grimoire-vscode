@@ -102,8 +102,7 @@ export function notifyError(
  *  a failed GrimResult into the "grim executable not found" fallback, logs it
  *  to the output channel, and shows the error toast. `context` (e.g. `grim
  *  add`) is named in the toast when the caller wants to say which command
- *  failed; omitted for a bare message (the stale-lock recovery's full update
- *  has no single command to name). */
+ *  failed; omitted for a bare message. */
 export function reportGrimFailure(
   result: Extract<GrimResult<unknown>, { ok: false }>,
   output: vscode.OutputChannel,

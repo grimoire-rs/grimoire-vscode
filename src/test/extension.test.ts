@@ -2271,6 +2271,69 @@ suite('extension integration', () => {
     );
   });
 
+  test('stale-lock update offers Lock and Update first: locks, retries the same name, no full update', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    // grim's remedy for a stale lock is `grim lock` (which keeps every pin whose
+    // declaration did not change), then the same named update. The retry must
+    // succeed, so the dialog drops the stale-lock canned answer before it runs.
+    canned(stub, 'update-name', {
+      error: {
+        code: 'data',
+        exit: 65,
+        message: 'the lock no longer matches',
+        reason: 'stale-lock',
+      },
+    });
+    canned(stub, 'update', { items: [] });
+    canned(stub, 'lock', { items: [] });
+    const window = vscode.window as unknown as {
+      showWarningMessage: unknown;
+      showErrorMessage: unknown;
+    };
+    const originalWarn = window.showWarningMessage;
+    const originalError = window.showErrorMessage;
+    const offered: string[][] = [];
+    let errored = false;
+    window.showWarningMessage = async (_message: string, ...items: string[]) => {
+      offered.push(items);
+      uncan(stub, 'update-name');
+      return 'Lock and Update';
+    };
+    window.showErrorMessage = async () => {
+      errored = true;
+      return undefined;
+    };
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'update',
+        kind: 'skill',
+        name: 'demo',
+        scope: 'global',
+      });
+      await waitFor(() => argvLines(stub).filter((l) => updatesArtifact(l, 'demo')).length >= 2);
+    } finally {
+      window.showWarningMessage = originalWarn;
+      window.showErrorMessage = originalError;
+      uncan(stub, 'update-name', 'lock');
+    }
+    const steps = argvLines(stub).filter((l) => /^(update|lock)\b/.test(l));
+    assert.deepStrictEqual(
+      steps.map((l) =>
+        l.startsWith('lock') ? 'lock' : updatesArtifact(l, 'demo') ? 'update demo' : l,
+      ),
+      ['update demo', 'lock', 'update demo'],
+      steps.join(' | '),
+    );
+    assert.ok(
+      steps.every((l) => l.includes('--global')),
+      `lock and retry stay in scope: ${steps.join(' | ')}`,
+    );
+    assert.deepStrictEqual(offered[0], ['Lock and Update', 'Run Full Update']);
+    assert.ok(!errored, 'the per-name refusal produced no error toast');
+  });
+
   test('no-lock install failure offers Run grim lock, then locks and re-runs the install', async function () {
     this.timeout(15000);
     const api = await activateExtension();
