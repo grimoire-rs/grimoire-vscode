@@ -17,7 +17,9 @@ import {
   isForceable,
   positionalOf,
   refusedNames,
+  refusedPieces,
   withFlags,
+  withRefusedPieces,
   type ActionReport,
   type GrimResult,
   type Scope,
@@ -124,10 +126,12 @@ export async function offerForcedRetry(
     return true;
   }
   if (isForceable(result) && (args[0] === 'add' || args[0] === 'update')) {
-    const detail =
+    const detail = withRefusedPieces(
       `Reinstalling discards your local changes to \`${name}\`. This cannot be undone.\n\n` +
-      result.message +
-      (args[0] === 'update' ? FORCE_UPDATE_NOTE : '');
+        result.message +
+        (args[0] === 'update' ? FORCE_UPDATE_NOTE : ''),
+      result.pieces ?? [],
+    );
     if (await confirmOverwrite(name, detail, args, scope, scopes, output)) {
       await onDone();
     }
@@ -169,12 +173,14 @@ export async function offerRefusedRetry(
   // Normally one row: these hosts update a single artifact. Joined rather than
   // truncated, since the retry below forces every one of them.
   const names = refused.join(', ');
-  const detail =
+  const detail = withRefusedPieces(
     `grim kept your local changes to \`${names}\` and did not replace those files. ` +
-    `Everything else updated, and the lock pin moved on — so the artifact reads as up to ` +
-    `date while its files are still yours.\n\nOverwriting discards those local changes. ` +
-    `This cannot be undone.` +
-    FORCE_UPDATE_NOTE;
+      `Everything else updated, and the lock pin moved on — so the artifact reads as up to ` +
+      `date while its files are still yours.\n\nOverwriting discards those local changes. ` +
+      `This cannot be undone.` +
+      FORCE_UPDATE_NOTE,
+    refusedPieces(value),
+  );
   await confirmOverwrite(names, detail, args, scope, scopes, output);
   return true;
 }

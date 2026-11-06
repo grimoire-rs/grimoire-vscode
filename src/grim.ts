@@ -493,6 +493,8 @@ export type GrimResult<T> =
       // reason is forceable (currently "modified" and "untracked-destination")
       // — never a bare `false`. See isForceable.
       forceable?: boolean;
+      /** Settings values grim refused to change; names only, never a value. */
+      pieces?: RefusedPiece[];
       /** Set only when grim's stdout outgrew the child-process buffer, so a
        *  caller can tell "too much output" from any other failure. */
       overflow?: true;
@@ -543,6 +545,7 @@ interface ErrorDoc {
     reason?: string;
     retryable?: boolean;
     forceable?: boolean;
+    pieces?: unknown;
   };
 }
 
@@ -552,6 +555,59 @@ function isErrorDoc(doc: unknown): doc is ErrorDoc {
   }
   const err = (doc as Record<string, unknown>)['error'];
   return typeof err === 'object' && err !== null && 'message' in (err as object);
+}
+
+/** A settings value grim refused to change. `wanted` and `current` are
+ *  deliberately absent: `current` is the user's own value. */
+export interface RefusedPiece {
+  package: string;
+  client: string;
+  file: string | null;
+  pointer: string;
+  element: string | null;
+  marked: string;
+  state: string | null;
+}
+
+const strOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
+
+function toRefusedPiece(raw: unknown): RefusedPiece | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const r = raw as Record<string, unknown>;
+  const { package: pkg, client, file, pointer, element, marked, state } = r;
+  if (
+    typeof pkg !== 'string' ||
+    typeof client !== 'string' ||
+    typeof pointer !== 'string' ||
+    typeof marked !== 'string' ||
+    !strOrNull(file) ||
+    !strOrNull(element) ||
+    !strOrNull(state)
+  ) {
+    return undefined;
+  }
+  return { package: pkg, client, file, pointer, element, marked, state };
+}
+
+function validPieces(raw: unknown): RefusedPiece[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: RefusedPiece[] = [];
+  for (const entry of raw) {
+    const piece = toRefusedPiece(entry);
+    if (piece !== undefined) {
+      out.push(piece);
+    }
+  }
+  return out;
+}
+
+function piecesField(raw: unknown): { pieces?: RefusedPiece[] } {
+  const pieces = validPieces(raw);
+  return pieces.length > 0 ? { pieces } : {};
 }
 
 /** Parses one grim `--format json` stdout document into a GrimResult. Exported for tests. */
@@ -584,6 +640,7 @@ export function parseReport<T>(stdout: string, exitCode: number, stderr: string)
       ...(doc.error.retryable !== undefined ? { retryable: doc.error.retryable } : {}),
       // Additive: surface `forceable` verbatim when present, else leave undefined.
       ...(doc.error.forceable !== undefined ? { forceable: doc.error.forceable } : {}),
+      ...piecesField(doc.error.pieces),
     };
   }
   const warnings = stderr.trim();
@@ -654,6 +711,56 @@ export function refusedNames(value: unknown): string[] {
     }
   }
   return names;
+}
+
+/** The settings values an ok-path `grim update` report refused (top-level
+ *  `pieces`); `[]` for any other document. Pure; exported for tests. */
+export function refusedPieces(value: unknown): RefusedPiece[] {
+  if (typeof value !== 'object' || value === null) {
+    return [];
+  }
+  return validPieces((value as Record<string, unknown>)['pieces']);
+}
+
+// Control, format (bidi, zero-width, tag), default-ignorable, lone surrogate and
+// line or paragraph separator characters, which a hostile value could use to
+// forge lines or to reorder or hide text in a dialog.
+const DIALOG_UNSAFE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/gu;
+
+/** Text for a VS Code dialog or notification: unsafe characters become a
+ *  space, a notification link `](` or a codicon `$(` is broken apart so a value
+ *  never turns into a clickable link or an icon, then capped at `max` code
+ *  points with a trailing `…`. Pure; exported for tests. */
+export function dialogText(s: string, max = 120): string {
+  // A code point is at most two UTF-16 units, so the cut keeps more than `max`
+  // of them while bounding the work on a huge input.
+  const head = String(s).slice(0, 2 * max + 2);
+  const flat = head.replace(DIALOG_UNSAFE, ' ').replace(/\]\(/g, '] (').replace(/\$\(/g, '$ (');
+  const points = [...flat];
+  return points.length > max ? `${points.slice(0, max).join('')}…` : flat;
+}
+
+/** One line per refused value (package, client, file, pointer, element), `''`
+ *  for none. A refusal can name another package's value, so each line says
+ *  whose it is. Never includes a value. Pure; exported for tests. */
+export function refusedPiecesDetail(pieces: readonly RefusedPiece[], max = 10): string {
+  if (pieces.length === 0) {
+    return '';
+  }
+  const lines = pieces.slice(0, max).map((p) => {
+    const base = [p.client, p.file ?? '(conflict)', p.pointer].map((f) => dialogText(f)).join(' ');
+    const line = `${dialogText(p.package, 60)}: ${base}`;
+    return p.element !== null ? `${line} [${dialogText(p.element)}]` : line;
+  });
+  if (pieces.length > max) {
+    lines.push(`…and ${pieces.length - max} more`);
+  }
+  return ['Refused settings values:', ...lines].join('\n');
+}
+
+/** `detail` with the refused values appended; unchanged when there are none. */
+export function withRefusedPieces(detail: string, pieces: readonly RefusedPiece[]): string {
+  return pieces.length === 0 ? detail : `${detail}\n\n${refusedPiecesDetail(pieces)}`;
 }
 
 /** The sources a `grim search` answer is known to be missing rows from, one
