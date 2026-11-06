@@ -51,6 +51,8 @@ import {
   monogram,
   normalizeKind,
   outputsPendingTooltip,
+  armingLabel,
+  driftTitle,
   isUnarmed,
   unarmedTooltip,
   pagingSummary,
@@ -516,10 +518,7 @@ function rowSlot(card: CardVM, installStateUnknown: boolean, tab: NestedTab): Te
   }
   const drifted = card.installs.find((i) => i.state === 'modified' || i.state === 'missing');
   if (drifted) {
-    const title =
-      drifted.state === 'modified'
-        ? 'Installed files were modified locally'
-        : 'Installed files are missing';
+    const title = driftTitle(drifted);
     return html`<span class="row-slot"><span class="row-warn codicon codicon-warning" title="${title}"></span></span>`;
   }
   const unarmed = card.installs.find((i) => isUnarmed(i));
@@ -1662,8 +1661,8 @@ function installedScopeRow(vm: DetailsVM, install: InstallVM, divided: boolean):
   if (install.updateAvailable) {
     versionInfo = html`<span class="mono scope-ver">${install.version ?? ''}</span><span class="scope-glyph"><span class="status-dot"></span></span><span class="scope-update-hint">${vm.latestVersion ? `${vm.latestVersion} available` : 'update available'}</span>`;
   } else if (isUnarmed(install)) {
-    // Installed, but some client will not run the hook until a gate clears.
-    versionInfo = html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-warning"></span></span><span class="scope-pending-hint" title="${unarmedTooltip(install)}">not armed</span>`;
+    // Installed, but a gate holds it back on some client.
+    versionInfo = html`<span class="mono scope-ver">${install.version ?? vm.latestVersion ?? ''}</span><span class="scope-glyph"><span class="codicon codicon-warning"></span></span><span class="scope-pending-hint" title="${unarmedTooltip(install)}">${armingLabel(install)}</span>`;
   } else if (pending) {
     // Not "up to date" — it is at the right version, but an install would still
     // write. Info glyph, not a warning: nothing here is broken.

@@ -7,6 +7,10 @@ import {
   installHolders,
   isHeld,
   browseSortRequest,
+  armingLabel,
+  driftTitle,
+  isUnarmed,
+  unarmedTooltip,
   formatCount,
   outputClients,
   applyAppend,
@@ -584,6 +588,159 @@ suite('outputClients', () => {
       [scope],
     );
     assert.deepStrictEqual(cards[0]?.installs[0]?.clients, ['claude']);
+  });
+});
+
+suite('settings arming wording', () => {
+  const dir = path.join(
+    __dirname,
+    '..',
+    '..',
+    'src',
+    'test',
+    'fixtures',
+    'grim',
+    '0.15.1-settings',
+  );
+  const install = (file: string): InstallVM => {
+    const row = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')).items[0];
+    const repo = String(row.pinned).split('@')[0] ?? '';
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [row],
+      declared: { [`settings:${row.name}`]: `${repo}:1.0.0` },
+    };
+    const cards = buildCards([searchItem({ kind: 'settings', repo })], [scope]);
+    return cards[0]?.installs[0] as InstallVM;
+  };
+  const row = (state: string, cause?: string, kind = 'settings', clients: string[] = []) =>
+    ({
+      kind,
+      state,
+      clients,
+      arming: cause ? [{ client: 'claude', cause, message: 'msg' }] : [],
+    }) as Pick<InstallVM, 'arming' | 'state' | 'kind' | 'clients'>;
+
+  test('recorded gated rows warn with "Settings not applied:" and grim message', () => {
+    for (const [file, cause] of [
+      ['status-flag-off.json', 'settings are gated'],
+      ['status-not-consented.json', 'not been consented'],
+      ['status-client-config-absent.json', 'cli-config.json'],
+    ] as const) {
+      const vm = install(file);
+      assert.strictEqual(isUnarmed(vm), true, file);
+      const tip = unarmedTooltip(vm);
+      assert.ok(tip.startsWith('Settings not applied:\n'), file);
+      assert.ok(tip.includes(cause), file);
+      assert.strictEqual(armingLabel(vm), 'not applied');
+    }
+  });
+
+  test('a git-tracked local file needs attention while the values stay applied', () => {
+    const vm = install('status-local-tracked.json');
+    assert.strictEqual(isUnarmed(vm), true);
+    assert.ok(unarmedTooltip(vm).startsWith('Settings need attention:\n'));
+    assert.strictEqual(armingLabel(vm), 'needs attention');
+  });
+
+  test('no-applicable-settings is silent on an installed row, shown when gated', () => {
+    assert.strictEqual(isUnarmed(install('status-no-applicable.json')), false);
+    assert.strictEqual(isUnarmed(row('gated', 'no-applicable-settings')), true);
+  });
+
+  test('consented and modified rows are not unarmed', () => {
+    assert.strictEqual(isUnarmed(install('status-consented.json')), false);
+    assert.strictEqual(isUnarmed(install('status-modified.json')), false);
+  });
+
+  test('consent-drifted, not-armed and unknown causes are kept', () => {
+    assert.strictEqual(isUnarmed(row('installed', 'consent-drifted')), true);
+    assert.strictEqual(isUnarmed(row('not-armed', 'something-new')), true);
+    assert.ok(unarmedTooltip(row('not-armed', 'not-armed')).startsWith('Settings not applied:'));
+  });
+
+  test('client-has-no-hook-surface is always dropped', () => {
+    assert.strictEqual(isUnarmed(row('gated', 'client-has-no-hook-surface', 'hook')), false);
+  });
+
+  test('hook and other kinds keep their own header and label', () => {
+    assert.ok(
+      unarmedTooltip(row('gated', 'workspace-not-consented', 'hook')).startsWith(
+        'Hook not armed:\n',
+      ),
+    );
+    assert.ok(
+      unarmedTooltip(row('gated', 'workspace-not-consented', 'mcp')).startsWith('Not armed:\n'),
+    );
+    assert.strictEqual(armingLabel(row('gated', undefined, 'hook')), 'not armed');
+    assert.strictEqual(armingLabel(row('gated', undefined, 'mcp')), 'not armed');
+  });
+
+  test('a held-back row whose values are still on disk says they stay in place', () => {
+    // A cleared flag, a revoked consent and a root fence all leave the values
+    // grim wrote, and grim status still lists them in outputs.
+    for (const [state, cause] of [
+      ['gated', 'feature-flag-off'],
+      ['gated', 'workspace-not-consented'],
+      ['not-armed', 'settings-root-in-workspace'],
+    ] as const) {
+      const vm = row(state, cause, 'settings', ['claude']);
+      assert.strictEqual(isUnarmed(vm), true, cause);
+      assert.strictEqual(
+        unarmedTooltip(vm),
+        'Settings held back, values already written stay in place:\nclaude: msg',
+        cause,
+      );
+      assert.strictEqual(armingLabel(vm), 'held back', cause);
+      assert.strictEqual(armingLabel(row(state, cause)), 'not applied', cause);
+    }
+  });
+
+  test('a note that gates the row never says values stay in place', () => {
+    // client-config-absent gates a row only when no client can take a value.
+    const vm = row('gated', 'client-config-absent', 'settings', ['claude']);
+    assert.ok(unarmedTooltip(vm).startsWith('Settings not applied:\n'));
+    assert.strictEqual(armingLabel(vm), 'not applied');
+    const stale = row('stale', 'client-config-absent');
+    assert.strictEqual(armingLabel(stale), 'not applied');
+    assert.strictEqual(isUnarmed(row('stale', 'no-applicable-settings')), true);
+    assert.strictEqual(
+      isUnarmed(row('stale', 'no-applicable-settings', 'settings', ['claude'])),
+      false,
+    );
+  });
+
+  test('a stale row reads its gate from arming', () => {
+    const held = row('stale', 'feature-flag-off');
+    assert.ok(unarmedTooltip(held).startsWith('Settings not applied:\n'));
+    assert.strictEqual(armingLabel(held), 'not applied');
+    assert.strictEqual(
+      armingLabel(row('stale', 'feature-flag-off', 'settings', ['claude'])),
+      'held back',
+    );
+    assert.strictEqual(
+      armingLabel(row('stale', 'local-file-tracked', 'settings', ['claude'])),
+      'needs attention',
+    );
+  });
+
+  test('driftTitle words settings values apart from installed files', () => {
+    assert.strictEqual(
+      driftTitle({ kind: 'settings', state: 'modified' }),
+      'Settings values were changed locally',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'settings', state: 'missing' }),
+      'Settings values are missing',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'skill', state: 'modified' }),
+      'Installed files were modified locally',
+    );
+    assert.strictEqual(
+      driftTitle({ kind: 'skill', state: 'missing' }),
+      'Installed files are missing',
+    );
   });
 });
 

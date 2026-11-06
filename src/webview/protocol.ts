@@ -64,7 +64,7 @@ export interface InstallVM {
   updateAvailable: boolean;
   clients: string[];
   /** grim's raw state (installed|stale|modified|missing|outdated; a hook
-   *  also gated|not-armed|untrusted). */
+   *  or settings row also gated|not-armed, a hook also untrusted). */
   state: string;
   kind: string;
   name: string;
@@ -97,8 +97,10 @@ export interface InstallVM {
    *  fault, and under client autodetect it can fire because some OTHER tool
    *  created a client's marker directory. Never badge it as damage. */
   outputsPending?: { client: string; path: string }[];
-  /** Hook only: per-client reasons the hook is not armed (grim status
-   *  `arming`). Installed but inert there — a warning, not damage. */
+  /** Hook and settings rows: per-client reasons the row is not armed (grim
+   *  status `arming`). A hook stays inert there; a settings package is held
+   *  back, though values grim wrote earlier stay in place. A warning, not
+   *  damage. */
   arming?: { client: string; cause: string; message: string }[];
   /** Per-status-item deprecation notice, populated only under `--check` (null
    *  otherwise) — buildInstalledCards' fallback source when the artifact isn't

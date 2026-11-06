@@ -80,7 +80,7 @@ export interface WireStatusItem {
   deprecated?: string | null;
   replaced_by?: string | null;
   update_available?: boolean | null;
-  /** Hook rows only: per-client reasons the hook is not armed. */
+  /** Hook and settings rows: per-client reasons the row is not armed. */
   arming?: { client: string; cause: string; message: string }[];
 }
 
@@ -374,24 +374,99 @@ export function outputsPendingTooltip(install: Pick<InstallVM, 'outputsPending'>
   );
 }
 
+type ArmingInstall = Pick<InstallVM, 'arming' | 'state' | 'kind' | 'clients'>;
+
 /** The arming verdicts worth a warning. `client-has-no-hook-surface` is the
- *  declined path (that client simply has no hooks), not something to fix. */
-function unarmedVerdicts(install: Pick<InstallVM, 'arming'>): NonNullable<InstallVM['arming']> {
-  return (install.arming ?? []).filter((a) => a.cause !== 'client-has-no-hook-surface');
+ *  declined path (that client simply has no hooks), not something to fix.
+ *  `no-applicable-settings` is routine on an installed settings row and only
+ *  worth showing while nothing of the row applies (`settingsHold` reads
+ *  `held`). */
+function unarmedVerdicts(install: ArmingInstall): NonNullable<InstallVM['arming']> {
+  return (install.arming ?? []).filter(
+    (a) =>
+      a.cause !== 'client-has-no-hook-surface' &&
+      (a.cause !== 'no-applicable-settings' || settingsHold(install) === 'held'),
+  );
 }
 
-/** True when an installed hook is held back from arming on some client — it is
- *  on disk but will not run there until the named gate clears. */
-export function isUnarmed(install: Pick<InstallVM, 'arming'>): boolean {
+/** True when an installed hook or settings row is held back on some client — it
+ *  is on disk but does not take effect there until the named gate clears. */
+export function isUnarmed(install: ArmingInstall): boolean {
   return unarmedVerdicts(install).length > 0;
 }
 
-/** Unarmed-hook tooltip: one "client: message" per line, grim's own wording. */
-export function unarmedTooltip(install: Pick<InstallVM, 'arming'>): string {
-  return [
-    'Hook not armed:',
-    ...unarmedVerdicts(install).map((a) => `${a.client}: ${a.message}`),
-  ].join('\n');
+/** Causes that note one client on a settings row rather than hold the package
+ *  back (grim's json-interface "Hook arming"). */
+const SETTINGS_NOTES = new Set([
+  'local-file-tracked',
+  'client-config-absent',
+  'no-applicable-settings',
+]);
+
+/** How grim treats a settings row: `applied` when nothing holds it back, `held`
+ *  when nothing of it applies to a selected client, `kept` when a gate holds it
+ *  back but values grim wrote earlier stay in place (a cleared flag, a revoked
+ *  consent or a root fence never removes them, and `outputs` still lists them).
+ *  `state` reads `gated` or `not-armed` for a held-back row, except a `stale`
+ *  row, whose gate shows in `arming` only. A row held back by notes alone reads
+ *  `held`, never `kept`: grim gates a row on a note only when no selected
+ *  client can take a value. */
+function settingsHold(
+  install: Pick<InstallVM, 'state' | 'arming' | 'clients'>,
+): 'applied' | 'held' | 'kept' {
+  const causes = install.arming ?? [];
+  const gate = causes.some((a) => !SETTINGS_NOTES.has(a.cause));
+  const held =
+    install.state === 'gated' ||
+    install.state === 'not-armed' ||
+    (install.state === 'stale' && (gate || (causes.length > 0 && install.clients.length === 0)));
+  if (!held) {
+    return 'applied';
+  }
+  return gate && install.clients.length > 0 ? 'kept' : 'held';
+}
+
+const SETTINGS_HEADERS = {
+  applied: 'Settings need attention:',
+  held: 'Settings not applied:',
+  kept: 'Settings held back, values already written stay in place:',
+} as const;
+
+const SETTINGS_LABELS = {
+  applied: 'needs attention',
+  held: 'not applied',
+  kept: 'held back',
+} as const;
+
+/** Unarmed tooltip: a kind-aware header, then one "client: message" per line,
+ *  grim's own wording. */
+export function unarmedTooltip(install: ArmingInstall): string {
+  let header: string;
+  if (install.kind === 'hook') {
+    header = 'Hook not armed:';
+  } else if (install.kind === 'settings') {
+    header = SETTINGS_HEADERS[settingsHold(install)];
+  } else {
+    header = 'Not armed:';
+  }
+  return [header, ...unarmedVerdicts(install).map((a) => `${a.client}: ${a.message}`)].join('\n');
+}
+
+/** Short badge label for the unarmed scope row. */
+export function armingLabel(install: ArmingInstall): string {
+  if (install.kind !== 'settings') {
+    return 'not armed';
+  }
+  return SETTINGS_LABELS[settingsHold(install)];
+}
+
+/** Compact-row warning title for a modified or missing install. */
+export function driftTitle(install: Pick<InstallVM, 'kind' | 'state'>): string {
+  const modified = install.state === 'modified';
+  if (install.kind === 'settings') {
+    return modified ? 'Settings values were changed locally' : 'Settings values are missing';
+  }
+  return modified ? 'Installed files were modified locally' : 'Installed files are missing';
 }
 
 /** Drift badge tooltip: "Missing: a, b · Extra: c", either half omitted when
