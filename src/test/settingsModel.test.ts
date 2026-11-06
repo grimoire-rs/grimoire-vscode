@@ -277,6 +277,7 @@ suite('buildGroups — grim section', () => {
       rows.map((r) => [r.key, r.advanced]),
       [
         ['options.experimental.hooks', false],
+        ['options.experimental.settings', false],
         ['plugin.name', true],
         ['plugin.version', false],
       ],

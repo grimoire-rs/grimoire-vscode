@@ -38,7 +38,7 @@ export function wireConfigEntries(): WireConfigEntry[] {
 }
 
 /** The keys a current grim lists beyond the 9 fixed ones: the experimental
- *  hooks gate and one of the `plugin.*` project export keys (advanced). */
+ *  hooks and settings gates and one of the `plugin.*` project export keys (advanced). */
 export function wireSectionedExtras(): WireConfigEntry[] {
   return [
     wireConfigEntry({
@@ -48,6 +48,19 @@ export function wireSectionedExtras(): WireConfigEntry[] {
       type: 'boolean',
       title: 'Hooks',
       description: 'Enables the experimental `hook` artifact kind.',
+      default: 'false',
+      values: null,
+      section: 'experimental',
+      advanced: false,
+    }),
+    wireConfigEntry({
+      key: 'options.experimental.settings',
+      value: null,
+      set: false,
+      type: 'boolean',
+      title: 'Experimental settings',
+      description:
+        "Controls whether `grim install` writes declared settings into your AI clients' own config files. When unset, install writes and removes no settings; no environment variable overrides this.",
       default: 'false',
       values: null,
       section: 'experimental',
