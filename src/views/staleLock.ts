@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import {
   dialogText,
   lockArgs,
+  refusedNames,
   updateArgs,
   type ActionReport,
   type GrimResult,
@@ -14,6 +15,7 @@ import {
 } from '../grim';
 import { reportGrimFailure, runWithStatusProgress } from '../notify';
 import type { ScopeService } from '../scopes';
+import { offerModifiedRefusal } from './updateRefusal';
 
 type FailedResult = Extract<GrimResult<unknown>, { ok: false }>;
 
@@ -27,6 +29,11 @@ type FailedResult = Extract<GrimResult<unknown>, { ok: false }>;
  * notification, surfaces any failure via the normal error path, and calls
  * `onDone` (the host's refresh wiring). Declining is still "handled" — the
  * partial-resolve refusal is expected, not an error to toast.
+ *
+ * An update report that refuses a locally modified artifact is still ok, with
+ * the pin moved and the files left alone. Its artifacts are named the way
+ * Update All names them, with no one-click Overwrite for a whole scope, and
+ * without awaiting the notification, so an unclicked one holds no busy state.
  */
 export async function offerFullUpdate(
   result: FailedResult,
@@ -47,12 +54,26 @@ export async function offerFullUpdate(
   if (choice !== 'Run Full Update') {
     return true;
   }
-  await runWithStatusProgress('Updating all artifacts', async () => {
+  const report = await runWithStatusProgress('Updating all artifacts', async () => {
     const full = await scopes.run<ActionReport>(updateArgs(), scope);
     if (!full.ok) {
       reportGrimFailure(full, output);
+      return undefined;
     }
+    return full.value;
   });
+  const refused = report === undefined ? [] : refusedNames(report);
+  if (refused.length > 0) {
+    output.appendLine(
+      `grim update (${scope}): refused to overwrite locally-modified ` +
+        `${refused.join(', ')} — files left in place, lock pin moved`,
+    );
+    // Caught, not bare `void`: nothing awaits it, and a button clicked after a
+    // reload rejects, as offerInstallRefusal's does.
+    void offerModifiedRefusal(scopes, scope, 'update', { refused }).catch((e) =>
+      output.appendLine(`update refusal notice failed: ${String(e)}`),
+    );
+  }
   await onDone();
   return true;
 }
