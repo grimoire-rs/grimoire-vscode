@@ -311,20 +311,34 @@ export interface StatusEnvelope extends ItemsEnvelope<StatusItem> {
   checked?: boolean;
 }
 
+/** What `grim update` did to one row, in the order {@link updateSummary} names
+ *  them. All but `restored` are the lock diff. `restored` comes from the install
+ *  outcome: the pin held (`old` equals `new`) and the run wrote the artifact's
+ *  files again — a deleted output came back, or a client got its first copy.
+ *  A grim that predates it reports such a row `unchanged`. */
+export const UPDATE_ACTIONS = [
+  'updated',
+  'unchanged',
+  'removed',
+  'kept-modified',
+  'restored',
+] as const;
+export type UpdateAction = (typeof UPDATE_ACTIONS)[number];
+
 /** One row of `grim update --format json`'s `items` envelope: one artifact's
  *  update outcome. `old`/`new` are digests — `old: null` means the artifact
- *  had no previous lock entry, `new: null` means the row left the lock
- *  (pruned or kept-modified) and has no current digest.
+ *  had no previous lock entry, `new: null` means the row has no new pin (pruned,
+ *  kept-modified, or a named run's `removed` row it left in place).
  *  `reaped_clients`/`kept_modified_clients` are always-present sorted client
  *  arrays (`[]` when no client was dropped for this row); reap is only ever
  *  attempted against an explicitly set `[options].clients` — with autodetect
- *  (no explicit set) both stay `[]` for every row. */
+ *  (no explicit set) both stay `[]` for every row, and a named run never reaps. */
 export interface UpdateEntry {
   kind: string;
   name: string;
   old: string | null;
   new: string | null;
-  action: 'updated' | 'unchanged' | 'removed' | 'kept-modified';
+  action: UpdateAction;
   reaped_clients: string[];
   kept_modified_clients: string[];
   // Additive (same tolerance pattern as `RegistryInfo.authenticated`): true when
@@ -711,6 +725,26 @@ export function refusedNames(value: unknown): string[] {
     }
   }
   return names;
+}
+
+/** The counts the Output channel logs for one `grim update` report: each of
+ *  {@link UPDATE_ACTIONS}, zeros included, then `N other` for an action this
+ *  extension does not know. grim adds action values over time, so a row is
+ *  counted either way and never dropped. Pure; exported for tests. */
+export function updateSummary(items: readonly { action?: unknown }[]): string {
+  const counts = new Map<string, number>(UPDATE_ACTIONS.map((action) => [action, 0]));
+  let other = 0;
+  for (const item of items) {
+    const action = typeof item.action === 'string' ? item.action : '';
+    const seen = counts.get(action);
+    if (seen === undefined) {
+      other += 1;
+    } else {
+      counts.set(action, seen + 1);
+    }
+  }
+  const parts = UPDATE_ACTIONS.map((action) => `${counts.get(action) ?? 0} ${action}`);
+  return (other > 0 ? [...parts, `${other} other`] : parts).join(', ');
 }
 
 /** The settings values an ok-path `grim update` report refused (top-level
