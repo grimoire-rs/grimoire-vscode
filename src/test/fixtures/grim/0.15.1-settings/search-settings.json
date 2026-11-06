@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "repo": "ghcr.io/acme/settings/team-defaults",
+      "source": {
+        "alias": null,
+        "locator": "ghcr.io"
+      },
+      "summary": "team defaults",
+      "description": "Team defaults: a model, allow and deny rules, and the acme plugin marketplace.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "grimoire",
+        "digest": "sha256:417c5f1e799e6e9c46b286438dec8b93a97f3a25568345487bad1cc65c4a054a"
+      },
+      "status": "installed"
+    }
+  ],
+  "sources": [
+    {
+      "alias": null,
+      "locator": "ghcr.io",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

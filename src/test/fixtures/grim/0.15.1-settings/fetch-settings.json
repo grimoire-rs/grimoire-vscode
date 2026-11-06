@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/settings/team-defaults:1",
+  "digest": "sha256:417c5f1e799e6e9c46b286438dec8b93a97f3a25568345487bad1cc65c4a054a",
+  "kind": "settings",
+  "name": "team-defaults",
+  "vendor": "canonical",
+  "content": "{\n  \"claude\": {\n    \"extraKnownMarketplaces\": {\n      \"acme\": {\n        \"source\": {\n          \"repo\": \"acme/tools\",\n          \"source\": \"github\"\n        }\n      }\n    },\n    \"model\": \"sonnet\",\n    \"permissions\": {\n      \"allow\": [\n        \"Bash(git status:*)\"\n      ],\n      \"deny\": [\n        \"Bash(rm:*)\"\n      ]\n    }\n  },\n  \"codex\": {\n    \"marketplaces\": {\n      \"acme\": {\n        \"source\": \"https://example.com/acme\",\n        \"source_type\": \"git\"\n      }\n    },\n    \"model\": \"gpt-5\"\n  },\n  \"copilot\": {\n    \"extraKnownMarketplaces\": {\n      \"acme\": {\n        \"source\": \"https://example.com/acme\"\n      }\n    }\n  },\n  \"description\": \"Team defaults: a model, allow and deny rules, and the acme plugin marketplace.\",\n  \"keywords\": \"team,defaults,manual-rig\",\n  \"summary\": \"team defaults\"\n}\n"
+}

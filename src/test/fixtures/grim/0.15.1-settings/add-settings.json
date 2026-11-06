@@ -1,0 +1,41 @@
+{
+  "kind": "settings",
+  "name": "team-defaults",
+  "pinned": "ghcr.io/acme/settings/team-defaults@sha256:417c5f1e799e6e9c46b286438dec8b93a97f3a25568345487bad1cc65c4a054a",
+  "status": "added",
+  "pulled_in": [],
+  "settings_changes": [
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/extraKnownMarketplaces/acme",
+      "element": null,
+      "action": "added"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/model",
+      "element": null,
+      "action": "added"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/allow",
+      "element": "Bash(git status:*)",
+      "action": "added"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/deny",
+      "element": "Bash(rm:*)",
+      "action": "added"
+    }
+  ]
+}

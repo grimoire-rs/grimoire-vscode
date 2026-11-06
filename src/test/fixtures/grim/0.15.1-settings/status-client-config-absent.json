@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "cursor-only",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/settings/cursor-only@sha256:9a8dd695425eb4d69216e1ce5847311f5fc82bc400b40eb39c96e99431eefe50",
+      "state": "gated",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "cursor",
+          "cause": "client-config-absent",
+          "message": "cursor writes only into an existing /home/u/.config/cursor/cli-config.json; start cursor once so it creates that file, then run grim install --global",
+          "transient": false
+        }
+      ]
+    }
+  ],
+  "checked": false
+}

@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "team-defaults",
+      "target": "/home/u/project/.claude/settings.local.json",
+      "status": "updated",
+      "armed": null
+    }
+  ],
+  "settings_changes": [
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/model",
+      "element": null,
+      "action": "overwritten"
+    }
+  ]
+}

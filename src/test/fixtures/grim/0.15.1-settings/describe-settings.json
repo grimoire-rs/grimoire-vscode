@@ -1,0 +1,51 @@
+{
+  "ref": "ghcr.io/acme/settings/team-defaults:1",
+  "digest": "sha256:417c5f1e799e6e9c46b286438dec8b93a97f3a25568345487bad1cc65c4a054a",
+  "kind": "settings",
+  "name": "team-defaults",
+  "title": "team-defaults",
+  "description": "Team defaults: a model, allow and deny rules, and the acme plugin marketplace.",
+  "has_description": false,
+  "summary": "team defaults",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "grimoire",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "team",
+    "defaults",
+    "manual-rig"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "team,defaults,manual-rig",
+    "com.grimoire.kind": "settings",
+    "com.grimoire.summary": "team defaults",
+    "org.opencontainers.image.description": "Team defaults: a model, allow and deny rules, and the acme plugin marketplace.",
+    "org.opencontainers.image.source": "ghcr.io/acme/settings/team-defaults",
+    "org.opencontainers.image.title": "team-defaults",
+    "org.opencontainers.image.vendor": "grimoire",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": []
+}

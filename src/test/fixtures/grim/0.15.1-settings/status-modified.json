@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "team-defaults",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/settings/team-defaults@sha256:417c5f1e799e6e9c46b286438dec8b93a97f3a25568345487bad1cc65c4a054a",
+      "state": "modified",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(git status:*)"
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(rm:*)"
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": []
+    }
+  ],
+  "checked": false
+}
