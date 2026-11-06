@@ -1,7 +1,7 @@
 // Which experimental-hook gate the project prompt offers, from grim status rows.
 import * as assert from 'assert';
 import type { StatusItem } from '../grim';
-import { hookPromptFor } from '../views/hookPrompt';
+import { hookPromptFor } from '../gatePrompt';
 
 const row = (name: string, causes: string[], kind = 'hook'): StatusItem => ({
   kind,
