@@ -621,6 +621,7 @@ const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'mcp', label: 'MCP' },
   { id: 'bundle', label: 'Bundle' },
   { id: 'hook', label: 'Hook' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 /** Kind multi-select chip row (replaces the dropdown): All + a chip per kind
@@ -1806,7 +1807,7 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
       : nothing;
     return html`${boxes}${manifest}`;
   }
-  if (vm.kind === 'mcp' && vm.contentJson !== null) {
+  if ((vm.kind === 'mcp' || vm.kind === 'settings') && vm.contentJson !== null) {
     return renderJsonBlock(vm.contentJson);
   }
   return html`<div class="md-body" id="md-contents">${mdBody(vm.contentMarkdown)}</div>`;

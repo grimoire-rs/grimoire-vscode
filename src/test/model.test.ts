@@ -1,4 +1,6 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import { card as cardFixture, installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
@@ -6,6 +8,7 @@ import {
   isHeld,
   browseSortRequest,
   formatCount,
+  outputClients,
   applyAppend,
   foldHostPost,
   pagingSummary,
@@ -166,6 +169,9 @@ suite('ref helpers', () => {
     assert.strictEqual(normalizeKind('SKILL'), 'skill');
     assert.strictEqual(normalizeKind('unknown'), null);
     assert.strictEqual(normalizeKind(null), null);
+    assert.strictEqual(normalizeKind('settings'), 'settings');
+    assert.strictEqual(normalizeKind('Settings'), 'settings');
+    assert.strictEqual(normalizeKind('setting'), null);
   });
 });
 
@@ -534,6 +540,53 @@ suite('client drift', () => {
   });
 });
 
+suite('outputClients', () => {
+  test('empty stays empty', () => {
+    assert.deepStrictEqual(outputClients([]), []);
+  });
+
+  test('repeated clients collapse to one', () => {
+    assert.deepStrictEqual(outputClients([{ client: 'claude' }, { client: 'claude' }]), ['claude']);
+  });
+
+  test('first-seen order is kept', () => {
+    assert.deepStrictEqual(
+      outputClients([{ client: 'claude' }, { client: 'copilot' }, { client: 'claude' }]),
+      ['claude', 'copilot'],
+    );
+  });
+
+  test('a settings status row with four claude outputs lists claude once', () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          '..',
+          '..',
+          'src',
+          'test',
+          'fixtures',
+          'grim',
+          '0.15.1-settings',
+          'status-consented.json',
+        ),
+        'utf8',
+      ),
+    );
+    const row = fixture.items[0];
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [row],
+      declared: { 'settings:team-defaults': 'ghcr.io/acme/settings/team-defaults:1.0.0' },
+    };
+    const cards = buildCards(
+      [searchItem({ kind: 'settings', repo: 'ghcr.io/acme/settings/team-defaults' })],
+      [scope],
+    );
+    assert.deepStrictEqual(cards[0]?.installs[0]?.clients, ['claude']);
+  });
+});
+
 suite('materialization drift (outputs_pending)', () => {
   const pending = [{ client: 'cursor', path: '/repo/.cursor/skills/grim-usage' }];
 
@@ -734,6 +787,21 @@ suite('filters', () => {
       2,
     );
     assert.strictEqual(filterCards(cards, DEFAULT_FILTER).length, cards.length);
+  });
+
+  test('kind filter: settings keeps only settings cards', () => {
+    const mixed = buildCards(
+      [
+        searchItem({ kind: 'settings', repo: 'ghcr.io/acme/settings/team-defaults' }),
+        searchItem({ kind: 'skill', repo: 'ghcr.io/grimoire-rs/skills/grim-usage' }),
+      ],
+      [],
+    );
+    const kept = filterCards(mixed, { ...DEFAULT_FILTER, kinds: ['settings'] });
+    assert.deepStrictEqual(
+      kept.map((c) => c.kind),
+      ['settings'],
+    );
   });
 
   test('DEFAULT_FILTER kinds is empty (All)', () => {
@@ -1319,6 +1387,57 @@ suite('details view model', () => {
     assert.strictEqual(vm.contentMarkdown, null, 'JSON does not route through markdown');
     assert.ok(!vm.contentJson?.includes('```'), 'no fenced-block wrapping');
     assert.match(vm.contentJson ?? '', /"command": "grim"/, 'pretty-printed with spacing');
+  });
+
+  test('settings JSON content lands on contentJson like mcp', () => {
+    const fixture = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          '..',
+          '..',
+          'src',
+          'test',
+          'fixtures',
+          'grim',
+          '0.15.1-settings',
+          'fetch-settings.json',
+        ),
+        'utf8',
+      ),
+    );
+    const vm = buildDetailsVM({
+      repo: 'ghcr.io/acme/settings/team-defaults',
+      searchItem: null,
+      describe: null,
+      fetch: fixture,
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.kind, 'settings');
+    assert.strictEqual(vm.contentMarkdown, null);
+    assert.match(vm.contentJson ?? '', /"extraKnownMarketplaces"/);
+  });
+
+  test('a non-JSON settings body stays markdown', () => {
+    const vm = buildDetailsVM({
+      repo: 'ghcr.io/x/settings/y',
+      searchItem: null,
+      describe: null,
+      fetch: {
+        ref: 'ghcr.io/x/settings/y:1',
+        digest: 'sha256:1',
+        kind: 'settings',
+        name: 'y',
+        content: 'plain text',
+      },
+      installs: [],
+      scopes: scopesVM,
+      logoUri: null,
+    });
+    assert.strictEqual(vm.contentJson, null);
+    assert.strictEqual(vm.contentMarkdown, 'plain text');
   });
 
   test('deprecated + installed state', () => {
@@ -2107,7 +2226,21 @@ suite('toggleKinds', () => {
   });
 
   test('selecting every kind collapses to [] (All)', () => {
-    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), []);
+    assert.deepStrictEqual(
+      toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'], 'settings'),
+      [],
+    );
+  });
+
+  test('six of seven kinds selected keeps the selection', () => {
+    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), [
+      'skill',
+      'rule',
+      'agent',
+      'mcp',
+      'bundle',
+      'hook',
+    ]);
   });
 
   test('unknown kinds toggle like any other (inert in filtering)', () => {

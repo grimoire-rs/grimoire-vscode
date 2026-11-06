@@ -7098,6 +7098,9 @@ grim = "ghcr.io/grimoire-rs/mcp/grim:latest"
 [hooks]
 shell-guard = "ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0"
 
+[settings]
+team-defaults = "ghcr.io/acme/settings/team-defaults:1"
+
 [options]
 clients = "claude"
 `;
@@ -7106,6 +7109,21 @@ clients = "claude"
       'skill:grim-usage': 'ghcr.io/grimoire-rs/skills/grim-usage:1.4.2',
       'mcp:grim': 'ghcr.io/grimoire-rs/mcp/grim:latest',
       'hook:shell-guard': 'ghcr.io/grimoire-rs/hooks/shell-guard:1.0.0',
+      'settings:team-defaults': 'ghcr.io/acme/settings/team-defaults:1',
+    });
+  });
+
+  test('a settings entry and a skill entry with one name stay two keys', () => {
+    const declared = parseDeclaredRefs(`
+[settings]
+shared = "ghcr.io/acme/settings/shared:1"
+
+[skills]
+shared = "ghcr.io/acme/skills/shared:2"
+`);
+    assert.deepStrictEqual(declared, {
+      'settings:shared': 'ghcr.io/acme/settings/shared:1',
+      'skill:shared': 'ghcr.io/acme/skills/shared:2',
     });
   });
 

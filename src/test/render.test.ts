@@ -291,6 +291,7 @@ suite('card rendering', () => {
     assert.strictEqual(kindIcon('agent'), 'agent');
     assert.strictEqual(kindIcon('mcp'), 'mcp');
     assert.strictEqual(kindIcon('bundle'), 'package');
+    assert.strictEqual(kindIcon('settings'), 'settings');
     assert.strictEqual(kindIcon(null), 'question');
   });
 
@@ -1378,6 +1379,14 @@ suite('sidebar split rendering (item 3)', () => {
     assert.ok(
       allActive.includes('data-kind="hook"') && allActive.includes('codicon-symbol-event'),
       'hook chip carries its codicon',
+    );
+    assert.ok(
+      allActive.includes('data-kind="settings"') && allActive.includes('>Settings<'),
+      'settings chip present',
+    );
+    assert.ok(
+      allActive.indexOf('data-kind="settings"') > allActive.indexOf('data-kind="hook"'),
+      'settings chip follows hook',
     );
     // Two kinds selected → those chips active, All inactive.
     const multi = await litHtml(
@@ -2736,6 +2745,21 @@ suite('details rendering', () => {
     assert.ok(html.includes('tag-overflow'));
     assert.ok(html.includes('data-action="toggle-tags"'));
     assert.ok(html.includes('+2 more'));
+  });
+
+  test('settings CONTENTS renders a full-width highlighted JSON block, no markdown', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({
+          kind: 'settings',
+          contentMarkdown: null,
+          contentJson: '{"claude": {"extraKnownMarketplaces": {}}}',
+        }),
+      ),
+    );
+    assert.ok(html.includes('class="json-code"'), 'full-width json block present');
+    assert.ok(html.includes('extraKnownMarketplaces'));
+    assert.ok(!html.includes('id="md-contents"'), 'settings bypasses markdown-it');
   });
 
   test('mcp CONTENTS renders a full-width highlighted JSON block, no markdown (item 6)', async () => {

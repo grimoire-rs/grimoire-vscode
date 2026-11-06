@@ -90,6 +90,7 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
     ['bundles', 'bundle'],
     ['mcp', 'mcp'],
     ['hooks', 'hook'],
+    ['settings', 'settings'],
   ]);
   let kind: string | undefined;
   for (const rawLine of toml.split('\n')) {

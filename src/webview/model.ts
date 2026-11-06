@@ -108,7 +108,15 @@ export function computeUpdateAvailable(item: {
   return item.update_available ?? item.state === 'outdated';
 }
 
-export const KINDS: ArtifactKind[] = ['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'];
+export const KINDS: ArtifactKind[] = [
+  'skill',
+  'rule',
+  'agent',
+  'mcp',
+  'bundle',
+  'hook',
+  'settings',
+];
 
 /** Codicon per artifact kind. `agent` and `mcp` use the icons the codicon set
  *  added for exactly those concepts; the design mockups predate them and asked
@@ -121,6 +129,7 @@ export const KIND_ICONS: Record<ArtifactKind, string> = {
   bundle: 'package',
   // No dedicated codicon yet; a hook is a lifecycle event handler.
   hook: 'symbol-event',
+  settings: 'settings',
 };
 
 export function normalizeKind(kind: string | null | undefined): ArtifactKind | null {
@@ -281,6 +290,12 @@ export interface ScopeStatus {
   declared: Record<string, string>;
 }
 
+/** Distinct output clients in first-seen order. A settings row carries one
+ *  output per value, so the raw list repeats a client. */
+export function outputClients(outputs: ReadonlyArray<{ client: string }>): string[] {
+  return [...new Set(outputs.map((o) => o.client))];
+}
+
 /** Installs per repo for one scope, MANY per repo: two declarations can point
  *  at one repo (a second `grim add … --name other`, or a repo published as two
  *  kinds), and they are distinct artifacts with their own state and update
@@ -311,7 +326,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
       scope: scope.scope,
       version,
       updateAvailable: computeUpdateAvailable(item),
-      clients: (item.outputs ?? []).map((o) => o.client),
+      clients: outputClients(item.outputs ?? []),
       state: item.state,
       kind: item.kind,
       name: item.name,
@@ -2791,8 +2806,8 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     } else {
       const parsed = parseFrontmatter(fetch.content);
       frontmatter = parsed.frontmatter;
-      if (kind === 'mcp' && parsed.body.trimStart().startsWith('{')) {
-        // MCP descriptors are JSON — highlighted directly in CONTENTS, not fenced.
+      if ((kind === 'mcp' || kind === 'settings') && parsed.body.trimStart().startsWith('{')) {
+        // MCP and settings descriptors are JSON — highlighted directly in CONTENTS, not fenced.
         contentJson = prettyJson(parsed.body);
       } else {
         contentMarkdown = parsed.body;

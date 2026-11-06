@@ -41,7 +41,7 @@ export interface PagingState {
   sort?: SortMode;
 }
 
-export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle' | 'hook';
+export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle' | 'hook' | 'settings';
 
 export type RowState = 'not-installed' | 'installed' | 'outdated' | 'deprecated';
 
