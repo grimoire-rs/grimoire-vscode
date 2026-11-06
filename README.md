@@ -6,15 +6,28 @@
 
 A marketplace UI for [grim](https://github.com/grimoire-rs/grimoire) — the
 OCI-backed package manager for AI artifacts (skills, rules, agents, MCP servers,
-bundles, and experimental hooks). Search the catalog, read the docs, and
-install, update, and remove artifacts without leaving the editor — the
-familiar Extensions view, but for the AI artifacts your tools rely on.
+bundles, and experimental hooks and settings). Search the catalog, read the
+docs, and install, update, and remove artifacts without leaving the editor —
+the familiar Extensions view, but for the AI artifacts your tools rely on.
+
+Hooks and settings are experimental, and grim applies them only after two
+gates: the project's `options.experimental.hooks` or
+`options.experimental.settings` flag, then consent for the workspace. When a
+project declares either in a trusted workspace, Grimoire asks about each gate
+once per session for each kind it holds back. **Enable** sets the flag in
+`grimoire.toml`; **Allow** records consent with `grim hook allow`, which covers
+every hook and settings package the lock pins, and both then run
+`grim install`. If the workspace declares a package the consent prompt did not
+name by the time you choose **Allow**, Grimoire asks again instead, as it does
+when a step of **Allow** fails. Answer **No** and Grimoire stops asking about
+that gate in that workspace for the kinds it held back; a kind it only named is
+still asked once that gate holds it.
 
 ## What it does
 
 - **Browse the catalog** — the **Browse** tab searches every configured
   registry at once. Filter by kind with the chip row (Skill / Rule / Agent /
-  MCP / Bundle).
+  MCP / Bundle / Hook / Settings).
 - **Stay current** — once a day Grimoire asks your registries which installed
   artifacts have newer versions and carries the count on the activity-bar icon
   and on the **Updates** tab. The tab lists them; an **Update All** icon appears
@@ -30,7 +43,8 @@ familiar Extensions view, but for the AI artifacts your tools rely on.
 - **See what you have** — the **Installed** tab lists your installed artifacts,
   with a **Project / Global** toggle to switch which scope's list you're looking
   at. A status line pinned below the list shows when the catalog was last
-  synced.
+  synced. A hook or settings package that grim holds back shows a warning whose
+  tooltip says why, in grim's own words.
 - **Read before you install** — open any artifact in an editor tab with
   **README**, **CONTENTS**, and **CHANGELOG** tabs and a metadata rail
   (installation status, package info, source and license, keywords). Single-click
@@ -47,13 +61,15 @@ familiar Extensions view, but for the AI artifacts your tools rely on.
 - **Pick a version** — install, downgrade, or pin an exact tag from the details
   header or a card's menu.
 - **Recover from a blocked install** — when `grim` refuses to overwrite local
-  changes, Grimoire offers an **Overwrite** confirm instead of a bare error. A
-  refusal it can never safely force — a recorded path resolving outside its
-  anchor root — points you at **Show Output** and the uninstall-then-reinstall
-  fix instead. A whole-scope run that stops for the same reason (**Update All**,
-  or **Complete Install**) never offers a one-click overwrite, because forcing it
-  would discard your edits to every other artifact in the scope: it names the
-  modified artifact and offers to open it, so you can decide one at a time.
+  changes, Grimoire offers an **Overwrite** confirm instead of a bare error. For
+  a settings package the confirm names each refused value by package, client,
+  file and key, never the value itself. A refusal it can never safely force — a
+  recorded path resolving outside its anchor root — points you at **Show
+  Output** and the uninstall-then-reinstall fix instead. A whole-scope run
+  that stops for the same reason (**Update All**, or **Complete Install**)
+  never offers a one-click overwrite, because forcing it would discard your
+  edits to every other artifact in the scope: it names the modified artifact
+  and offers to open it, so you can decide one at a time.
 - **Finish an incomplete install** — when an artifact is installed and intact but
   `grim` would still write something for it (a client that gained support since
   the last install, or a render-layout move), the row shows an **Install
