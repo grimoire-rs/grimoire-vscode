@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { recordedSettingsRaw } from './fixtures/recorded';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1403,18 +1404,7 @@ suite('incompleteSources', () => {
 });
 
 suite('refused settings pieces', () => {
-  const fixtures = path.join(
-    __dirname,
-    '..',
-    '..',
-    'src',
-    'test',
-    'fixtures',
-    'grim',
-    '0.15.1-settings',
-  );
-  const raw = (name: string): string =>
-    fs.readFileSync(path.join(fixtures, `${name}.json`), 'utf8');
+  const raw = recordedSettingsRaw;
   const exitOf = (name: string): number | undefined =>
     (JSON.parse(raw('exits')) as Record<string, number>)[name];
   const piece = (extra: Partial<RefusedPiece> = {}): RefusedPiece => ({

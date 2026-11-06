@@ -1,6 +1,5 @@
 import * as assert from 'assert';
-import * as fs from 'fs';
-import * as path from 'path';
+import { recordedSettings } from './fixtures/recorded';
 import { card as cardFixture, installedScope, sidebarState } from './fixtures/vms';
 import {
   applyCardMeta,
@@ -561,23 +560,8 @@ suite('outputClients', () => {
   });
 
   test('a settings status row with four claude outputs lists claude once', () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          'src',
-          'test',
-          'fixtures',
-          'grim',
-          '0.15.1-settings',
-          'status-consented.json',
-        ),
-        'utf8',
-      ),
-    );
-    const row = fixture.items[0];
+    const fixture = recordedSettings<{ items: WireStatusItem[] }>('status-consented');
+    const row = fixture.items[0] as WireStatusItem;
     const scope: ScopeStatus = {
       scope: 'project',
       status: [row],
@@ -592,18 +576,9 @@ suite('outputClients', () => {
 });
 
 suite('settings arming wording', () => {
-  const dir = path.join(
-    __dirname,
-    '..',
-    '..',
-    'src',
-    'test',
-    'fixtures',
-    'grim',
-    '0.15.1-settings',
-  );
   const install = (file: string): InstallVM => {
-    const row = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')).items[0];
+    const row = recordedSettings<{ items: WireStatusItem[] }>(file.replace(/\.json$/, ''))
+      .items[0] as WireStatusItem;
     const repo = String(row.pinned).split('@')[0] ?? '';
     const scope: ScopeStatus = {
       scope: 'project',
@@ -1547,22 +1522,8 @@ suite('details view model', () => {
   });
 
   test('settings JSON content lands on contentJson like mcp', () => {
-    const fixture = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          'src',
-          'test',
-          'fixtures',
-          'grim',
-          '0.15.1-settings',
-          'fetch-settings.json',
-        ),
-        'utf8',
-      ),
-    );
+    const fixture =
+      recordedSettings<Parameters<typeof buildDetailsVM>[0]['fetch']>('fetch-settings');
     const vm = buildDetailsVM({
       repo: 'ghcr.io/acme/settings/team-defaults',
       searchItem: null,

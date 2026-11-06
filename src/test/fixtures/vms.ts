@@ -4,8 +4,7 @@
 // today's string-based render.ts, and post-migration parity.test.ts runs the
 // SAME cases against the lit-html render.ts. Exported so both can import one
 // source of truth for "what to render" instead of drifting.
-import * as fs from 'fs';
-import * as path from 'path';
+import { recordedSettings } from './recorded';
 import {
   buildCards,
   buildDetailsVM,
@@ -177,18 +176,7 @@ export function bothInstalled(scope: 'project' | 'global'): InstallVM {
   };
 }
 
-const settingsFixtureDir = path.join(
-  __dirname,
-  '..',
-  '..',
-  'src',
-  'test',
-  'fixtures',
-  'grim',
-  '0.15.1-settings',
-);
-const settingsFixture = <T>(name: string): T =>
-  JSON.parse(fs.readFileSync(path.join(settingsFixtureDir, `${name}.json`), 'utf8')) as T;
+const settingsFixture = recordedSettings;
 
 /** The one installed card a recorded settings status row produces, built
  *  through the real funnel so the golden shows what grim's output renders as. */

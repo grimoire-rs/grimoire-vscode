@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { recordedSettings } from './fixtures/recorded';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -1678,22 +1679,7 @@ suite('extension integration', () => {
       annotations: {},
     });
     // grim's recorded refusal, byte for byte, with its recorded exit code.
-    const recorded = JSON.parse(
-      fs.readFileSync(
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          'src',
-          'test',
-          'fixtures',
-          'grim',
-          '0.15.1-settings',
-          'install-modified.json',
-        ),
-        'utf8',
-      ),
-    ) as unknown;
+    const recorded = recordedSettings('install-modified');
     canned(stub, 'add', recorded);
     const undoExit = cannedExit(stub, 'add', 65);
     const window = vscode.window as unknown as { showQuickPick: unknown };
@@ -2548,22 +2534,7 @@ suite('extension integration', () => {
     let handled: boolean;
     try {
       handled = await offerRefusedRetry(
-        JSON.parse(
-          fs.readFileSync(
-            path.join(
-              __dirname,
-              '..',
-              '..',
-              'src',
-              'test',
-              'fixtures',
-              'grim',
-              '0.15.1-settings',
-              'update-modified.json',
-            ),
-            'utf8',
-          ),
-        ) as unknown,
+        recordedSettings('update-modified'),
         updateArgs(['team-defaults']),
         'project',
         api.scopes,

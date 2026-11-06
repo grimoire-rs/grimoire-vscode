@@ -5,7 +5,6 @@
 // up looking at (the rendered sidebar / the panel's first-paint HTML) rather
 // than on any particular field the hosts choose to carry the fact in.
 import * as assert from 'assert';
-import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -19,6 +18,7 @@ import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
 import { DEFAULT_FILTER, declaredKey, isValidRepo, type WireStatusItem } from '../webview/model';
 import type { GrimOrigin, HostToSidebar, SidebarState } from '../webview/protocol';
 import { renderDetails, renderSidebar } from '../webview/render';
+import { recordedSettings } from './fixtures/recorded';
 import { litString } from './litString';
 import { normalizeHtml } from './normalizeHtml';
 
@@ -617,18 +617,7 @@ suite('viewport prefetch: the visible report', () => {
 
 suite('details installs: clients', () => {
   test('a recorded settings row lists each client once', () => {
-    const file = path.join(
-      __dirname,
-      '..',
-      '..',
-      'src',
-      'test',
-      'fixtures',
-      'grim',
-      '0.15.1-settings',
-      'status-consented.json',
-    );
-    const row = (JSON.parse(fs.readFileSync(file, 'utf8')) as { items: WireStatusItem[] })
+    const row = recordedSettings<{ items: WireStatusItem[] }>('status-consented')
       .items[0] as WireStatusItem;
     assert.ok(row.outputs.length > 1, 'precondition: several outputs share a client');
     const repo = String(row.pinned).split('@')[0] ?? '';

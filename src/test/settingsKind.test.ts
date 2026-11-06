@@ -4,7 +4,7 @@
 // elsewhere cover them. The two global root-fence causes are recorded.
 import * as assert from 'assert';
 import * as fs from 'fs';
-import * as path from 'path';
+import { recordedSettingsDir, recordedSettingsRaw } from './fixtures/recorded';
 import { gatePromptText, hookPromptFor } from '../gatePrompt';
 import {
   configSetArgs,
@@ -35,14 +35,13 @@ import {
 } from '../webview/model';
 import type { InstallVM, ScopesVM } from '../webview/protocol';
 
-const dir = path.join(__dirname, '..', '..', 'src', 'test', 'fixtures', 'grim', '0.15.1-settings');
-const raw = (name: string): string => fs.readFileSync(path.join(dir, `${name}.json`), 'utf8');
+const raw = recordedSettingsRaw;
 type Row = WireStatusItem;
 const load = <T = { items: Row[] }>(name: string): T => JSON.parse(raw(name)) as T;
 const scopesVM: ScopesVM = { projectOpen: true, projectConfigured: true, projectName: 'my-app' };
 
 const statusFiles = fs
-  .readdirSync(dir)
+  .readdirSync(recordedSettingsDir)
   .filter((f) => f.startsWith('status-'))
   .map((f) => f.replace(/\.json$/, ''));
 
@@ -236,7 +235,7 @@ suite('recorded settings reports', () => {
 
   test('every recording has its exit code, and every one parses', () => {
     const files = fs
-      .readdirSync(dir)
+      .readdirSync(recordedSettingsDir)
       .filter((f) => f.endsWith('.json') && f !== 'exits.json')
       .map((f) => f.replace(/\.json$/, ''))
       .sort();
