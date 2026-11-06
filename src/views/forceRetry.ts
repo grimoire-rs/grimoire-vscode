@@ -14,6 +14,7 @@
 // had already happened. They are told apart by the payload, never by a version.
 import * as vscode from 'vscode';
 import {
+  dialogText,
   isForceable,
   positionalOf,
   refusedNames,
@@ -44,9 +45,11 @@ const FORCE_UPDATE_NOTE =
  *
  *  Only the detail prose is a parameter: the two shapes describe different
  *  outcomes (a pre-0.13 error document stopped the whole run; a 0.13 refused row
- *  did not), and nothing else about the confirm differs. */
+ *  did not), and nothing else about the confirm differs. `shown` names the
+ *  artifact, already passed through dialogText: it also titles the status-bar
+ *  progress. */
 async function confirmOverwrite(
-  name: string,
+  shown: string,
   detail: string,
   args: string[],
   scope: Scope,
@@ -54,14 +57,14 @@ async function confirmOverwrite(
   output: vscode.OutputChannel,
 ): Promise<boolean> {
   const choice = await vscode.window.showWarningMessage(
-    `Grimoire: overwrite \`${name}\`?`,
+    `Grimoire: overwrite \`${shown}\`?`,
     { modal: true, detail },
     'Overwrite',
   );
   if (choice !== 'Overwrite') {
     return false;
   }
-  await runWithStatusProgress(`Overwriting ${name}`, async () => {
+  await runWithStatusProgress(`Overwriting ${shown}`, async () => {
     // withFlags, not a tail append: the builders end in `-- <positional>`, so
     // an appended --force would parse as a second reference/name.
     const retry = await scopes.run<ActionReport>(withFlags(args, ['--force']), scope);
@@ -105,7 +108,7 @@ export async function offerForcedRetry(
   // that, artifactName then takes the last path segment. A bare `grim update`
   // name (e.g. "demo") has no slash or tag, so it passes through unchanged.
   // positionalOf, not args[1]: the builders put their positionals behind a `--`.
-  const name = artifactName(refRepo(positionalOf(args)));
+  const name = dialogText(artifactName(refRepo(positionalOf(args))), 60);
   // `grim install` is the one builder with no `--` and no positional, so
   // positionalOf returns '' for it and the notice below rendered an empty pair
   // of backticks. A scope-wide command has no artifact to name — say so.
@@ -128,7 +131,7 @@ export async function offerForcedRetry(
   if (isForceable(result) && (args[0] === 'add' || args[0] === 'update')) {
     const detail = withRefusedPieces(
       `Reinstalling discards your local changes to \`${name}\`. This cannot be undone.\n\n` +
-        result.message +
+        dialogText(result.message, 1000) +
         (args[0] === 'update' ? FORCE_UPDATE_NOTE : ''),
       result.pieces ?? [],
     );
@@ -172,7 +175,7 @@ export async function offerRefusedRetry(
   }
   // Normally one row: these hosts update a single artifact. Joined rather than
   // truncated, since the retry below forces every one of them.
-  const names = refused.join(', ');
+  const names = refused.map((n) => dialogText(n, 60)).join(', ');
   const detail = withRefusedPieces(
     `grim kept your local changes to \`${names}\` and did not replace those files. ` +
       `Everything else updated, and the lock pin moved on — so the artifact reads as up to ` +

@@ -49,6 +49,8 @@ import {
 } from '../installer';
 import { offerForcedRetry, offerRefusedRetry } from '../views/forceRetry';
 import { HookPrompter } from '../views/hookPrompt';
+import { reportGrimFailure } from '../notify';
+import { offerLock } from '../views/staleLock';
 import { CACHE_VERSION, DetailsCache, type DetailsCacheEntry } from '../detailsCache';
 
 const isWindows = process.platform === 'win32';
@@ -1964,6 +1966,37 @@ suite('extension integration', () => {
     assert.ok(!call?.some((c) => c.startsWith('Open ')), 'no single artifact to open');
   });
 
+  test('a refused settings package name is flattened in the dialog and the button', async () => {
+    const name = 'evil\n\u202Ename';
+    const scopes = {
+      cachedSnapshot: () => ({
+        project: {
+          status: [{ kind: 'settings', name, state: 'modified', pinned: null, outputs: [] }],
+          declared: { [`settings:${name}`]: 'ghcr.io/o/settings/evil:1.0.0' },
+        },
+      }),
+    } as unknown as ScopeService;
+    const errors = captureErrors();
+    try {
+      await offerModifiedRefusal(scopes, 'project', 'update', { refused: [name] });
+      await offerModifiedRefusal(scopes, 'project', 'update', { message: 'bad\u202E\nmessage' });
+    } finally {
+      errors.restore();
+    }
+    assert.strictEqual(errors.calls.length, 2);
+    for (const call of errors.calls) {
+      for (const text of call) {
+        assert.ok(
+          !/[\n\u202E]/.test(text),
+          `no line break or bidi override: ${JSON.stringify(text)}`,
+        );
+      }
+    }
+    assert.ok(errors.calls[0]?.[0]?.includes('evil  name'));
+    assert.ok(errors.calls[0]?.includes('Open evil  name'));
+    assert.ok(errors.calls[1]?.[0]?.includes('bad  message'));
+  });
+
   // --- Complete Install's refusal (offerInstallRefusal) ---
 
   /** A scope with exactly one locally-modified artifact, enough for the
@@ -2524,6 +2557,89 @@ suite('extension integration', () => {
     assert.strictEqual(argvLines(stub).length, 0, 'declining issues no second grim call');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'declining shows no error toast');
     assert.strictEqual(onDoneCalled, false, 'nothing changed, so no refresh is triggered');
+  });
+
+  test('force-confirm: control, bidi and codicon text in the name and message stays plain', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs(undefined);
+    const refusal = { ...forceableRefusal(), message: 'line one\nline two\u202eevil $(alert)' };
+    try {
+      await offerForcedRetry(
+        refusal,
+        addArgs('ghcr.io/acme/bad\u202ename$(x)'),
+        'global',
+        api.scopes,
+        recordingOutput([]),
+        async () => {},
+      );
+    } finally {
+      dialogs.restore();
+    }
+    const call = dialogs.warningCalls[0];
+    assert.ok(call, 'the confirm dialog was shown');
+    assert.strictEqual(call.message, 'Grimoire: overwrite `bad name$ (x)`?');
+    const detail = call.options?.detail ?? '';
+    assert.ok(detail.includes('local changes to `bad name$ (x)`'), detail);
+    assert.ok(detail.includes('line one line two evil $ (alert)'), detail);
+    assert.ok(!detail.includes('\u202e'), detail);
+  });
+
+  test('a grim failure toast flattens the message, the output keeps it verbatim', function () {
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const shown: string[] = [];
+    window.showErrorMessage = async (message: string) => {
+      shown.push(message);
+      return undefined;
+    };
+    const lines: string[] = [];
+    const message = 'bad [open](command:x.y)\nnext line $(alert)';
+    try {
+      reportGrimFailure(
+        { ok: false, kind: 'error', code: 'config', exitCode: 78, message },
+        recordingOutput(lines),
+        'grim install',
+      );
+    } finally {
+      window.showErrorMessage = original;
+    }
+    assert.deepStrictEqual(shown, [
+      'Grimoire: grim install: bad [open] (command:x.y) next line $ (alert)',
+    ]);
+    assert.deepStrictEqual(lines, [`error: ${message}`]);
+  });
+
+  test('the no-lock toast flattens the message, the output keeps it verbatim', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const window = vscode.window as unknown as { showErrorMessage: unknown };
+    const original = window.showErrorMessage;
+    const shown: string[][] = [];
+    window.showErrorMessage = async (message: string, ...items: string[]) => {
+      shown.push([message, ...items]);
+      return undefined;
+    };
+    const lines: string[] = [];
+    const message = 'no lock [run](command:x.y)\nnext\u202eline $(alert)';
+    try {
+      const handled = offerLock(
+        { ok: false, kind: 'error', code: 'not-found', exitCode: 79, message, reason: 'no-lock' },
+        installArgs(),
+        'global',
+        api.scopes,
+        recordingOutput(lines),
+        async () => {},
+      );
+      assert.strictEqual(handled, true, 'a no-lock failure is the offer, not the plain toast');
+      await waitFor(() => shown.length === 1);
+    } finally {
+      window.showErrorMessage = original;
+    }
+    assert.deepStrictEqual(shown, [
+      ['Grimoire: grim install: no lock [run] (command:x.y) next line $ (alert)', 'Run grim lock'],
+    ]);
+    assert.deepStrictEqual(lines, [`error: grim install --global: ${message}`]);
   });
 
   test('a refused settings update names each refused value, never the value', async function () {

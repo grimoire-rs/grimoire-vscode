@@ -18,7 +18,7 @@
 // ../extension — the dependency edge is one-way, and both action hosts plus the
 // activation module need this.
 import * as vscode from 'vscode';
-import { isForceable, type GrimResult, type Scope } from '../grim';
+import { dialogText, isForceable, type GrimResult, type Scope } from '../grim';
 import type { ScopeService } from '../scopes';
 import { declaredKey, refRepo } from '../webview/model';
 
@@ -70,9 +70,12 @@ export async function offerModifiedRefusal(
   }
   // grim's own rows win over the snapshot: they name what it actually refused,
   // while the snapshot is only ever as fresh as the last refresh.
-  const names = refused ?? [...repos.keys()];
+  const rawNames = refused ?? [...repos.keys()];
+  const names = rawNames.map((n) => dialogText(n, 60));
   const single = names.length === 1 ? names[0] : undefined;
-  const repo = single === undefined ? undefined : repos.get(single);
+  const [only] = rawNames;
+  const repo = rawNames.length === 1 && only !== undefined ? repos.get(only) : undefined;
+  const reason = 'refused' in cause ? '' : dialogText(cause.message, 1000);
   let message: string;
   if ('refused' in cause) {
     message =
@@ -80,10 +83,10 @@ export async function offerModifiedRefusal(
       `files were not replaced. Everything else updated, and the lock pin moved on, so run ` +
       `Update on it again and confirm Overwrite to take the new version.`;
   } else if (repo !== undefined) {
-    message = `Grimoire: ${operation} stopped — ${cause.message}`;
+    message = `Grimoire: ${operation} stopped — ${reason}`;
   } else {
     const named = names.length > 1 ? ` Locally modified: ${names.join(', ')}.` : '';
-    message = `Grimoire: ${operation} (${scope}) stopped — ${cause.message}${named}`;
+    message = `Grimoire: ${operation} (${scope}) stopped — ${reason}${named}`;
   }
   if (single !== undefined && repo !== undefined) {
     const choice = await vscode.window.showErrorMessage(
