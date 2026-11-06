@@ -1655,6 +1655,70 @@ suite('extension integration', () => {
     assert.strictEqual(dialogs.errorCalls.length, 0, 'no error toast for a confirmed forced retry');
   });
 
+  test('pickVersion wiring: a refused settings value is named in the Overwrite modal, never its content', async function () {
+    this.timeout(20000);
+    const api = await activateExtension();
+    canned(stub, 'describe', {
+      ref: 'ghcr.io/acme/settings/team-defaults:latest',
+      digest: 'sha256:1',
+      kind: 'settings',
+      name: 'team-defaults',
+      title: null,
+      description: null,
+      summary: null,
+      version: '1.5.0',
+      license: null,
+      repository: null,
+      revision: null,
+      created: null,
+      keywords: null,
+      deprecated: null,
+      replaced_by: null,
+      tags: ['1.5.0', '1.4.2'],
+      annotations: {},
+    });
+    // grim's recorded refusal, byte for byte, with its recorded exit code.
+    const recorded = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          __dirname,
+          '..',
+          '..',
+          'src',
+          'test',
+          'fixtures',
+          'grim',
+          '0.15.1-settings',
+          'install-modified.json',
+        ),
+        'utf8',
+      ),
+    ) as unknown;
+    canned(stub, 'add', recorded);
+    const undoExit = cannedExit(stub, 'add', 65);
+    const window = vscode.window as unknown as { showQuickPick: unknown };
+    const originalQuickPick = window.showQuickPick;
+    window.showQuickPick = async () => '1.4.2';
+    const dialogs = stubForceDialogs(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    try {
+      await api.providers.sidebar.handleMessage({
+        type: 'pickVersion',
+        repo: 'ghcr.io/acme/settings/team-defaults',
+      });
+      await waitFor(() => dialogs.warningCalls.length > 0);
+    } finally {
+      window.showQuickPick = originalQuickPick;
+      dialogs.restore();
+      undoExit();
+      restoreAddUninstall();
+    }
+    const detail = dialogs.warningCalls[0]?.options?.detail ?? '';
+    assert.ok(detail.includes('Refused settings values:'), `names the values: ${detail}`);
+    assert.ok(detail.includes('/model'), `names the pointer: ${detail}`);
+    assert.ok(!detail.includes('opus'), `never the user's value: ${detail}`);
+  });
+
   test('pickVersion wiring: a plain refusal falls through to the normal error toast', async function () {
     this.timeout(20000);
     const api = await activateExtension();
@@ -2474,6 +2538,50 @@ suite('extension integration', () => {
     assert.strictEqual(argvLines(stub).length, 0, 'declining issues no second grim call');
     assert.strictEqual(dialogs.errorCalls.length, 0, 'declining shows no error toast');
     assert.strictEqual(onDoneCalled, false, 'nothing changed, so no refresh is triggered');
+  });
+
+  test('a refused settings update names each refused value, never the value', async function () {
+    this.timeout(15000);
+    const api = await activateExtension();
+    const dialogs = stubForceDialogs(undefined);
+    fs.rmSync(stub.argvLog, { force: true });
+    let handled: boolean;
+    try {
+      handled = await offerRefusedRetry(
+        JSON.parse(
+          fs.readFileSync(
+            path.join(
+              __dirname,
+              '..',
+              '..',
+              'src',
+              'test',
+              'fixtures',
+              'grim',
+              '0.15.1-settings',
+              'update-modified.json',
+            ),
+            'utf8',
+          ),
+        ) as unknown,
+        updateArgs(['team-defaults']),
+        'project',
+        api.scopes,
+        recordingOutput([]),
+      );
+    } finally {
+      dialogs.restore();
+    }
+    assert.strictEqual(handled, true, 'the refused row gets the Overwrite confirm');
+    const detail = dialogs.warningCalls[0]?.options?.detail ?? '';
+    assert.ok(
+      detail.includes(
+        'Refused settings values:\nteam-defaults: claude .claude/settings.local.json /model',
+      ),
+      detail,
+    );
+    assert.ok(!detail.includes('opus') && !detail.includes('sonnet'), detail);
+    assert.strictEqual(argvLines(stub).length, 0, 'declining runs no forced retry');
   });
 
   // --- hook and settings gate prompts (HookPrompter) ---

@@ -5,6 +5,7 @@
 // up looking at (the rendered sidebar / the panel's first-paint HTML) rather
 // than on any particular field the hosts choose to carry the fact in.
 import * as assert from 'assert';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -13,9 +14,9 @@ import type { CachedCardMeta } from '../detailsCache';
 import { describeArgs, fetchArgs } from '../grim';
 import type { ContextInfo, GrimResult, SearchItem, StatusItem } from '../grim';
 import type { ScopeService, ScopeSnapshot, Snapshot } from '../scopes';
-import { DetailsManager } from '../views/details';
+import { DetailsManager, installState } from '../views/details';
 import { SidebarProvider, type SidebarDelegate } from '../views/sidebar';
-import { DEFAULT_FILTER, isValidRepo } from '../webview/model';
+import { DEFAULT_FILTER, declaredKey, isValidRepo, type WireStatusItem } from '../webview/model';
 import type { GrimOrigin, HostToSidebar, SidebarState } from '../webview/protocol';
 import { renderDetails, renderSidebar } from '../webview/render';
 import { litString } from './litString';
@@ -611,5 +612,33 @@ suite('viewport prefetch: the visible report', () => {
       assert.notStrictEqual(sep, -1, `builder emits a separator: ${args.join(' ')}`);
       assert.strictEqual(args[sep + 1], evil, 'the name sits behind it, parsed as a positional');
     }
+  });
+});
+
+suite('details installs: clients', () => {
+  test('a recorded settings row lists each client once', () => {
+    const file = path.join(
+      __dirname,
+      '..',
+      '..',
+      'src',
+      'test',
+      'fixtures',
+      'grim',
+      '0.15.1-settings',
+      'status-consented.json',
+    );
+    const row = (JSON.parse(fs.readFileSync(file, 'utf8')) as { items: WireStatusItem[] })
+      .items[0] as WireStatusItem;
+    assert.ok(row.outputs.length > 1, 'precondition: several outputs share a client');
+    const repo = String(row.pinned).split('@')[0] ?? '';
+    const { installs } = installState(repo, [
+      {
+        scope: 'project',
+        status: [row],
+        declared: { [declaredKey(row.kind, row.name)]: `${repo}:1.0.0` },
+      },
+    ]);
+    assert.deepStrictEqual(installs[0]?.clients, ['claude']);
   });
 });
