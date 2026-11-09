@@ -13,6 +13,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The grim the live suite (src/test/grimLive.test.ts) runs against on Linux:
+  # grimoire-rs/grimoire at this commit, built once per commit and cached.
+  # This is the only place the pin lives.
+  GRIM_COMMIT: 10fee47ff0632313ce771aa6080e90e14452250d
+
 jobs:
   build-test:
     name: Build & test (${{ matrix.os }})
@@ -41,8 +47,47 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Restore the pinned grim
+        if: runner.os == 'Linux'
+        id: grim-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ${{ runner.temp }}/grim-bin
+          key: grim-${{ runner.os }}-${{ env.GRIM_COMMIT }}
+
+      # Cloned outside the workspace, so `eslint .` never sees grim's own sources.
+      # `rustup toolchain install` with no name installs what grim's
+      # rust-toolchain.toml names, components included.
+      - name: Build the pinned grim
+        if: runner.os == 'Linux' && steps.grim-cache.outputs.cache-hit != 'true'
+        run: |
+          src="$RUNNER_TEMP/grim-src"
+          git init -q "$src"
+          cd "$src"
+          git remote add origin https://github.com/grimoire-rs/grimoire.git
+          git fetch -q --depth 1 origin "$GRIM_COMMIT"
+          git checkout -q FETCH_HEAD
+          git submodule update -q --init --recursive
+          rustup toolchain install
+          cargo build --locked --release -p grimoire
+          mkdir -p "$RUNNER_TEMP/grim-bin"
+          cp target/release/grim "$RUNNER_TEMP/grim-bin/grim"
+
+      # Saved before the tests run, so a red suite does not cost the next run
+      # a rebuild.
+      - name: Save the pinned grim
+        if: runner.os == 'Linux' && steps.grim-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ${{ runner.temp }}/grim-bin
+          key: grim-${{ runner.os }}-${{ env.GRIM_COMMIT }}
+
       - name: Test (Linux, headless)
         if: runner.os == 'Linux'
+        env:
+          GRIM_LIVE_BIN: ${{ runner.temp }}/grim-bin/grim
+          # A grim that cannot run fails the live suite instead of skipping it.
+          GRIM_LIVE_REQUIRED: '1'
         run: xvfb-run -a npm test
 
       - name: Test (macOS / Windows)

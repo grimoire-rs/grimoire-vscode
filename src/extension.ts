@@ -8,6 +8,7 @@ import {
   isForceable,
   refusedNames,
   updateArgs,
+  updateSummary,
   type ActionReport,
   type ContextInfo,
   type GrimResult,
@@ -765,14 +766,7 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
             // branch above handles — so this run did NOT stop: every other row
             // reconciled and the refused row's own pin rolled forward.
             const refused = refusedNames(result.value);
-            const counts: Record<UpdateEntry['action'], number> = {
-              updated: 0,
-              unchanged: 0,
-              removed: 0,
-              'kept-modified': 0,
-            };
             for (const item of items) {
-              counts[item.action]++;
               // `?? []` for the same reason the sibling arrays get it in
               // buildInstalled (webview/model.ts): nullable means null, and the
               // version floor is not an interlock — it only flags a too-old grim
@@ -790,14 +784,11 @@ export function activate(context: vscode.ExtensionContext): GrimoireApi {
                 keptModified.push(item.name);
               }
             }
-            output.appendLine(
-              `grim update (${scope}): ${counts.updated} updated, ${counts.unchanged} unchanged, ` +
-                `${counts.removed} removed, ${counts['kept-modified']} kept-modified`,
-            );
+            output.appendLine(`grim update (${scope}): ${updateSummary(items)}`);
             if (refused.length > 0) {
-              // Not optional. `counts[item.action]++` above counts a refused row
-              // as `updated` — correct per contract, since the pin did move —
-              // and this is the counter-fact. It is also the ONLY thing that
+              // Not optional. updateSummary above counts a refused row as
+              // `updated` — correct per contract, since the pin did move — and
+              // this is the counter-fact. It is also the ONLY thing that
               // writes to the channel on this shape (the error branch above
               // fires on `!ok`), and the dialog offers "Show Output".
               output.appendLine(

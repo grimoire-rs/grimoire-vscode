@@ -40,6 +40,7 @@ import {
   uninstallArgs,
   uninstallNotice,
   updateArgs,
+  updateSummary,
   withFlags,
   withRefusedPieces,
   type RefusedPiece,
@@ -931,6 +932,28 @@ suite('grim report parsing', () => {
     assert.deepStrictEqual(keptModified.kept_modified_clients, ['claude']);
   });
 
+  test('UpdateEntry: a restored row keeps its pin and parses', () => {
+    const doc = JSON.stringify({
+      items: [
+        {
+          kind: 'skill',
+          name: 'beta',
+          old: 'sha256:same',
+          new: 'sha256:same',
+          action: 'restored',
+          reaped_clients: [],
+          kept_modified_clients: [],
+        },
+      ],
+    });
+    const result = parseReport<ItemsEnvelope<UpdateEntry>>(doc, 0, '');
+    assert.ok(result.ok);
+    const entry = result.value.items[0];
+    assert.ok(entry);
+    assert.strictEqual(entry.action, 'restored');
+    assert.strictEqual(entry.old, entry.new);
+  });
+
   test('RegistryEntry: legacy (alias-less) row survives parsing', () => {
     const doc = JSON.stringify({
       items: [
@@ -1111,6 +1134,40 @@ suite('isForceable', () => {
     const numberOne = { forceable: 1 } as unknown as { forceable?: boolean };
     assert.strictEqual(isForceable(stringTrue), false);
     assert.strictEqual(isForceable(numberOne), false);
+  });
+});
+
+suite('updateSummary', () => {
+  const rows = (...actions: unknown[]): { action?: unknown }[] =>
+    actions.map((action) => ({ action }));
+
+  test('names every action, zeros included, in a fixed order', () => {
+    assert.strictEqual(
+      updateSummary(rows('updated', 'unchanged', 'unchanged')),
+      '1 updated, 2 unchanged, 0 removed, 0 kept-modified, 0 restored',
+    );
+  });
+
+  test('counts a restored row apart from an unchanged one', () => {
+    // Both keep their pin; only `restored` wrote files.
+    assert.strictEqual(
+      updateSummary(rows('restored', 'unchanged', 'restored')),
+      '0 updated, 1 unchanged, 0 removed, 0 kept-modified, 2 restored',
+    );
+  });
+
+  test('counts an action a newer grim adds as other, never drops the row', () => {
+    assert.strictEqual(
+      updateSummary(rows('updated', 'reshaped', 7, undefined)),
+      '1 updated, 0 unchanged, 0 removed, 0 kept-modified, 0 restored, 3 other',
+    );
+  });
+
+  test('an empty report counts nothing and names no other', () => {
+    assert.strictEqual(
+      updateSummary([]),
+      '0 updated, 0 unchanged, 0 removed, 0 kept-modified, 0 restored',
+    );
   });
 });
 
