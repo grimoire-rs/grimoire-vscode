@@ -17,7 +17,7 @@ env:
   # The grim the live suite (src/test/grimLive.test.ts) runs against on Linux:
   # grimoire-rs/grimoire at this commit, built once per commit and cached.
   # This is the only place the pin lives.
-  GRIM_COMMIT: 10fee47ff0632313ce771aa6080e90e14452250d
+  GRIM_COMMIT: 84382946504fdd27dae166deb2b14ca2b53cbcf6
 
 jobs:
   build-test:
