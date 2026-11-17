@@ -57,7 +57,8 @@ still asked once that gate holds it.
 - **Install, update, and uninstall per scope** — install into your **project**
   (`grimoire.toml` in the workspace) or **globally** (`~/.grimoire`), or both at
   once — a project install shadows the global one. Artifacts pulled in by a
-  bundle point back to their bundle instead of offering a direct uninstall.
+  bundle or as another artifact's dependency point back to what holds them
+  instead of offering a direct uninstall.
 - **Pick a version** — install, downgrade, or pin an exact tag from the details
   header or a card's menu.
 - **Recover from a blocked install** — when `grim` refuses to overwrite local
@@ -112,21 +113,21 @@ require a **trusted** workspace.
 
 Run from the Command Palette (all under the **Grimoire** category).
 
-| Command                        | Does                                                                             |
-| ------------------------------ | -------------------------------------------------------------------------------- |
-| `Grimoire: Search`             | Focus the Browse tab and jump to its search box                                  |
-| `Grimoire: Refresh Catalog`    | Re-fetch the catalog and refresh every tab                                       |
-| `Grimoire: Check for Updates`  | Ask your registries which installed artifacts have newer versions                |
-| `Grimoire: Update All`         | Update every artifact with a pending update (project + global)                   |
-| `Grimoire: Initialize Project` | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
-| `Grimoire: Install grim`       | Download the latest `grim` release from GitHub                                   |
-| `Grimoire: Open Settings`      | Open the Settings editor tab (`grim config` UI)                                  |
-| `Grimoire: Show Output`        | Open the Grimoire output channel                                                 |
-| `Grimoire: Show Info`          | Which `grim` would be spawned, how it was resolved, and its version              |
-| `Grimoire: Store Rating Token…`| Store a personal access token for a rating host (see **Voting**)                 |
-| `Grimoire: Clear Rating Token…`| Remove the stored token for a rating host                                        |
-| `Grimoire: Report Bug`         | Open a prefilled GitHub bug report                                               |
-| `Grimoire: Request Feature`    | Open a prefilled GitHub feature request                                          |
+| Command                         | Does                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `Grimoire: Search`              | Focus the Browse tab and jump to its search box                                  |
+| `Grimoire: Refresh Catalog`     | Re-fetch the catalog and refresh every tab                                       |
+| `Grimoire: Check for Updates`   | Ask your registries which installed artifacts have newer versions                |
+| `Grimoire: Update All`          | Update every artifact with a pending update (project + global)                   |
+| `Grimoire: Initialize Project`  | Create a `grimoire.toml` in the workspace so it can hold project-scoped installs |
+| `Grimoire: Install grim`        | Download the latest `grim` release from GitHub                                   |
+| `Grimoire: Open Settings`       | Open the Settings editor tab (`grim config` UI)                                  |
+| `Grimoire: Show Output`         | Open the Grimoire output channel                                                 |
+| `Grimoire: Show Info`           | Which `grim` would be spawned, how it was resolved, and its version              |
+| `Grimoire: Store Rating Token…` | Store a personal access token for a rating host (see **Voting**)                 |
+| `Grimoire: Clear Rating Token…` | Remove the stored token for a rating host                                        |
+| `Grimoire: Report Bug`          | Open a prefilled GitHub bug report                                               |
+| `Grimoire: Request Feature`     | Open a prefilled GitHub feature request                                          |
 
 `grimoire.openDetails` is intentionally omitted from the palette — it is
 invoked via the `vscode://` deep link.
@@ -164,15 +165,15 @@ for standing up the index side on a corporate instance.
 
 ## Settings
 
-| Setting                         | Default   | Does                                                                                                                                                                                  |
-| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `grimoire.path.executable`      | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                 |
-| `grimoire.defaultScope`         | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global |
-| `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                           |
-| `grimoire.prefetchDetails`      | `true`    | Prefetch the Browse rows in view as you scroll, so details open instantly and card logos appear                                                                                       |
-| `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                    |
+| Setting                         | Default   | Does                                                                                                                                                                                                                                                                                                  |
+| ------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `grimoire.path.executable`      | `grim`    | Path to (or name of) the `grim` executable, resolved against `PATH` when not absolute                                                                                                                                                                                                                 |
+| `grimoire.defaultScope`         | `project` | Install scope (`project` or `global`) for the **Pin Version** flow. The main **Install** action ignores this and always uses project when a configured workspace is open, else global                                                                                                                 |
+| `grimoire.watchForChanges`      | `true`    | Refresh views when `grimoire.toml` / `grimoire.lock` change                                                                                                                                                                                                                                           |
+| `grimoire.prefetchDetails`      | `true`    | Prefetch the Browse rows in view as you scroll, so details open instantly and card logos appear                                                                                                                                                                                                       |
+| `grimoire.checkForUpdates`      | `true`    | Once a day, check GitHub for a newer `grim` release and offer to update (or link the release page)                                                                                                                                                                                                    |
 | `grimoire.checkArtifactUpdates` | `true`    | After a refresh settles, ask your registries which installed artifacts have newer versions (`grim status --check`) — what the update count on the Grimoire icon is based on. Debounced, so a burst of changes costs one check. Off stops the automatic rounds only; remembered verdicts keep counting |
-| `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                     |
+| `grimoire.extraEnv`             | `{}`      | Extra environment variables for the `grim` child process (e.g. `GRIM_HOME`, registry credentials)                                                                                                                                                                                                     |
 
 ## Requirements
 
@@ -191,6 +192,13 @@ every install and update affordance is suppressed rather than claiming "Install"
 on an artifact that may already be installed. Point `grimoire.path.executable`
 at a current build, or run **Grimoire: Show Info** to see which binary is
 actually being spawned.
+
+Three features need `grim` 0.16.0 or newer and are absent rather than reduced
+on an older one: the **Settings** kind (an older grim has no such packages to
+list), the dependencies and "required by" lines in the details view (an older
+grim reports neither), and a per-artifact **Update** that moves only the artifact
+you clicked. Before 0.16.0 `grim update <name>` could also touch artifacts you
+did not name (grimoire-rs/grimoire#269).
 
 Browsing a large catalog needs `grim` 0.15.0 or newer — the release that pages
 `grim search`. Browse then shows the first rows at once and loads the rest in
