@@ -91,6 +91,7 @@ export function detailsVM(overrides: Partial<DetailsVM> = {}): DetailsVM {
     scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
     contentMarkdown: '# Body',
     contentJson: null,
+  settingsHarnesses: [],
     readmeMarkdown: null,
     changelogMarkdown: null,
     members: [],

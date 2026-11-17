@@ -1193,6 +1193,46 @@ vscode-button.sm {
   margin-bottom: 8px;
 }
 
+/* Settings CONTENTS: harness chips, each showing that harness table as JSON. */
+.harness-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.harness-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.harness-chip:hover {
+  opacity: 1;
+}
+
+.harness-chip.active {
+  opacity: 1;
+  border-color: var(--vscode-focusBorder);
+}
+
+.harness-panel.hidden {
+  display: none;
+}
+
+/* Raw (the whole document) sits apart from the harness chips. */
+.harness-chip-raw {
+  margin-left: auto;
+}
+
 /* Skeleton body spinner while the full VM loads (instant header). */
 .details-loading {
   display: flex;

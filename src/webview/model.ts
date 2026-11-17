@@ -7,6 +7,7 @@ import type {
   CardSource,
   CardVM,
   DetailsVM,
+  SettingsHarnessVM,
   DownloadsVM,
   DownloadVersionVM,
   InstallVM,
@@ -2580,6 +2581,27 @@ export function prettyJson(text: string): string {
   }
 }
 
+/** Splits a settings document into harness tables: every top-level key whose
+ *  value is a plain object (not array/null). Other top-level keys are metadata.
+ *  Unparseable text or a non-object document yields []. Order is preserved and
+ *  nothing is whitelisted — newer grim releases bring new names and options. */
+export function parseSettingsHarnesses(json: string): SettingsHarnessVM[] {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return [];
+  }
+  const isPlain = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  return Object.entries(doc)
+    .filter(([, value]) => isPlain(value))
+    .map(([name, table]) => ({ name, json: JSON.stringify(table, null, 2) }));
+}
+
 /** Parses a bundle members document ({"members":[{kind,name,id}]}). */
 export function parseBundleMembers(content: string): BundleMemberVM[] {
   try {
@@ -2786,6 +2808,7 @@ export function buildSkeletonVM(
     scopes,
     contentMarkdown: null,
     contentJson: null,
+    settingsHarnesses: [],
     readmeMarkdown: null,
     changelogMarkdown: null,
     members: [],
@@ -2925,6 +2948,7 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     scopes,
     contentMarkdown,
     contentJson,
+    settingsHarnesses: kind === 'settings' && contentJson !== null ? parseSettingsHarnesses(contentJson) : [],
     readmeMarkdown: sources.readme ?? null,
     changelogMarkdown: sources.changelog ?? null,
     members,

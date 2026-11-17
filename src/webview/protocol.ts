@@ -484,6 +484,13 @@ export interface SupportVM {
   security: string | null;
 }
 
+/** One harness table of a settings artifact (see DetailsVM.settingsHarnesses). */
+export interface SettingsHarnessVM {
+  name: string;
+  /** The harness table alone, pretty-printed. */
+  json: string;
+}
+
 export interface DetailsVM {
   repo: string;
   ref: string;
@@ -504,6 +511,12 @@ export interface DetailsVM {
   /** The artifact's own content as JSON for the CONTENTS tab: the mcp descriptor
    *  or the bundle manifest (pretty-printed, syntax-highlighted at render). */
   contentJson: string | null;
+  /** Settings artifacts only: one entry per top-level key of the settings JSON
+   *  whose value is a plain object (a harness table), in document order, each
+   *  table verbatim. Empty for every other kind and when the content has no
+   *  harness table (the CONTENTS tab then shows the raw block alone). No
+   *  harness or option name is known here — fully generic. */
+  settingsHarnesses: SettingsHarnessVM[];
   /** README.md shipped with the package — the DETAILS tab, shown only when
    *  present; when absent there is no DETAILS tab and CONTENTS is first. */
   readmeMarkdown: string | null;

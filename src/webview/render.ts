@@ -24,6 +24,7 @@ import type {
   RatingVM,
   RevalidateState,
   Scope,
+  SettingsHarnessVM,
   SidebarState,
   VoteState,
 } from './protocol';
@@ -1795,6 +1796,42 @@ function renderJsonBlock(json: string): TemplateResult {
   return html`<pre class="json-code"><code>${unsafeHTML(highlightJson(json))}</code></pre>`;
 }
 
+// Harness name -> codicon. Presentation only (not a whitelist of harnesses):
+// any other name, known to grim or not, gets the generic gear.
+const HARNESS_ICONS: Record<string, string> = {
+  claude: 'claude',
+  codex: 'openai',
+  copilot: 'copilot',
+  cursor: 'cursor',
+};
+
+/** Settings CONTENTS: one chip per harness plus a trailing Raw chip, and one
+ *  JSON panel each — the harness table alone, or the whole document for Raw.
+ *  All panels are rendered and the selected one is visible (main.ts toggles
+ *  `.hidden` like the tab panels), so the SSR skeleton shows the first harness.
+ *  Panel ids are `h:<name>` so no harness name can collide with `raw`. */
+function renderSettingsBody(harnesses: SettingsHarnessVM[], contentJson: string): TemplateResult {
+  const views = [
+    ...harnesses.map((h) => ({
+      id: `h:${h.name}`,
+      label: h.name,
+      icon: Object.hasOwn(HARNESS_ICONS, h.name) ? HARNESS_ICONS[h.name] : 'settings-gear',
+      json: h.json,
+      raw: false,
+    })),
+    { id: 'raw', label: 'Raw', icon: 'json', json: contentJson, raw: true },
+  ];
+  const chips = views.map(
+    (v, i) =>
+      html`<button class="harness-chip${v.raw ? ' harness-chip-raw' : ''}${i === 0 ? ' active' : ''}" data-action="set-harness" data-harness="${v.id}" aria-pressed="${i === 0 ? 'true' : 'false'}"><span class="codicon codicon-${v.icon}" aria-hidden="true"></span>${v.label}</button>`,
+  );
+  const panels = views.map(
+    (v, i) =>
+      html`<div class="harness-panel${i === 0 ? '' : ' hidden'}" data-harness="${v.id}">${renderJsonBlock(v.json)}</div>`,
+  );
+  return html`<div class="harness-chips">${chips}</div>${panels}`;
+}
+
 /** CONTENTS tab body (item 5): the artifact's own content. Skills/rules/agents
  *  fill an #md-contents element (markdown, client-side); mcp shows its JSON
  *  descriptor; bundles show the member boxes plus the raw manifest. */
@@ -1805,6 +1842,9 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
       ? html`<div class="contents-manifest"><div class="contents-manifest-label">Manifest</div>${renderJsonBlock(vm.contentJson)}</div>`
       : nothing;
     return html`${boxes}${manifest}`;
+  }
+  if (vm.kind === 'settings' && vm.settingsHarnesses.length > 0 && vm.contentJson !== null) {
+    return renderSettingsBody(vm.settingsHarnesses, vm.contentJson);
   }
   if (
     (vm.kind === 'mcp' || vm.kind === 'settings' || vm.kind === 'hook') &&

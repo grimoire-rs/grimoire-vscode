@@ -52,6 +52,8 @@ let currentRepo: string | null = null;
 let activeTab: string | null = null;
 let openScopeMenu: Element | null = null;
 let tagsExpanded = false;
+// Selected settings view (a harness panel id, or raw); null = the first one, the template default.
+let activeHarness: string | null = null;
 
 // renderDetails marks a default active tab server-side (item 5): README when the
 // artifact ships one, else CONTENTS; the loading skeleton always leads with
@@ -97,6 +99,21 @@ function closeScopeMenus(): void {
 }
 
 // The tags rail expands once (PACKAGE panel "+N more"); there is no collapse.
+function applyHarnessState(): void {
+  const chips = [...document.querySelectorAll<HTMLElement>('.harness-chip')];
+  const active =
+    chips.find((c) => c.dataset['harness'] === activeHarness)?.dataset['harness'] ??
+    chips[0]?.dataset['harness'];
+  chips.forEach((c) => {
+    const on = c.dataset['harness'] === active;
+    c.classList.toggle('active', on);
+    c.setAttribute('aria-pressed', String(on));
+  });
+  document
+    .querySelectorAll<HTMLElement>('.harness-panel')
+    .forEach((p) => p.classList.toggle('hidden', p.dataset['harness'] !== active));
+}
+
 function applyTagsState(): void {
   document.querySelector('.rail-tags')?.classList.toggle('expanded', tagsExpanded);
 }
@@ -106,6 +123,7 @@ function applyUiState(): void {
   applyTabState();
   applyScopeMenuState();
   applyTagsState();
+  applyHarnessState();
 }
 
 // Background-revalidate indicator state (top-right). Held here so a content
@@ -156,6 +174,7 @@ function resetForRetarget(): void {
   activeTab = null;
   openScopeMenu = null;
   tagsExpanded = false;
+  activeHarness = null;
   window.scrollTo(0, 0);
 }
 
@@ -284,6 +303,10 @@ root.addEventListener('click', (event) => {
     case 'toggle-tags':
       tagsExpanded = true;
       applyTagsState();
+      break;
+    case 'set-harness':
+      activeHarness = target.dataset['harness'] ?? null;
+      applyHarnessState();
       break;
     case 'copy':
       vscode.postMessage({ type: 'copyRepoPath', repo: target.dataset['repo'] ?? '' });

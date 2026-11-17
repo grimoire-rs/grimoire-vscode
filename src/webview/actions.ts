@@ -48,6 +48,7 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   'toggle-kind': false,
   'toggle-sort-dir': false,
   'toggle-tags': false,
+  'set-harness': false,
   'set-tab': false,
   refresh: false,
   // Resumes the background page load after a failure; reads local data only.
