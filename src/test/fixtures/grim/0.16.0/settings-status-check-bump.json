@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/full@sha256:7cd1b4ba5ccc2c107e8db7ceb25e4ed5bb80f86fee6d1a3a320f0699b45d7320",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(git status:*)"
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(rm:*)"
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": true,
+      "arming": [],
+      "moved_nested_bundles": []
+    }
+  ],
+  "checked": true
+}

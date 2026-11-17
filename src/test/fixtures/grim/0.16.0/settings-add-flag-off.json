@@ -1,0 +1,10 @@
+{
+  "kind": "settings",
+  "name": "full",
+  "pinned": "ghcr.io/acme/full@sha256:7cd1b4ba5ccc2c107e8db7ceb25e4ed5bb80f86fee6d1a3a320f0699b45d7320",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

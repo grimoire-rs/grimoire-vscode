@@ -1,0 +1,45 @@
+{
+  "kind": "rule",
+  "name": "leaf",
+  "pinned": "ghcr.io/acme/leaf@sha256:9dbf814c45295a31e9776273430d2127b2103e8a4353f43be073cf974ce0b26d",
+  "direct": false,
+  "paths": [
+    [
+      {
+        "kind": "skill",
+        "name": "top",
+        "pinned": "ghcr.io/acme/top@sha256:9f33e01ee0b5a6a477f5a4b0024a1e7bcbaca40e55ddee5f379a877278b906fe"
+      },
+      {
+        "kind": "skill",
+        "name": "l",
+        "pinned": "ghcr.io/acme/l@sha256:61440d47221eb35dbd5ef83e8d959e8d5e19ccdfbaee9325f09f0644eccdbf59"
+      },
+      {
+        "kind": "rule",
+        "name": "leaf",
+        "pinned": "ghcr.io/acme/leaf@sha256:9dbf814c45295a31e9776273430d2127b2103e8a4353f43be073cf974ce0b26d"
+      }
+    ],
+    [
+      {
+        "kind": "skill",
+        "name": "top",
+        "pinned": "ghcr.io/acme/top@sha256:9f33e01ee0b5a6a477f5a4b0024a1e7bcbaca40e55ddee5f379a877278b906fe"
+      },
+      {
+        "kind": "skill",
+        "name": "r",
+        "pinned": "ghcr.io/acme/r@sha256:d886d80f52a73254c56fc4e25960055ebf681e30e2a9e52a008e83e06ada6227"
+      },
+      {
+        "kind": "rule",
+        "name": "leaf",
+        "pinned": "ghcr.io/acme/leaf@sha256:9dbf814c45295a31e9776273430d2127b2103e8a4353f43be073cf974ce0b26d"
+      }
+    ]
+  ],
+  "path_count": 2,
+  "truncated": false,
+  "overrides": []
+}

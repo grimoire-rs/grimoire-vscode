@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "w1",
+      "pinned": "ghcr.io/acme/w1@sha256:dde7e63d3b32c8cacb8b72c1ec98b64e0258c25245411124997f0e552853806d",
+      "action": "unchanged",
+      "disposition": "carried"
+    },
+    {
+      "kind": "rule",
+      "name": "x",
+      "pinned": "ghcr.io/acme/x@sha256:540ebf80d075b45d82496b778831d588ad162e1b7b6db08b4dcbf698dcbb3c11",
+      "action": "unchanged",
+      "disposition": "carried"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/outer:1",
+  "digest": "sha256:0a4a8b543736d44e684760566879d1d1938eddc3bd86d5411c4c9a2ff0971b48",
+  "kind": "bundle",
+  "name": "outer",
+  "vendor": "canonical",
+  "content": "{\n  \"members\": [\n    {\n      \"kind\": \"skill\",\n      \"name\": \"plain\",\n      \"id\": \"./plain:1\"\n    },\n    {\n      \"kind\": \"bundle\",\n      \"name\": \"pack\",\n      \"id\": \"./pack:1\"\n    }\n  ]\n}\n"
+}

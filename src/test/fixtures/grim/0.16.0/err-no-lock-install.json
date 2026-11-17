@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "not-found",
+    "exit": 79,
+    "message": "no grimoire.lock found at /home/u/project/grimoire.lock; run `grim lock` first",
+    "reason": "no-lock"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "drive",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/drive@sha256:8d521a11ac117d61ef4fb948c449cbd0128d15675255ba56e9ae23f22ec96ab4",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/drive",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "rule",
+      "name": "style",
+      "source": "direct",
+      "direct": true,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "drive"
+        }
+      ],
+      "pinned": "ghcr.io/acme/style@sha256:d3b940d91b9470c4c7fd17db5ad71b83d0e71bf3fe672646954c40bda7cf5dda",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/style.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "mcp",
+      "name": "gdrive",
+      "source": "dependency: skill/drive",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "drive"
+        }
+      ],
+      "pinned": "ghcr.io/acme/gdrive@sha256:11ac865f501e7590691ca22c9399e31ace55bdae804de9d2058984f30d71c300",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.mcp.json",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

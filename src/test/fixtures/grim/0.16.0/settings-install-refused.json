@@ -1,0 +1,22 @@
+{
+  "error": {
+    "code": "data",
+    "exit": 65,
+    "forceable": true,
+    "message": "settings 'full': 1 settings value(s) were set or changed outside grim; rerun with --force to change them",
+    "pieces": [
+      {
+        "client": "claude",
+        "current": "mine",
+        "element": null,
+        "file": ".claude/settings.local.json",
+        "marked": "overwrite",
+        "package": "full",
+        "pointer": "/model",
+        "state": "modified",
+        "wanted": "haiku"
+      }
+    ],
+    "reason": "modified"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "items": [
+    {
+      "kind": "bundle",
+      "name": "pack",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": null,
+      "state": "installed",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "m1",
+      "source": "bundle: ghcr.io/acme/pack",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "bundle",
+          "name": "pack"
+        }
+      ],
+      "pinned": "ghcr.io/acme/m1@sha256:daec27cf776411440257a99d7ce5b186c4f7be9c56b42a8162c38bd8099acb06",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/m1",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "rule",
+      "name": "style",
+      "source": "dependency: skill/m1",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "m1"
+        }
+      ],
+      "pinned": "ghcr.io/acme/style@sha256:dc52796bba48b41cf9463306dd1a22cefe95461cb53f5bae4601e0577a96606e",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/style.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

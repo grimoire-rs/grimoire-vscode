@@ -1,0 +1,58 @@
+{
+  "ref": "ghcr.io/acme/drive:1",
+  "digest": "sha256:992a2762a162de32c7b67ce09ab6eb9f23004a064ee57417007698615786d295",
+  "kind": "skill",
+  "name": "drive",
+  "title": "drive",
+  "description": "drive skill",
+  "has_description": false,
+  "summary": null,
+  "version": "1.1.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "t",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "1.1",
+    "1.1.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.kind": "skill",
+    "org.opencontainers.image.description": "drive skill",
+    "org.opencontainers.image.source": "ghcr.io/acme/drive",
+    "org.opencontainers.image.title": "drive",
+    "org.opencontainers.image.vendor": "t",
+    "org.opencontainers.image.version": "1.1.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [
+    {
+      "kind": "rule",
+      "name": "style",
+      "id": "./style:1"
+    },
+    {
+      "kind": "mcp",
+      "name": "gdrive",
+      "id": "./gdrive:1"
+    }
+  ]
+}

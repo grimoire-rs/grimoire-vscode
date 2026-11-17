@@ -1,0 +1,14 @@
+{
+  "ref": "ghcr.io/acme/drive:1",
+  "digest": "sha256:8d521a11ac117d61ef4fb948c449cbd0128d15675255ba56e9ae23f22ec96ab4",
+  "kind": "skill",
+  "name": "drive",
+  "vendor": "canonical",
+  "content": "---\nname: drive\ndescription: drive v2\nmetadata:\n  grim.requires.rules.style: \"./style:1\"\n  grim.requires.mcp.gdrive: \"./gdrive:1\"\n---\n# drive v2\n",
+  "files": [
+    {
+      "path": "drive/SKILL.md",
+      "size": 145
+    }
+  ]
+}

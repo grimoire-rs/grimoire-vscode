@@ -1,0 +1,55 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "plain",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/plain@sha256:3371a9bf60292eb94499c165c2fb45be45b8b65417fdc81eac48417357f40bda",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/plain",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "other",
+      "source": "path: /home/u/dev-src/other (dev)",
+      "direct": false,
+      "required_by": [],
+      "pinned": null,
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/other",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

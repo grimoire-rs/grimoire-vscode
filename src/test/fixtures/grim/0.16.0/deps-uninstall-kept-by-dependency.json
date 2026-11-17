@@ -1,0 +1,8 @@
+{
+  "kind": "rule",
+  "name": "style",
+  "status": "kept-by-dependency",
+  "retained": [],
+  "abandoned_entries": [],
+  "settings_changes": []
+}

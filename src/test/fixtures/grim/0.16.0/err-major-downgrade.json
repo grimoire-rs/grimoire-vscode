@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "config",
+    "exit": 78,
+    "message": "rule 'x' (ghcr.io/acme/x:1@sha256:cbfb70bd4a2f0ad826ccd83e398e5d3f2d35f6af293a22beda0e1805de15dea8): would move from 2.0.0 to 1.0.0, a lower major version, because skill/w2 require 1; declare rule x as `ghcr.io/acme/x@sha256:540ebf80d075b45d82496b778831d588ad162e1b7b6db08b4dcbf698dcbb3c11` in grimoire.toml, then rerun `grim add ghcr.io/acme/w2:1 --kind skill`, or rerun `grim add ghcr.io/acme/w2:1 --kind skill --allow-downgrade`",
+    "reason": "major-downgrade"
+  }
+}

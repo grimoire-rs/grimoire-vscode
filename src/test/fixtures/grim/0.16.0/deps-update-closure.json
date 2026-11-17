@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "drive",
+      "old": "sha256:992a2762a162de32c7b67ce09ab6eb9f23004a064ee57417007698615786d295",
+      "new": "sha256:8d521a11ac117d61ef4fb948c449cbd0128d15675255ba56e9ae23f22ec96ab4",
+      "action": "updated",
+      "reaped_clients": [],
+      "kept_modified_clients": [],
+      "retained": [],
+      "abandoned_entries": [],
+      "refused": false,
+      "plugin": null
+    },
+    {
+      "kind": "rule",
+      "name": "style",
+      "old": "sha256:0071e5c1902e694b2bfd4fe6a960fd6dad381a8cba3f5429c820f66e3a9c359c",
+      "new": "sha256:0071e5c1902e694b2bfd4fe6a960fd6dad381a8cba3f5429c820f66e3a9c359c",
+      "action": "unchanged",
+      "reaped_clients": [],
+      "kept_modified_clients": [],
+      "retained": [],
+      "abandoned_entries": [],
+      "refused": false,
+      "plugin": null
+    },
+    {
+      "kind": "mcp",
+      "name": "gdrive",
+      "old": "sha256:11ac865f501e7590691ca22c9399e31ace55bdae804de9d2058984f30d71c300",
+      "new": "sha256:11ac865f501e7590691ca22c9399e31ace55bdae804de9d2058984f30d71c300",
+      "action": "unchanged",
+      "reaped_clients": [],
+      "kept_modified_clients": [],
+      "retained": [],
+      "abandoned_entries": [],
+      "refused": false,
+      "plugin": null
+    }
+  ],
+  "settings_changes": [],
+  "pieces": []
+}

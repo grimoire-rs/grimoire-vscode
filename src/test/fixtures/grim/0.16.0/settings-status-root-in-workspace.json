@@ -1,0 +1,47 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/full@sha256:a591b8974648b930617e827d753cde4298ec779ef13991eacae92478efd20f2b",
+      "state": "not-armed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/cfg2/settings.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/cfg2/settings.json",
+          "element": "Bash(git status:*)"
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/cfg2/settings.json",
+          "element": "Bash(rm:*)"
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "settings-root-in-workspace",
+          "message": "claude cannot take /home/u/project/cfg2/settings.json, which lies inside the repository this command runs in; set CLAUDE_CONFIG_DIR to a path outside this repository, or unset it, then run grim --global install, or run grim --global install from outside this repository",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

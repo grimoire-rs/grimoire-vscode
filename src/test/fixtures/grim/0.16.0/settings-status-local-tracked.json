@@ -1,0 +1,47 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/full@sha256:a591b8974648b930617e827d753cde4298ec779ef13991eacae92478efd20f2b",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(git status:*)"
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(rm:*)"
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "local-file-tracked",
+          "message": "Claude's local settings file is tracked by git, so grim's values can reach a commit; run git rm --cached on it, then grim install",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

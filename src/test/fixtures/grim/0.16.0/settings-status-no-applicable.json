@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "cx",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/cx@sha256:d38e324fe73a3a424a66148e5adffa89334346b32bb29436c6df1c4772bc007e",
+      "state": "gated",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "no-applicable-settings",
+          "message": "nothing in this settings package applies to this client here; select a client the package declares values for with --client <name> or [options].clients, then run grim install",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

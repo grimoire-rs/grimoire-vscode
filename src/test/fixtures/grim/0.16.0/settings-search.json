@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "repo": "ghcr.io/acme/team",
+      "source": {
+        "alias": "t",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": null,
+      "description": "Team defaults",
+      "version": "1.1.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "t",
+        "digest": "sha256:dd523a2bd6545d1c6f096c9eecda1c9248bf44beeeaee9690fa890b502e4af04"
+      },
+      "status": "not-installed"
+    }
+  ],
+  "sources": [
+    {
+      "alias": "t",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

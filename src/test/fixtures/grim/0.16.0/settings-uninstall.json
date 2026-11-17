@@ -1,0 +1,33 @@
+{
+  "kind": "settings",
+  "name": "full",
+  "status": "uninstalled",
+  "retained": [],
+  "abandoned_entries": [],
+  "settings_changes": [
+    {
+      "package": "full",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/model",
+      "element": null,
+      "action": "removed"
+    },
+    {
+      "package": "full",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/allow",
+      "element": "Bash(git status:*)",
+      "action": "removed"
+    },
+    {
+      "package": "full",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/deny",
+      "element": "Bash(rm:*)",
+      "action": "removed"
+    }
+  ]
+}

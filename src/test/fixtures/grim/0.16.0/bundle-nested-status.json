@@ -1,0 +1,114 @@
+{
+  "items": [
+    {
+      "kind": "bundle",
+      "name": "outer",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": null,
+      "state": "installed",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "m1",
+      "source": "bundle: ghcr.io/acme/pack",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "bundle",
+          "name": "pack"
+        }
+      ],
+      "pinned": "ghcr.io/acme/m1@sha256:daec27cf776411440257a99d7ce5b186c4f7be9c56b42a8162c38bd8099acb06",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/m1",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "plain",
+      "source": "bundle: ghcr.io/acme/outer",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "bundle",
+          "name": "outer"
+        }
+      ],
+      "pinned": "ghcr.io/acme/plain@sha256:3371a9bf60292eb94499c165c2fb45be45b8b65417fdc81eac48417357f40bda",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/plain",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "rule",
+      "name": "style",
+      "source": "dependency: skill/m1",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "m1"
+        }
+      ],
+      "pinned": "ghcr.io/acme/style@sha256:d3b940d91b9470c4c7fd17db5ad71b83d0e71bf3fe672646954c40bda7cf5dda",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/style.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

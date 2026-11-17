@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "data",
+    "exit": 65,
+    "forceable": true,
+    "message": "rule 'style' (ghcr.io/acme/style@sha256:d3b940d91b9470c4c7fd17db5ad71b83d0e71bf3fe672646954c40bda7cf5dda): installed artifact was modified locally: recorded sha256:6a2410576f9113eea0dd04f80e94b3f346ee3cee40a3b9685eea9953de77c96b, found sha256:1680bd50534650559421949ad9f527f8aa6ae327a762e4b950ddab9c6a6f3285; rerun with --force to overwrite",
+    "reason": "modified"
+  }
+}

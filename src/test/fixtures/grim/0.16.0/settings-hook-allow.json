@@ -1,0 +1,8 @@
+{
+  "workspace": "/home/u/project",
+  "action": "consented",
+  "hooks": [
+    "settings:full@ghcr.io/acme/full"
+  ],
+  "record": "/home/u/.grimoire/hooks/consent/76e45d87cec1cb4166caf5f856a5a66c796035e4c6390b76cb8df9794596e9a8.json"
+}

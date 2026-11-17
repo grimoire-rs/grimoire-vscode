@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/full:1",
+  "digest": "sha256:a591b8974648b930617e827d753cde4298ec779ef13991eacae92478efd20f2b",
+  "kind": "settings",
+  "name": "full",
+  "vendor": "canonical",
+  "content": "{\n  \"claude\": {\n    \"model\": \"haiku\",\n    \"permissions\": {\n      \"allow\": [\n        \"Bash(git status:*)\"\n      ],\n      \"deny\": [\n        \"Bash(rm:*)\"\n      ]\n    }\n  },\n  \"codex\": {\n    \"model\": \"gpt-5\"\n  },\n  \"description\": \"Team defaults: a model, allow and deny rules, and a marketplace.\",\n  \"summary\": \"team defaults\"\n}\n"
+}

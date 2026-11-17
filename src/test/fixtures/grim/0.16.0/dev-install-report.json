@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "other",
+      "target": "/home/u/project/.claude/skills/other",
+      "status": "installed",
+      "armed": null
+    }
+  ],
+  "settings_changes": []
+}

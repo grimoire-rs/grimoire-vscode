@@ -1,0 +1,50 @@
+{
+  "ref": "ghcr.io/acme/full:1",
+  "digest": "sha256:a591b8974648b930617e827d753cde4298ec779ef13991eacae92478efd20f2b",
+  "kind": "settings",
+  "name": "full",
+  "title": "full3",
+  "description": "Team defaults: a model, allow and deny rules, and a marketplace.",
+  "has_description": false,
+  "summary": "team defaults",
+  "version": "1.2.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "t",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "1.1",
+    "1.1.0",
+    "1.2",
+    "1.2.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.kind": "settings",
+    "com.grimoire.summary": "team defaults",
+    "org.opencontainers.image.description": "Team defaults: a model, allow and deny rules, and a marketplace.",
+    "org.opencontainers.image.source": "ghcr.io/acme/full",
+    "org.opencontainers.image.title": "full3",
+    "org.opencontainers.image.vendor": "t",
+    "org.opencontainers.image.version": "1.2.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": []
+}

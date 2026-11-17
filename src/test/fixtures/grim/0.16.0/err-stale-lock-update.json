@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "data",
+    "exit": 65,
+    "message": "skill 'plain' (ghcr.io/acme/plain:1): the lock no longer matches what is declared (lock hash sha256:548a0f7c976ffb1c534f32b99db6b727c5fc13dc56c144e37e7d6395715ff976, declared hash sha256:f5488d5a6084f8ed5432da28ee75956b0c89bbb2b8b4c18ba4dd9c26c7697500); run `grim lock`, then this update; if `grim lock` finds a pinned manifest gone, bare `grim update` moves every pin",
+    "reason": "stale-lock"
+  }
+}

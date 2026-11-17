@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/gdrive:1",
+  "digest": "sha256:11ac865f501e7590691ca22c9399e31ace55bdae804de9d2058984f30d71c300",
+  "kind": "mcp",
+  "name": "gdrive",
+  "vendor": "canonical",
+  "content": "{\n  \"description\": \"Drive over MCP.\",\n  \"server\": {\n    \"transport\": \"stdio\",\n    \"command\": \"gdrive-mcp\"\n  }\n}\n"
+}

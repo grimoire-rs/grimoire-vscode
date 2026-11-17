@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "target": null,
+      "status": "skipped",
+      "armed": null
+    }
+  ],
+  "settings_changes": []
+}

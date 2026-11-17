@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/pack:1",
+  "digest": "sha256:51b16f91cbd1e9360c547a4ed856b00599553b544ab1c027411d0c2208db2ca6",
+  "kind": "bundle",
+  "name": "pack",
+  "vendor": "canonical",
+  "content": "{\n  \"members\": [\n    {\n      \"kind\": \"skill\",\n      \"name\": \"m1\",\n      \"id\": \"./m1:1\"\n    },\n    {\n      \"kind\": \"skill\",\n      \"name\": \"plain\",\n      \"id\": \"./plain:1\"\n    }\n  ]\n}\n"
+}

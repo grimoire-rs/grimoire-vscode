@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "data",
+    "exit": 65,
+    "message": "grimoire.lock is stale (declaration_hash sha256:548a0f7c976ffb1c534f32b99db6b727c5fc13dc56c144e37e7d6395715ff976 does not match current sha256:f5488d5a6084f8ed5432da28ee75956b0c89bbb2b8b4c18ba4dd9c26c7697500); run `grim lock` before installing"
+  }
+}

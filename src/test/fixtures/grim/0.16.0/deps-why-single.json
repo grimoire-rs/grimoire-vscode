@@ -1,0 +1,23 @@
+{
+  "kind": "rule",
+  "name": "style",
+  "pinned": "ghcr.io/acme/style@sha256:dc52796bba48b41cf9463306dd1a22cefe95461cb53f5bae4601e0577a96606e",
+  "direct": false,
+  "paths": [
+    [
+      {
+        "kind": "skill",
+        "name": "drive",
+        "pinned": "ghcr.io/acme/drive@sha256:992a2762a162de32c7b67ce09ab6eb9f23004a064ee57417007698615786d295"
+      },
+      {
+        "kind": "rule",
+        "name": "style",
+        "pinned": "ghcr.io/acme/style@sha256:dc52796bba48b41cf9463306dd1a22cefe95461cb53f5bae4601e0577a96606e"
+      }
+    ]
+  ],
+  "path_count": 1,
+  "truncated": false,
+  "overrides": []
+}

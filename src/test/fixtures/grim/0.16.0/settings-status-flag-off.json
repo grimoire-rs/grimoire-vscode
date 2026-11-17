@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/full@sha256:7cd1b4ba5ccc2c107e8db7ceb25e4ed5bb80f86fee6d1a3a320f0699b45d7320",
+      "state": "gated",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "feature-flag-off",
+          "message": "settings are gated; enable them with `grim config set options.experimental.settings true`",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

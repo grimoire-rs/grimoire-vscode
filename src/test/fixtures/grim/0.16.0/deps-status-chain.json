@@ -1,0 +1,90 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "a",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/a@sha256:cf288e68ae1b2c340f82b14d029ed55718f8bd47d5a5171a8cd4accceeea1c37",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/a",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "b",
+      "source": "dependency: skill/a",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "a"
+        }
+      ],
+      "pinned": "ghcr.io/acme/b@sha256:b0feaf67f9a61ca4b091cdbbf2c3a94ff3b3a8b81d41e4561bf0a61316e20932",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/b",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "rule",
+      "name": "c-rule",
+      "source": "dependency: skill/b",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "b"
+        }
+      ],
+      "pinned": "ghcr.io/acme/c-rule@sha256:9106cfd7bee2a975ea99f4ecd8e43297f45f7dc8718a3f5a995bebb6220e492d",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/c-rule.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}

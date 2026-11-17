@@ -1,0 +1,45 @@
+{
+  "ref": "ghcr.io/acme/outer:1",
+  "digest": "sha256:0a4a8b543736d44e684760566879d1d1938eddc3bd86d5411c4c9a2ff0971b48",
+  "kind": "bundle",
+  "name": "outer",
+  "title": "outer",
+  "description": "grimoire bundle of 2 members",
+  "has_description": false,
+  "summary": null,
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "t",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.kind": "bundle",
+    "org.opencontainers.image.description": "grimoire bundle of 2 members",
+    "org.opencontainers.image.source": "ghcr.io/acme/outer",
+    "org.opencontainers.image.title": "outer",
+    "org.opencontainers.image.vendor": "t",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": []
+}

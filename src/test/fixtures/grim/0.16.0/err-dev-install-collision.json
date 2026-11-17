@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "usage",
+    "exit": 64,
+    "message": "'plain' is already declared in grimoire.toml; remove the declaration or rename the local skill before dev-installing"
+  }
+}

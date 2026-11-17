@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "name": "full",
+      "old": "sha256:3e426ec424f71c3584f1e508c4b84a4f91eb999a4d4a0bf3b8d11490de8a99e6",
+      "new": "sha256:a591b8974648b930617e827d753cde4298ec779ef13991eacae92478efd20f2b",
+      "action": "updated",
+      "reaped_clients": [],
+      "kept_modified_clients": [],
+      "retained": [],
+      "abandoned_entries": [],
+      "refused": true,
+      "plugin": null
+    }
+  ],
+  "settings_changes": [],
+  "pieces": [
+    {
+      "package": "full",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "pointer": "/model",
+      "element": null,
+      "marked": "overwrite",
+      "state": "modified",
+      "wanted": "haiku",
+      "current": "mine"
+    }
+  ]
+}

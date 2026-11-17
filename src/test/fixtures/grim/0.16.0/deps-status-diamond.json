@@ -1,0 +1,124 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "top",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/top@sha256:9f33e01ee0b5a6a477f5a4b0024a1e7bcbaca40e55ddee5f379a877278b906fe",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/top",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "l",
+      "source": "dependency: skill/top",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "top"
+        }
+      ],
+      "pinned": "ghcr.io/acme/l@sha256:61440d47221eb35dbd5ef83e8d959e8d5e19ccdfbaee9325f09f0644eccdbf59",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/l",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "skill",
+      "name": "r",
+      "source": "dependency: skill/top",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "top"
+        }
+      ],
+      "pinned": "ghcr.io/acme/r@sha256:d886d80f52a73254c56fc4e25960055ebf681e30e2a9e52a008e83e06ada6227",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/r",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    },
+    {
+      "kind": "rule",
+      "name": "leaf",
+      "source": "dependency: skill/l, skill/r",
+      "direct": false,
+      "required_by": [
+        {
+          "kind": "skill",
+          "name": "l"
+        },
+        {
+          "kind": "skill",
+          "name": "r"
+        }
+      ],
+      "pinned": "ghcr.io/acme/leaf@sha256:9dbf814c45295a31e9776273430d2127b2103e8a4353f43be073cf974ce0b26d",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/leaf.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null
+    }
+  ],
+  "checked": false
+}
