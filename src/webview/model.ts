@@ -259,6 +259,7 @@ export function installHolders(
       ? { viaBundles, requiredBy, alsoRequiredBy: also }
       : { viaBundles, requiredBy };
   }
+  let bundleWithoutRow = false;
   for (const parent of item.required_by) {
     const row = (scope.status ?? []).find((s) => s.kind === parent.kind && s.name === parent.name);
     const ref = row ? (scope.declared[declaredKey(row.kind, row.name)] ?? row.pinned) : null;
@@ -266,9 +267,20 @@ export function installHolders(
     if (parent.kind === 'bundle') {
       if (repo) {
         viaBundles.push(repo);
+      } else {
+        bundleWithoutRow = true;
       }
     } else {
       requiredBy.push({ kind: parent.kind, name: parent.name, repo });
+    }
+  }
+  // A nested bundle has no status row of its own, so its repo only survives in
+  // `source`, which names every bundle that provides the row.
+  if (bundleWithoutRow) {
+    for (const repo of parseViaBundles(item.source)) {
+      if (!viaBundles.includes(repo)) {
+        viaBundles.push(repo);
+      }
     }
   }
   return { viaBundles, requiredBy };

@@ -192,6 +192,21 @@ suite('grim 0.16.0 dependency rows', () => {
     assert.ok(buildInstalledCards([], [scopeOf('status-stale')]).length > 0);
   });
 
+  test('a member of a nested bundle is held by the bundle that lists it, though that bundle has no row', () => {
+    // `pack` is declared by nothing: only `outer` is, so grim gives `pack` no
+    // status row, and m1's required_by names a row that does not exist.
+    const installs = installsOf('bundle-nested-status', { 'bundle:outer': 'ghcr.io/acme/outer:1' });
+    const m1 = installs.get('skill/m1');
+    assert.ok(m1);
+    assert.deepStrictEqual(m1.viaBundles, ['ghcr.io/acme/pack']);
+    assert.strictEqual(isHeld(m1), true);
+    assert.deepStrictEqual(installs.get('skill/plain')?.viaBundles, ['ghcr.io/acme/outer']);
+    assert.deepStrictEqual(
+      installs.get('rule/style')?.requiredBy?.map((p) => p.name),
+      ['m1'],
+    );
+  });
+
   test("--check on a nested bundle that moved: the row reads no update, the list is grim's alone", () => {
     const outer = rows('bundle-nested-status-check').find((i) => i.name === 'outer');
     assert.strictEqual(outer?.update_available, false);
