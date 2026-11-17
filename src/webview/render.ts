@@ -1806,7 +1806,10 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
       : nothing;
     return html`${boxes}${manifest}`;
   }
-  if ((vm.kind === 'mcp' || vm.kind === 'settings') && vm.contentJson !== null) {
+  if (
+    (vm.kind === 'mcp' || vm.kind === 'settings' || vm.kind === 'hook') &&
+    vm.contentJson !== null
+  ) {
     return renderJsonBlock(vm.contentJson);
   }
   return html`<div class="md-body" id="md-contents">${mdBody(vm.contentMarkdown)}</div>`;

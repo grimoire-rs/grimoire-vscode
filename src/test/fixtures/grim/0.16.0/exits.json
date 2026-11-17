@@ -54,6 +54,7 @@
   "bundle-fetch": 0,
   "skill-requires-fetch": 0,
   "mcp-fetch": 0,
+  "hook-fetch": 0,
   "deps-status-direct-and-required": 0,
   "deps-uninstall-direct-and-required": 0
 }

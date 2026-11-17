@@ -1,0 +1,18 @@
+{
+  "ref": "localhost:5822/acme/hooks/hk1:1",
+  "digest": "sha256:6689952e2a6d46a788b390ff3272ea5c998422f32afbf87a4d43b7914bd00b7b",
+  "kind": "hook",
+  "name": "hk1",
+  "vendor": "canonical",
+  "content": "# A `gatekeeper` DEMONSTRATION. Read `catalog/hooks/README.md` before\n# installing it, and read the description below before relying on it.\n#\n# The gatekeeper tier is explicitly NOT a security boundary in this design.\n# It shows how a verdict reaches the client; it does not stop a determined\n# agent, and this example's own check is a substring match that any\n# rewording evades. Copy it to learn the shape, never as a control.\n\nschema = 1\nname = \"hk1\"\ndescription = \"Gatekeeper example: refuses a Bash tool call whose text contains the literal `rm -rf /`, and returns the refusal as a JSON verdict rather than an exit code. NOT a security control — the gatekeeper tier is not a security boundary and this check is a substring match that trivial rewording evades. Reads its input, writes a verdict, changes nothing on disk.\"\n\n[[hooks]]\nid = \"refuse-recursive-root-delete\"\n# `PreToolUse` is the only moment at which refusing a tool call is\n# meaningful — a verdict at `PostToolUse` arrives after the damage.\nevent = \"PreToolUse\"\ntier = \"gatekeeper\"\nmatcher = \"Bash\"\nargv = [\"sh\", \"guard.sh\"]\ntimeout = 5\npayload = \"stdin\"\n",
+  "files": [
+    {
+      "path": "hk1/guard.sh",
+      "size": 1707
+    },
+    {
+      "path": "hk1/hook.toml",
+      "size": 1126
+    }
+  ]
+}

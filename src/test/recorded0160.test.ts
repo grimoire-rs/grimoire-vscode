@@ -288,6 +288,18 @@ suite('grim 0.16.0 details sources', () => {
     assert.strictEqual(vm.kind, 'mcp');
     assert.ok((vm.contentJson ?? '').length > 0);
   });
+
+  test("a hook's hook.toml is shown as a code block, not as Markdown", () => {
+    const vm = buildDetailsVM({
+      ...sources('localhost:5822/acme/hooks/hk1', 'deps-describe-requires', 'hook-fetch'),
+      describe: null,
+    });
+    assert.strictEqual(vm.kind, 'hook');
+    // As Markdown, every `# comment` line would render as a heading.
+    assert.strictEqual(vm.contentMarkdown, null);
+    assert.match(vm.contentJson ?? '', /^# A `gatekeeper` DEMONSTRATION/);
+    assert.match(vm.contentJson ?? '', /\[\[hooks\]\]/);
+  });
 });
 
 suite('grim 0.16.0 action reports', () => {

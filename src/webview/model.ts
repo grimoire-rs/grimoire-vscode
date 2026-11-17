@@ -2896,6 +2896,9 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
       if ((kind === 'mcp' || kind === 'settings') && parsed.body.trimStart().startsWith('{')) {
         // MCP and settings descriptors are JSON — highlighted directly in CONTENTS, not fenced.
         contentJson = prettyJson(parsed.body);
+      } else if (kind === 'hook') {
+        // hook.toml is TOML: as Markdown its `# comment` lines become headings.
+        contentJson = parsed.body;
       } else {
         contentMarkdown = parsed.body;
       }
