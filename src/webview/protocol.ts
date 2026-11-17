@@ -601,6 +601,8 @@ export type DetailsToHost =
   | { type: 'pickVersion'; scope?: Scope }
   | { type: 'openExternal'; url: string }
   | { type: 'openDetails'; repo: string }
+  /** Verbatim text of one code block, copied via the host clipboard. */
+  | { type: 'copyText'; text: string }
   | { type: 'copyRepoPath'; repo: string }
   | { type: 'copyShareLink'; repo: string }
   /** A rail tag click: focus Browse and seed its search with the tag (item 2). */

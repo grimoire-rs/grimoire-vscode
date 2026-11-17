@@ -732,6 +732,9 @@ export class DetailsManager implements vscode.WebviewPanelSerializer {
           void vscode.env.openExternal(vscode.Uri.parse(message.url));
         }
         return;
+      case 'copyText':
+        await vscode.env.clipboard.writeText(message.text);
+        return;
       case 'copyRepoPath':
         await vscode.env.clipboard.writeText(message.repo);
         void vscode.window.showInformationMessage(`Copied ${message.repo}`);

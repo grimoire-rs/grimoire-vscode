@@ -41,6 +41,7 @@ export const MUTATING_ACTIONS: Record<string, boolean> = {
   'scope-menu': false,
   'scope-gear': false,
   copy: false,
+  'copy-code': false,
   'copy-share': false,
   open: false,
   'open-details': false,

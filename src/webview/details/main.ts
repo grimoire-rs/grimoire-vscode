@@ -308,6 +308,25 @@ root.addEventListener('click', (event) => {
       activeHarness = target.dataset['harness'] ?? null;
       applyHarnessState();
       break;
+    case 'copy-code': {
+      // A fenced block's text ends in a newline; pasted into a terminal that
+      // would run the last line, so it is dropped.
+      const text = target
+        .closest('.code-block')
+        ?.querySelector('code')
+        ?.textContent?.replace(/\n$/, '');
+      const icon = target.querySelector('.codicon');
+      if (text && icon) {
+        vscode.postMessage({ type: 'copyText', text });
+        target.classList.add('copied');
+        icon.classList.replace('codicon-copy', 'codicon-check');
+        setTimeout(() => {
+          target.classList.remove('copied');
+          icon.classList.replace('codicon-check', 'codicon-copy');
+        }, 1500);
+      }
+      break;
+    }
     case 'copy':
       vscode.postMessage({ type: 'copyRepoPath', repo: target.dataset['repo'] ?? '' });
       break;

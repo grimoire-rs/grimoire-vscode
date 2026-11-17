@@ -2823,6 +2823,16 @@ suite('details rendering', () => {
     assert.ok(!html.includes('id="md-contents"'), 'mcp bypasses markdown-it for CONTENTS');
   });
 
+  test('a JSON block carries exactly one copy button', async () => {
+    const html = await litHtml(
+      renderDetails(
+        detailsVM({ kind: 'mcp', contentMarkdown: null, contentJson: '{"command": "grim"}' }),
+      ),
+    );
+    assert.strictEqual(html.split('data-action="copy-code"').length - 1, 1);
+    assert.strictEqual(html.split('class="code-block"').length - 1, 1);
+  });
+
   // --- grim's curated annotations (grimoire#106) ---
 
   /** The rig's annotation showcase, as it reaches the VM. */
@@ -3019,6 +3029,27 @@ suite('createMarkdown (details webview factory)', () => {
   test('javascript: links are still neutralized', () => {
     const html = createMarkdown().render('[click](javascript:alert(1))');
     assert.ok(!html.includes('href="javascript:'), 'javascript: link dropped');
+  });
+
+  test('fenced and indented code blocks get a wrapper and copy button; inline code does not', () => {
+    const md = createMarkdown();
+    for (const src of ['```js\nlet a = 1;\n```', '    let a = 1;']) {
+      const html = md.render(src);
+      assert.ok(html.startsWith('<div class="code-block"><button class="code-copy"'), html);
+      assert.strictEqual(html.split('data-action="copy-code"').length - 1, 1);
+      assert.ok(html.includes('<pre><code'));
+    }
+    assert.ok(!md.render('use `x` here').includes('copy-code'));
+  });
+
+  test('hostile fence content and info string stay inert inside the copy wrapper', () => {
+    const md = createMarkdown();
+    const body = md.render('```\n</code></pre><script>alert(1)</script>\n```');
+    assert.ok(!body.includes('<script>'));
+    assert.ok(body.includes('&lt;/code&gt;&lt;/pre&gt;&lt;script&gt;'));
+    const info = md.render('```"><img src=x onerror=1>\nx\n```');
+    assert.ok(!info.includes('<img'));
+    assert.ok(info.includes('&lt;img'));
   });
 
   test('raw HTML stays inert (html:false)', () => {

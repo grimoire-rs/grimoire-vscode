@@ -1367,3 +1367,55 @@ vscode-button.sm {
 .rating-count {
   font-variant-numeric: tabular-nums;
 }
+
+/* Copy button on every code block (JSON/TOML panels and markdown fences). */
+.code-block {
+  position: relative;
+}
+
+/* The wrapper owns the block's outer spacing (browser default for <pre>). */
+.md-body .code-block {
+  margin: 1em 0;
+}
+
+.md-body .code-block pre {
+  margin: 0;
+}
+
+.code-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.15));
+  border-radius: 4px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.code-block:hover .code-copy,
+.code-copy:focus-visible {
+  opacity: 1;
+}
+
+.code-copy:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-foreground);
+}
+
+.code-copy .codicon {
+  font-size: 14px;
+}
+
+/* Transient confirmation: main.ts sets the class and swaps the glyph for ~1.5 s. */
+.code-copy.copied {
+  opacity: 1;
+}

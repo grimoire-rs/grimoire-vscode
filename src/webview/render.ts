@@ -1793,7 +1793,10 @@ function renderJsonBlock(json: string): TemplateResult {
   // highlightJson output is self-generated, fully esc()-escaped <span> markup
   // (token text and inter-token gaps alike), so unsafeHTML injects it verbatim
   // without a second escaping pass.
-  return html`<pre class="json-code"><code>${unsafeHTML(highlightJson(json))}</code></pre>`;
+  return html`<div class="code-block">
+    <button class="code-copy" data-action="copy-code" title="Copy" aria-label="Copy"><span class="codicon codicon-copy" aria-hidden="true"></span></button>
+    <pre class="json-code"><code>${unsafeHTML(highlightJson(json))}</code></pre>
+  </div>`;
 }
 
 // Harness name -> codicon. Presentation only (not a whitelist of harnesses):
