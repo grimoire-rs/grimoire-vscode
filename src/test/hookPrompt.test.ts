@@ -7,6 +7,7 @@ import {
   promptNamesLine,
   hookPromptFor,
   newlyCovered,
+  type GatedKind,
   type HookGate,
 } from '../gatePrompt';
 import { configSetArgs, hookAllowArgs, installArgs } from '../grim';
@@ -177,6 +178,162 @@ suite('hookPromptFor', () => {
   });
 });
 
+// Hand-built mod rows in the shape grim emits (`kind: "mod"`, `state: "gated"`,
+// `arming` of {client, cause, message}); causes from `mod_arming` in grim's
+// src/command/status.rs (~3234-3300): `feature-flag-off`,
+// `workspace-not-consented`, `consent-drifted`. The `transient` field is not
+// in the extension's HookArming type yet, so it is left out.
+const modRow = (name: string, cause: string): StatusItem => ({
+  ...row(name, [cause], 'mod'),
+  arming: [
+    { client: 'claude', cause, message: cause },
+    { client: 'opencode', cause, message: cause },
+  ],
+});
+const KIND_WORDS: Record<GatedKind, RegExp> = {
+  hook: /hooks/,
+  settings: /settings/,
+  mod: /mods/,
+};
+
+suite('mod gates', () => {
+  test('gate order: hook flag, settings flag, mods flag, consent', () => {
+    const all = [
+      modRow('m', 'feature-flag-off'),
+      row('s', ['feature-flag-off'], 'settings'),
+      row('h', ['feature-flag-off']),
+    ];
+    const gates: string[] = [];
+    const declined = new Set<string>();
+    for (;;) {
+      const p = hookPromptFor([...all, row('c', ['workspace-not-consented'])], (g, k) =>
+        declined.has(`${g}:${k}`),
+      );
+      if (!p) {
+        break;
+      }
+      gates.push(p.gate);
+      declined.add(`${p.gate}:${p.kinds[0]}`);
+    }
+    assert.deepStrictEqual(gates, ['enable', 'enable-settings', 'enable-mods', 'consent']);
+  });
+
+  test('mods flag gate names the mods and runs config set then install', () => {
+    const p = hookPromptFor([modRow('m', 'feature-flag-off')]);
+    assert.deepStrictEqual(p, { gate: 'enable-mods', kinds: ['mod'], names: ['m'] });
+    const text = gatePromptText(p as NonNullable<typeof p>);
+    assert.ok(text.message.includes('(m)'));
+    assert.ok(text.message.includes('code your AI client (Claude Code, OpenCode) loads'));
+    assert.deepStrictEqual(text.steps, [
+      configSetArgs('options.experimental.mods', 'true'),
+      installArgs(),
+    ]);
+    assert.strictEqual(text.yes, 'Enable');
+    assert.strictEqual(text.title, 'Enabling mods');
+  });
+
+  test('a declined mods flag gate falls through to consent', () => {
+    const rows = [modRow('m', 'feature-flag-off'), modRow('n', 'workspace-not-consented')];
+    const p = hookPromptFor(rows, (g) => g === 'enable-mods');
+    assert.strictEqual(p?.gate, 'consent');
+    assert.deepStrictEqual(p?.held, ['mod']);
+  });
+
+  test('declined keys, one per gate and kind', () => {
+    assert.strictEqual(
+      declinedKey('enable-mods', 'mod'),
+      'grimoire.hookPrompt.enable-mods.declined',
+    );
+    assert.strictEqual(declinedKey('consent', 'mod'), 'grimoire.hookPrompt.consent-mods.declined');
+    const keys = new Set([
+      declinedKey('consent', 'hook'),
+      declinedKey('consent', 'settings'),
+      declinedKey('consent', 'mod'),
+    ]);
+    assert.strictEqual(keys.size, 3);
+  });
+
+  test('a declined mod consent does not silence hooks', () => {
+    const rows = [row('h', ['workspace-not-consented']), modRow('m', 'workspace-not-consented')];
+    const p = hookPromptFor(rows, (g, k) => g === 'consent' && k === 'mod');
+    assert.deepStrictEqual(p, {
+      gate: 'consent',
+      kinds: ['hook', 'mod'],
+      names: ['h', 'm'],
+      held: ['hook', 'mod'],
+    });
+  });
+
+  test('held names the mods consent holds back', () => {
+    const p = hookPromptFor([row('h', []), modRow('m', 'consent-drifted')]);
+    assert.deepStrictEqual(p, {
+      gate: 'consent',
+      kinds: ['hook', 'mod'],
+      names: ['h', 'm'],
+      held: ['mod'],
+    });
+  });
+
+  test('consent copy for every non-empty subset names the present kinds only', () => {
+    const all = ['hook', 'settings', 'mod'] as const;
+    let count = 0;
+    for (let mask = 1; mask < 8; mask++) {
+      const kinds = all.filter((_, i) => mask & (1 << i));
+      const text = gatePromptText({ gate: 'consent', kinds: [...kinds], names: ['x'] });
+      count++;
+      for (const k of all) {
+        assert.strictEqual(
+          KIND_WORDS[k].test(text.message),
+          kinds.includes(k),
+          `${kinds.join('+')}: ${k}\n${text.message}`,
+        );
+        assert.strictEqual(KIND_WORDS[k].test(text.title), kinds.includes(k), text.title);
+      }
+      assert.ok(text.message.includes('(x)'));
+      assert.deepStrictEqual(text.steps, [hookAllowArgs(), installArgs()]);
+    }
+    assert.strictEqual(count, 7);
+  });
+
+  test('mod consent says what Allow does', () => {
+    const text = gatePromptText({ gate: 'consent', kinds: ['mod'], names: ['m'] });
+    assert.ok(text.message.includes("Allow lets grim write the mod's files"));
+    assert.strictEqual(text.title, 'Allowing mods');
+    assert.strictEqual(
+      gatePromptText({ gate: 'consent', kinds: ['hook', 'settings', 'mod'], names: ['x'] }).title,
+      'Allowing hooks, settings and mods',
+    );
+  });
+
+  test('a mod hostile name is flattened and capped in the toast', () => {
+    const text = gatePromptText({ gate: 'enable-mods', kinds: ['mod'], names: ['a\nb<script>'] });
+    assert.ok(text.message.includes('(a b<script>)'));
+  });
+
+  test('consent covers a pinned mod whatever its flag says', () => {
+    // grim hook allow records every pinned mod (reviewed_consent_keys turns
+    // every flag on), so a flag-off mod is covered once consent is asked.
+    const p = hookPromptFor(
+      [row('h', ['workspace-not-consented']), modRow('m', 'feature-flag-off')],
+      (g) => g === 'enable-mods',
+    );
+    assert.deepStrictEqual(p?.names, ['h', 'm']);
+  });
+
+  test('promptNamesLine for the mods gate', () => {
+    const names = ['a', 'b', 'c', 'd', 'e', 'f'];
+    assert.ok(
+      promptNamesLine({ gate: 'enable-mods', kinds: ['mod'], names })?.includes('the mods prompt'),
+    );
+  });
+
+  test('a hook and a mod of one binding and repository are two rows', () => {
+    const hook = row('b', [], 'hook', 'ghcr.io/acme/R@sha256:1');
+    const mod = { ...modRow('b', 'workspace-not-consented'), pinned: 'ghcr.io/acme/R@sha256:1' };
+    assert.deepStrictEqual(newlyCovered([hook], [hook, mod]), ['b']);
+  });
+});
+
 suite('promptNamesLine', () => {
   const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
   test('is undefined for five names or fewer', () => {
@@ -337,8 +494,8 @@ suite('newlyCovered', () => {
   });
 
   test('a package of the other kind under the same name and repository names it', () => {
-    // grim keys settings consent as `settings:<binding>@…`, so consent to a
-    // hook never covers a settings package of the same name, or back.
+    // grim's own key carries no kind, but this compares the rows the prompt
+    // named: a row of another kind was not shown.
     const hook = row('x', [], 'hook', 'ghcr.io/acme/x@sha256:1');
     const settings = row('x', [], 'settings', 'ghcr.io/acme/x@sha256:1');
     assert.deepStrictEqual(newlyCovered([hook], [hook, settings]), ['x']);
