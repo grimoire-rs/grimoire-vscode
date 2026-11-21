@@ -6,7 +6,9 @@ Guidance for Claude Code when working in this repository.
 
 VS Code extension `grimoire` (publisher `grimoire-rs`): a marketplace UI for the
 `grim` CLI (OCI-backed package manager for AI artifacts — skills, rules, agents,
-MCP servers, bundles). Sibling repo: `../grimoire` (the Rust CLI).
+MCP servers, bundles, and the experimental hooks, settings and mods). Sibling
+repo: `../grimoire` (the Rust CLI). Every site a kind must reach, and how each
+kind meets each grim interface: `.claude/rules/artifact-kinds.md`.
 
 ## Build & verify
 
@@ -62,6 +64,7 @@ for the swarm/finalize skills (`task verify`, `task checkpoint`, `task git:merge
   script (skipped on Windows) — see `writeStub` in `extension.test.ts`.
 - Match the design mockups (claude.ai/design "Grimoire Skill Marketplace"):
   theme tokens only (`--vscode-*`), codicons per kind (skill=sparkle, rule=law,
-  agent=agent, mcp=mcp, bundle=package, hook=symbol-event, settings=settings —
-  the mockups' hubot/plug were stand-ins from before the codicon set had the
-  real ones), null metadata renders as "Not provided", empty panels are omitted.
+  agent=agent, mcp=mcp, bundle=package, hook=symbol-event, settings=settings,
+  mod=plug — the mockups' hubot/plug for agent/mcp were stand-ins from before
+  the codicon set had the real ones), null metadata renders as "Not provided",
+  empty panels are omitted.
