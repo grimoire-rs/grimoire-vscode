@@ -1,7 +1,8 @@
 {
   "grim_version": "0.16.1",
-  "grim_commit": "2fcebbb8+uncommitted-C1-C5",
+  "grim_commit": "e4939e8b",
   "recorded_at": "2026-11-21T11:31:14Z",
   "script": "record-kinds.sh",
-  "registry": "zot v2.1.21-0-g6429ce6"
+  "registry": "zot v2.1.21-0-g6429ce6",
+  "grim_commit_note": "binary built before commit from the tree that landed as 2832aeff..b824a944 on hex/adr-mod-artifact-kind; e4939e8b adds docs and records only"
 }
