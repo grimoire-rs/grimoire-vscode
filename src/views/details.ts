@@ -44,6 +44,7 @@ import {
   installHolders,
   isHeld,
   isOpenableUrl,
+  KIND_LABELS,
   normalizeKind,
   outputClients,
   readRating,
@@ -54,7 +55,6 @@ import {
   type ScopeStatus,
 } from '../webview/model';
 import type {
-  ArtifactKind,
   DetailsToHost,
   DetailsVM,
   HostToDetails,
@@ -119,17 +119,6 @@ const RETRY_TTL_MS = 10 * 60 * 1000;
  *  double-checks. Only a `complete` entry qualifies — an incomplete one is
  *  precisely the case that deserves the retry. */
 const OPEN_REVALIDATE_TTL_MS = 60 * 1000;
-
-const KIND_LABELS: Record<string, string> = {
-  skill: 'Skill',
-  rule: 'Rule',
-  agent: 'Agent',
-  mcp: 'MCP',
-  bundle: 'Bundle',
-  hook: 'Hook',
-  settings: 'Settings',
-  mod: 'Mod',
-} satisfies Record<ArtifactKind, string>;
 
 /** True when a COMPLETE entry was written inside {@link OPEN_REVALIDATE_TTL_MS}.
  *  Pure; exported for the open-path test. A future-dated `savedAt` (clock skew)

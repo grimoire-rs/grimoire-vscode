@@ -14,7 +14,7 @@ import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { repeat } from 'lit-html/directives/repeat.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createMarkdown } from './markdown';
-import { contactUrl } from './model';
+import { contactUrl, KIND_LABELS, KINDS } from './model';
 import type {
   BundleMemberVM,
   CardVM,
@@ -627,16 +627,9 @@ function groupHeader(group: CardGroup, expanded: boolean, row?: RowAttrs): Templ
   return html`<button class="group-header" data-action="toggle-node" data-node="${group.id}" aria-expanded="${expanded}" data-key="${ifDefined(row?.key)}" tabindex="${ifDefined(row?.tabindex)}">${twisty(expanded)}<span class="group-label">${group.label}</span><span class="group-count">${group.cards.length}</span>${registryMarks(group)}</button>`;
 }
 
-const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
+export const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'skill', label: 'Skill' },
-  { id: 'rule', label: 'Rule' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'MCP' },
-  { id: 'bundle', label: 'Bundle' },
-  { id: 'hook', label: 'Hook' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'mod', label: 'Mod' },
+  ...KINDS.map((id) => ({ id, label: KIND_LABELS[id] })),
 ];
 
 /** Kind multi-select chip row (replaces the dropdown): All + a chip per kind

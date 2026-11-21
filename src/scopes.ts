@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { readConfig, DEFAULT_EXECUTABLE } from './config';
 import { grimTooOld, tooOldMessage } from './installer';
 import { declaredKey } from './webview/model';
+import type { ArtifactKind } from './webview/protocol';
 import {
   contextArgs,
   statusArgs,
@@ -72,6 +73,20 @@ export interface Snapshot {
   globalProbeFailed?: boolean;
 }
 
+/** The grimoire.toml table that declares each kind. `Record` so a new kind fails
+ *  to compile until it names its table. `[mcp]` is the one table whose name is
+ *  already the kind. */
+export const KIND_TABLES: Record<ArtifactKind, string> = {
+  skill: 'skills',
+  rule: 'rules',
+  agent: 'agents',
+  mcp: 'mcp',
+  bundle: 'bundles',
+  hook: 'hooks',
+  settings: 'settings',
+  mod: 'mods',
+};
+
 /** Parses a grimoire.toml's declarations into {@link declaredKey} -> ref pairs.
  *  Pure; exported for tests. */
 export function parseDeclaredRefs(toml: string): Record<string, string> {
@@ -83,16 +98,9 @@ export function parseDeclaredRefs(toml: string): Record<string, string> {
   // in two tables (a `code-review` skill AND agent) gave both status rows the
   // same ref — one artifact then wore the other's repo. `[mcp]` is the one
   // table whose name is already the kind.
-  const kinds = new Map([
-    ['skills', 'skill'],
-    ['rules', 'rule'],
-    ['agents', 'agent'],
-    ['bundles', 'bundle'],
-    ['mcp', 'mcp'],
-    ['hooks', 'hook'],
-    ['settings', 'settings'],
-    ['mods', 'mod'],
-  ]);
+  const kinds = new Map(
+    (Object.entries(KIND_TABLES) as [ArtifactKind, string][]).map(([k, table]) => [table, k]),
+  );
   let kind: string | undefined;
   for (const rawLine of toml.split('\n')) {
     const line = rawLine.trim();

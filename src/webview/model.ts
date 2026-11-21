@@ -165,6 +165,18 @@ export const KIND_ICONS: Record<ArtifactKind, string> = {
   mod: 'plug',
 };
 
+/** Display label per artifact kind: the details title prefix and the filter chip. */
+export const KIND_LABELS: Record<ArtifactKind, string> = {
+  skill: 'Skill',
+  rule: 'Rule',
+  agent: 'Agent',
+  mcp: 'MCP',
+  bundle: 'Bundle',
+  hook: 'Hook',
+  settings: 'Settings',
+  mod: 'Mod',
+};
+
 export function normalizeKind(kind: string | null | undefined): ArtifactKind | null {
   const k = (kind ?? '').toLowerCase();
   return (KINDS as string[]).includes(k) ? (k as ArtifactKind) : null;
