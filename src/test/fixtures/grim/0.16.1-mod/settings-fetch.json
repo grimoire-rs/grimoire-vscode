@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/team-defaults:1.0.0",
+  "digest": "sha256:21b846eb4f1817624b2f236187cfcef728bc6c2423d1d4fb1566570be16c749a",
+  "kind": "settings",
+  "name": "team-defaults",
+  "vendor": "canonical",
+  "content": "{\n  \"claude\": {\n    \"model\": \"sonnet\",\n    \"permissions\": {\n      \"allow\": [\n        \"Bash(git status:*)\"\n      ],\n      \"deny\": [\n        \"Bash(rm:*)\"\n      ]\n    }\n  },\n  \"description\": \"Team defaults for Claude Code: a model and permission rules.\",\n  \"keywords\": \"team,defaults,permissions\",\n  \"summary\": \"Team defaults\"\n}\n"
+}

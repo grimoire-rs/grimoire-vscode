@@ -24,6 +24,7 @@ import type {
   RatingVM,
   RevalidateState,
   Scope,
+  ModHarnessVM,
   SettingsHarnessVM,
   SidebarState,
   VoteState,
@@ -285,6 +286,19 @@ function clientChips(clients: string[]): TemplateResult[] {
   return clients.map((c) => html`<span class="client-chip">${c}</span>`);
 }
 
+function harnessIcon(name: string): string {
+  return (Object.hasOwn(HARNESS_ICONS, name) ? HARNESS_ICONS[name] : undefined) ?? 'settings-gear';
+}
+
+/** One small badge per harness a mod serves: the name as text, an icon from the
+ *  presentation map (generic for an unknown name). Nothing renders for none. */
+function harnessBadges(serves: string[] | undefined): TemplateResult | typeof nothing {
+  if (!serves || serves.length === 0) {
+    return nothing;
+  }
+  return html`<span class="harness-badges">${serves.map((h) => html`<span class="harness-badge"><span class="codicon codicon-${harnessIcon(h)}" aria-hidden="true"></span>${h}</span>`)}</span>`;
+}
+
 /** design-2b installed box: one bordered chip for the effective scope. Scope
  *  only — the pinned version made the chip too long on browse cards (user);
  *  versions live in the details scope box. */
@@ -447,7 +461,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
         ? html`<span class="card-where">${card.installs.length} ${card.installs.length === 1 ? 'scope' : 'scopes'}</span>`
         : nothing;
     body = html`${title}
-    <div class="card-meta">${extras}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}${pendingBadge(install)}
+    <div class="card-meta">${extras}${harnessBadges(card.serves)}${clientChips(install?.clients ?? [])}${clientDriftBadge(install)}${pendingBadge(install)}
       <span class="card-actions"><span class="codicon codicon-check installed-check" title="Installed"></span><button class="icon-button" data-action="menu" title="Manage" tabindex="${ifDefined(nestedTab(options.row))}"><span class="codicon codicon-gear"></span></button></span>
     </div>`;
   } else {
@@ -459,7 +473,7 @@ export function renderCard(card: CardVM, options: CardVariant = {}): TemplateRes
       : nothing;
     body = html`${title}${description}
     <div class="card-meta">
-      <span class="registry mono">${lock}${registryLabel(card.repo)}</span>
+      <span class="registry mono">${lock}${registryLabel(card.repo)}</span>${harnessBadges(card.serves)}
       ${ratingBadge(card.rating)}${downloadsBadge(card.downloads)}
       <span class="card-actions">${options.installStateUnknown ? nothing : cardAction(card, nestedTab(options.row))}</span>
     </div>`;
@@ -622,6 +636,7 @@ const KIND_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
   { id: 'bundle', label: 'Bundle' },
   { id: 'hook', label: 'Hook' },
   { id: 'settings', label: 'Settings' },
+  { id: 'mod', label: 'Mod' },
 ];
 
 /** Kind multi-select chip row (replaces the dropdown): All + a chip per kind
@@ -1808,31 +1823,80 @@ const HARNESS_ICONS: Record<string, string> = {
   cursor: 'cursor',
 };
 
-/** Settings CONTENTS: one chip per harness plus a trailing Raw chip, and one
- *  JSON panel each — the harness table alone, or the whole document for Raw.
- *  All panels are rendered and the selected one is visible (main.ts toggles
- *  `.hidden` like the tab panels), so the SSR skeleton shows the first harness.
- *  Panel ids are `h:<name>` so no harness name can collide with `raw`. */
-function renderSettingsBody(harnesses: SettingsHarnessVM[], contentJson: string): TemplateResult {
-  const views = [
-    ...harnesses.map((h) => ({
-      id: `h:${h.name}`,
-      label: h.name,
-      icon: Object.hasOwn(HARNESS_ICONS, h.name) ? HARNESS_ICONS[h.name] : 'settings-gear',
-      json: h.json,
-      raw: false,
-    })),
-    { id: 'raw', label: 'Raw', icon: 'json', json: contentJson, raw: true },
-  ];
+/** One selectable view of a harness-split CONTENTS tab. */
+interface HarnessView {
+  id: string;
+  label: string;
+  icon: string;
+  raw: boolean;
+  body: TemplateResult;
+}
+
+/** Harness-split CONTENTS (settings and mod): one chip per view, the Raw view
+ *  last, and one panel each. All panels are rendered and the selected one is
+ *  visible (main.ts toggles `.hidden` like the tab panels), so the SSR skeleton
+ *  shows the first view. Panel ids are `h:<name>` so no harness name can
+ *  collide with `raw`. */
+function renderHarnessViews(views: HarnessView[]): TemplateResult {
   const chips = views.map(
     (v, i) =>
       html`<button class="harness-chip${v.raw ? ' harness-chip-raw' : ''}${i === 0 ? ' active' : ''}" data-action="set-harness" data-harness="${v.id}" aria-pressed="${i === 0 ? 'true' : 'false'}"><span class="codicon codicon-${v.icon}" aria-hidden="true"></span>${v.label}</button>`,
   );
   const panels = views.map(
     (v, i) =>
-      html`<div class="harness-panel${i === 0 ? '' : ' hidden'}" data-harness="${v.id}">${renderJsonBlock(v.json)}</div>`,
+      html`<div class="harness-panel${i === 0 ? '' : ' hidden'}" data-harness="${v.id}">${v.body}</div>`,
   );
   return html`<div class="harness-chips">${chips}</div>${panels}`;
+}
+
+/** Settings CONTENTS: the harness table alone per chip, the whole document for
+ *  Raw. */
+function renderSettingsBody(harnesses: SettingsHarnessVM[], contentJson: string): TemplateResult {
+  return renderHarnessViews([
+    ...harnesses.map((h) => ({
+      id: `h:${h.name}`,
+      label: h.name,
+      icon: harnessIcon(h.name),
+      body: renderJsonBlock(h.json),
+      raw: false,
+    })),
+    { id: 'raw', label: 'Raw', icon: 'json', body: renderJsonBlock(contentJson), raw: true },
+  ]);
+}
+
+/** Bytes as the file list shows them: whole bytes under 1 KiB, one decimal above. */
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size < 0) {
+    return '';
+  }
+  return size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`;
+}
+
+function renderModHarnessPanel(h: ModHarnessVM): TemplateResult {
+  const entry =
+    h.entry === null
+      ? html`<div class="mod-entry mod-entry-none">No entry stated</div>`
+      : html`<div class="mod-entry"><span class="mod-entry-label">Entry</span> <span class="mod-entry-file mono">${h.entry}</span></div>`;
+  const files = h.files.map(
+    (f) =>
+      html`<li class="mod-file"><span class="mod-file-path mono">${f.path}</span><span class="mod-file-size">${formatFileSize(f.size)}</span></li>`,
+  );
+  return html`${entry}<ul class="mod-files">${files}</ul>`;
+}
+
+/** Mod CONTENTS: one chip per harness directory (its entry and files) plus a
+ *  Raw chip holding `mod.toml`. */
+function renderModBody(harnesses: ModHarnessVM[], modToml: string): TemplateResult {
+  return renderHarnessViews([
+    ...harnesses.map((h) => ({
+      id: `h:${h.name}`,
+      label: h.name,
+      icon: harnessIcon(h.name),
+      body: renderModHarnessPanel(h),
+      raw: false,
+    })),
+    { id: 'raw', label: 'Raw', icon: 'file-code', body: renderJsonBlock(modToml), raw: true },
+  ]);
 }
 
 /** CONTENTS tab body (item 5): the artifact's own content. Skills/rules/agents
@@ -1849,8 +1913,11 @@ function renderContentsBody(vm: DetailsVM): TemplateResult {
   if (vm.kind === 'settings' && vm.settingsHarnesses.length > 0 && vm.contentJson !== null) {
     return renderSettingsBody(vm.settingsHarnesses, vm.contentJson);
   }
+  if (vm.kind === 'mod' && vm.modHarnesses.length > 0 && vm.contentJson !== null) {
+    return renderModBody(vm.modHarnesses, vm.contentJson);
+  }
   if (
-    (vm.kind === 'mcp' || vm.kind === 'settings' || vm.kind === 'hook') &&
+    (vm.kind === 'mcp' || vm.kind === 'settings' || vm.kind === 'hook' || vm.kind === 'mod') &&
     vm.contentJson !== null
   ) {
     return renderJsonBlock(vm.contentJson);
@@ -1920,7 +1987,7 @@ export function renderDetails(vm: DetailsVM): TemplateResult {
       <span class="${nameClass}">${vm.name}</span>
       ${kindBadge(vm.kind)}
       <span class="header-registry"><span class="codicon codicon-globe"></span>${vm.registryHost}</span>
-      ${headerVersionBadge(vm)}
+      ${headerVersionBadge(vm)}${harnessBadges(vm.serves)}
     </div>
     <div class="header-repo-row">
       <span class="header-repo mono" data-action="copy" data-repo="${vm.repo}" title="Copy repo path">${vm.repo}</span>

@@ -79,6 +79,9 @@ body {
 .kind-settings {
   --kind-tint: var(--vscode-terminal-ansiCyan, #29b8db);
 }
+.kind-mod {
+  --kind-tint: var(--vscode-terminal-ansiMagenta, #bc3fbc);
+}
 .kind-unknown {
   --kind-tint: var(--vscode-descriptionForeground);
 }
@@ -606,6 +609,24 @@ vscode-button.sm {
   display: inline-flex;
   gap: 5px;
   flex-wrap: wrap;
+}
+
+.harness-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.harness-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
 }
 
 .client-chip {
@@ -1231,6 +1252,42 @@ vscode-button.sm {
 /* Raw (the whole document) sits apart from the harness chips. */
 .harness-chip-raw {
   margin-left: auto;
+}
+
+/* Mod harness panel: the entry the mod states, then the harness's files. */
+.mod-entry {
+  margin: 4px 0 10px;
+  font-size: 12px;
+}
+
+.mod-entry-label,
+.mod-entry-none,
+.mod-file-size {
+  color: var(--vscode-descriptionForeground);
+}
+
+.mod-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mod-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  font-size: 12px;
+}
+
+.mod-file-path {
+  overflow-wrap: anywhere;
+}
+
+.mod-file-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Skeleton body spinner while the full VM loads (instant header). */

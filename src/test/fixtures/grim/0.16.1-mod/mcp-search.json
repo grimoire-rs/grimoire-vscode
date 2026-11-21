@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "mcp",
+      "repo": "ghcr.io/acme/docs-search",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Team docs search",
+      "description": "Search the team documentation over MCP.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c"
+      },
+      "status": "not-installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "acme",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

@@ -113,6 +113,9 @@ body {
 .kind-settings {
   --kind-tint: var(--vscode-terminal-ansiCyan, #29b8db);
 }
+.kind-mod {
+  --kind-tint: var(--vscode-terminal-ansiMagenta, #bc3fbc);
+}
 .kind-unknown {
   --kind-tint: var(--vscode-descriptionForeground);
 }
@@ -645,6 +648,24 @@ vscode-button.sm {
 .split-button.secondary .split-main:hover,
 .split-button.secondary .split-arrow:hover {
   background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.harness-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.harness-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
 }
 
 .client-chip {

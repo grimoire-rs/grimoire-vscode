@@ -1,0 +1,14 @@
+{
+  "ref": "ghcr.io/acme/reviewer:1.0.0",
+  "digest": "sha256:57d6e049b4616f9c5f6236daeae42d40251fb5aeb72c35bc8fab752e938a97f5",
+  "kind": "agent",
+  "name": "reviewer",
+  "vendor": "canonical",
+  "content": "---\nname: reviewer\ndescription: Delegate a pull request review to this agent.\nmetadata:\n  summary: Pull request reviewer\n  keywords: review,agent,pr\n---\nYou are a careful reviewer. Report specific, actionable findings only.\n",
+  "files": [
+    {
+      "path": "reviewer.md",
+      "size": 224
+    }
+  ]
+}

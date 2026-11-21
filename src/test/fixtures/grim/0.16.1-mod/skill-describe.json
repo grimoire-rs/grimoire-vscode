@@ -1,0 +1,52 @@
+{
+  "ref": "ghcr.io/acme/code-review:1.0.0",
+  "digest": "sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3",
+  "kind": "skill",
+  "name": "code-review",
+  "title": "code-review",
+  "description": "Review a diff for correctness, security and style, and report findings by severity.",
+  "has_description": false,
+  "summary": "Structured diff review",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "review",
+    "quality",
+    "diff"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "review,quality,diff",
+    "com.grimoire.kind": "skill",
+    "com.grimoire.summary": "Structured diff review",
+    "org.opencontainers.image.description": "Review a diff for correctness, security and style, and report findings by severity.",
+    "org.opencontainers.image.source": "ghcr.io/acme/code-review",
+    "org.opencontainers.image.title": "code-review",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

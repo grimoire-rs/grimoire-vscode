@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "kind": "mod",
+      "name": "status-band",
+      "target": null,
+      "status": "skipped",
+      "armed": null
+    }
+  ],
+  "settings_changes": []
+}

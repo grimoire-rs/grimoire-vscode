@@ -1,0 +1,14 @@
+{
+  "ref": "ghcr.io/acme/rust-style:1.0.0",
+  "digest": "sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c",
+  "kind": "rule",
+  "name": "rust-style",
+  "vendor": "canonical",
+  "content": "---\npaths:\n  - \"**/*.rs\"\nsummary: Idiomatic Rust style rules\nkeywords: rust,style,lints\n---\n# Rust style\n\nPrefer `?` over `unwrap` outside tests.\n",
+  "files": [
+    {
+      "path": "rust-style.md",
+      "size": 146
+    }
+  ]
+}

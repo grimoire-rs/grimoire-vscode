@@ -4,7 +4,7 @@
 // today's string-based render.ts, and post-migration parity.test.ts runs the
 // SAME cases against the lit-html render.ts. Exported so both can import one
 // source of truth for "what to render" instead of drifting.
-import { recordedSettings } from './recorded';
+import { recordedModFetch, recordedSettings } from './recorded';
 import {
   buildCards,
   buildDetailsVM,
@@ -92,6 +92,7 @@ export function detailsVM(overrides: Partial<DetailsVM> = {}): DetailsVM {
     contentMarkdown: '# Body',
     contentJson: null,
   settingsHarnesses: [],
+  modHarnesses: [],
     readmeMarkdown: null,
     changelogMarkdown: null,
     members: [],
@@ -723,6 +724,20 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
         describe: settingsFixture<DetailsSources['describe']>('describe-settings'),
         fetch: settingsFixture<DetailsSources['fetch']>('fetch-settings'),
         installs: settingsInstalledCard('status-consented').installs,
+        scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
+        logoUri: null,
+      }),
+    ),
+  );
+  add(
+    'details-mod-contents',
+    r.renderDetails(
+      buildDetailsVM({
+        repo: 'ghcr.io/acme/status-band',
+        searchItem: null,
+        describe: null,
+        fetch: recordedModFetch('mod-fetch'),
+        installs: [],
         scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
         logoUri: null,
       }),

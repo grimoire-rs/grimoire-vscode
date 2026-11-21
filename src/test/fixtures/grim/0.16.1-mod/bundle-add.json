@@ -1,0 +1,10 @@
+{
+  "kind": "bundle",
+  "name": "starter",
+  "pinned": "ghcr.io/acme/starter:1.0.0",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

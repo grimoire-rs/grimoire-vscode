@@ -1,0 +1,56 @@
+{
+  "ref": "ghcr.io/acme/status-band:1.0.0",
+  "digest": "sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3",
+  "kind": "mod",
+  "name": "status-band",
+  "title": "status-band",
+  "description": "Build status above the prompt",
+  "has_description": false,
+  "summary": "Build status band",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "ci",
+    "status",
+    "band"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "ci,status,band",
+    "com.grimoire.kind": "mod",
+    "com.grimoire.mod.clients": "claude,opencode",
+    "com.grimoire.summary": "Build status band",
+    "org.opencontainers.image.description": "Build status above the prompt",
+    "org.opencontainers.image.source": "ghcr.io/acme/status-band",
+    "org.opencontainers.image.title": "status-band",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": [
+    "claude",
+    "opencode"
+  ]
+}

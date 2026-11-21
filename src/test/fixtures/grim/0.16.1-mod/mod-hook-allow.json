@@ -1,0 +1,8 @@
+{
+  "workspace": "/home/u/project",
+  "action": "consented",
+  "hooks": [
+    "status-band@ghcr.io/acme/status-band"
+  ],
+  "record": "/home/u/.grimoire/consent/775ce86baf0f0fd30fb46feb7dd09c06c3231876bb704930642daab20401012f.json"
+}

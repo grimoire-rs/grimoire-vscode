@@ -1,0 +1,52 @@
+{
+  "ref": "ghcr.io/acme/rust-style:1.0.0",
+  "digest": "sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c",
+  "kind": "rule",
+  "name": "rust-style",
+  "title": "rust-style",
+  "description": "Rust style",
+  "has_description": false,
+  "summary": "Idiomatic Rust style rules",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "rust",
+    "style",
+    "lints"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "rust,style,lints",
+    "com.grimoire.kind": "rule",
+    "com.grimoire.summary": "Idiomatic Rust style rules",
+    "org.opencontainers.image.description": "Rust style",
+    "org.opencontainers.image.source": "ghcr.io/acme/rust-style",
+    "org.opencontainers.image.title": "rust-style",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

@@ -1,0 +1,46 @@
+{
+  "ref": "ghcr.io/acme/tool-call-logger:1.0.0",
+  "digest": "sha256:be4235c202604aed6411f7684d0b2808d29b635c459d754fecadbd22edb57ad1",
+  "kind": "hook",
+  "name": "tool-call-logger",
+  "title": "tool-call-logger",
+  "description": "Observer example: appends one line per tool call and per session start to a log file outside the repository. Cannot block, alter, or delay anything — the observer tier's response is discarded by design. Writes only to $GRIM_EXAMPLE_LOG (default: a file under $TMPDIR).",
+  "has_description": false,
+  "summary": null,
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.kind": "hook",
+    "org.opencontainers.image.description": "Observer example: appends one line per tool call and per session start to a log file outside the repository. Cannot block, alter, or delay anything — the observer tier's response is discarded by design. Writes only to $GRIM_EXAMPLE_LOG (default: a file under $TMPDIR).",
+    "org.opencontainers.image.source": "ghcr.io/acme/tool-call-logger",
+    "org.opencontainers.image.title": "tool-call-logger",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

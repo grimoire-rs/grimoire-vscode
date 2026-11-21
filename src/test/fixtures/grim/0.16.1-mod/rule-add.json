@@ -1,0 +1,10 @@
+{
+  "kind": "rule",
+  "name": "rust-style",
+  "pinned": "ghcr.io/acme/rust-style@sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

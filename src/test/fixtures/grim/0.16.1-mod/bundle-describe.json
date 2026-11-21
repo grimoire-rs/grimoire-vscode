@@ -1,0 +1,52 @@
+{
+  "ref": "ghcr.io/acme/starter:1.0.0",
+  "digest": "sha256:4f0465c762ccbd834a3904f1c50cde731f13885144656b0c0cd4a255051b2c93",
+  "kind": "bundle",
+  "name": "starter",
+  "title": "starter",
+  "description": "The code-review skill plus the Rust style rule",
+  "has_description": false,
+  "summary": "Starter pack",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "starter",
+    "review",
+    "style"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "starter,review,style",
+    "com.grimoire.kind": "bundle",
+    "com.grimoire.summary": "Starter pack",
+    "org.opencontainers.image.description": "The code-review skill plus the Rust style rule",
+    "org.opencontainers.image.source": "ghcr.io/acme/starter",
+    "org.opencontainers.image.title": "starter",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

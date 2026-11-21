@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/starter:1.0.0",
+  "digest": "sha256:4f0465c762ccbd834a3904f1c50cde731f13885144656b0c0cd4a255051b2c93",
+  "kind": "bundle",
+  "name": "starter",
+  "vendor": "canonical",
+  "content": "{\n  \"members\": [\n    {\n      \"kind\": \"skill\",\n      \"name\": \"code-review\",\n      \"id\": \"ghcr.io/acme/code-review:1.0.0\"\n    },\n    {\n      \"kind\": \"rule\",\n      \"name\": \"rust-style\",\n      \"id\": \"ghcr.io/acme/rust-style:1.0.0\"\n    }\n  ]\n}\n"
+}

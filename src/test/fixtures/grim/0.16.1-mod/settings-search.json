@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "settings",
+      "repo": "ghcr.io/acme/team-defaults",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Team defaults",
+      "description": "Team defaults for Claude Code: a model and permission rules.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:21b846eb4f1817624b2f236187cfcef728bc6c2423d1d4fb1566570be16c749a"
+      },
+      "status": "not-installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "acme",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

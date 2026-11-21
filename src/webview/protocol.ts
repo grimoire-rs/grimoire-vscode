@@ -41,7 +41,8 @@ export interface PagingState {
   sort?: SortMode;
 }
 
-export type ArtifactKind = 'skill' | 'rule' | 'agent' | 'mcp' | 'bundle' | 'hook' | 'settings';
+export type ArtifactKind =
+  'skill' | 'rule' | 'agent' | 'mcp' | 'bundle' | 'hook' | 'settings' | 'mod';
 
 export type RowState = 'not-installed' | 'installed' | 'outdated' | 'deprecated';
 
@@ -97,11 +98,13 @@ export interface InstallVM {
    *  fault, and under client autodetect it can fire because some OTHER tool
    *  created a client's marker directory. Never badge it as damage. */
   outputsPending?: { client: string; path: string }[];
-  /** Hook and settings rows: per-client reasons the row is not armed (grim
+  /** Hook, settings and mod rows: per-client reasons the row is not armed (grim
    *  status `arming`). A hook stays inert there; a settings package is held
    *  back, though values grim wrote earlier stay in place. A warning, not
    *  damage. */
   arming?: { client: string; cause: string; message: string }[];
+  /** Mod rows: harness names from `status` (validated). */
+  serves?: string[];
   /** Per-status-item deprecation notice, populated only under `--check` (null
    *  otherwise) — buildInstalledCards' fallback source when the artifact isn't
    *  present in the browse catalog snapshot. */
@@ -197,6 +200,8 @@ export interface CardVM {
    *  field and null on an unrated row — both render nothing. */
   rating?: RatingVM | null;
   downloads?: DownloadsVM | null;
+  /** Harness names a mod serves (validated, never empty when present). */
+  serves?: string[];
   /** Publish date (`grim search`'s `created`), for the `updated` sort only —
    *  nothing renders it. Null when the row carries none, which sorts into the
    *  undated bucket rather than to 1970. */
@@ -491,6 +496,18 @@ export interface SettingsHarnessVM {
   json: string;
 }
 
+/** One harness directory of a mod package (see DetailsVM.modHarnesses). */
+export interface ModHarnessVM {
+  /** The directory name, as published. Display text only; never a selector. */
+  name: string;
+  /** The `entry` file `mod.toml` states for this harness; null when the harness
+   *  has no table, the table has no `entry`, or `mod.toml` does not parse. */
+  entry: string | null;
+  /** The harness's files, in grim's order, each path relative to the harness
+   *  directory. */
+  files: { path: string; size: number }[];
+}
+
 export interface DetailsVM {
   repo: string;
   ref: string;
@@ -517,6 +534,10 @@ export interface DetailsVM {
    *  harness table (the CONTENTS tab then shows the raw block alone). No
    *  harness or option name is known here — fully generic. */
   settingsHarnesses: SettingsHarnessVM[];
+  /** Mod artifacts only: one entry per harness directory of the package, in
+   *  order of first appearance. Empty for every other kind and when the fetch
+   *  carries no files (the CONTENTS tab then shows `mod.toml` alone). */
+  modHarnesses: ModHarnessVM[];
   /** README.md shipped with the package — the DETAILS tab, shown only when
    *  present; when absent there is no DETAILS tab and CONTENTS is first. */
   readmeMarkdown: string | null;
@@ -558,6 +579,8 @@ export interface DetailsVM {
   /** Community rating; null when the row is unrated (no thread to vote on). */
   rating: RatingVM | null;
   downloads: DownloadsVM | null;
+  /** Mod artifacts: harness names (validated, never empty when present). */
+  serves?: string[];
   /** Host-stamped: the resolved grim is at least RATING_GRIM_VERSION, so the
    *  vote affordance may render. Absent/false hides the button and leaves the
    *  count — an older grim keeps every other feature (C-018). */

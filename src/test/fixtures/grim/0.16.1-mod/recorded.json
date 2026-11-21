@@ -1,0 +1,7 @@
+{
+  "grim_version": "0.16.1",
+  "grim_commit": "2fcebbb8+uncommitted-C1-C5",
+  "recorded_at": "2026-11-21T11:31:14Z",
+  "script": "record-kinds.sh",
+  "registry": "zot v2.1.21-0-g6429ce6"
+}

@@ -128,6 +128,7 @@ const KIND_LABELS: Record<string, string> = {
   bundle: 'Bundle',
   hook: 'Hook',
   settings: 'Settings',
+  mod: 'Mod',
 } satisfies Record<ArtifactKind, string>;
 
 /** True when a COMPLETE entry was written inside {@link OPEN_REVALIDATE_TTL_MS}.
