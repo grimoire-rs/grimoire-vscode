@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import type { GrimoireApi } from '../extension';
 import {
+  addArgs,
   configSetArgs,
   contextArgs,
   describeArgs,
@@ -14,12 +15,16 @@ import {
   lockArgs,
   registryFieldsArgs,
   runJson,
+  searchArgs,
   statusArgs,
   updateArgs,
   updateSummary,
+  withFlags,
   type ConfigWriteResult,
   type ContextInfo,
   type DigestResult,
+  type FetchResult,
+  type SearchEnvelope,
   type ItemsEnvelope,
   type DescribeResult,
   type RegistryFieldEntry,
@@ -532,4 +537,307 @@ suite('grim live: Update on a named artifact (grimoire#269)', function () {
     // Only the named closure installs; `grim install` is what writes gamma.
     assert.strictEqual(installed(box, 'gamma'), null);
   });
+});
+
+// --- Every kind against a real registry --------------------------------------
+// The contract the extension reads (search, describe, fetch, status), for each
+// artifact kind, through its own argv builders. One KINDS entry is one kind: a
+// kind needs a source writer to be listed, and the loops below give it a test
+// per command.
+
+const REGISTRY = process.env['GRIM_LIVE_REGISTRY'] ?? null;
+/** `grim schema --kind mod` exits 0 on a grim with the mod kind, 64 on one without. */
+const MOD_SUPPORTED =
+  HAVE_GRIM && spawnSync(GRIM, ['schema', '--kind', 'mod'], { timeout: 10000 }).status === 0;
+/** Every status state the extension has a rendering for. */
+const KNOWN_STATES = ['installed', 'modified', 'missing', 'stale', 'gated', 'not-armed'];
+const VERSION = '1.0.0';
+
+interface LiveKind {
+  kind: string;
+  name: string;
+  /** Writes the kind's smallest valid source under `dir`; returns the path to release. */
+  source: (dir: string, ref: (name: string) => string) => string;
+  /** Hook, settings and mod install only past a feature flag and workspace consent. */
+  gated: boolean;
+  /** The kind exists only on a grim that passes the mod probe. */
+  needsMod?: boolean;
+}
+
+const write = (file: string, text: string): string => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  return file;
+};
+
+const KINDS: LiveKind[] = [
+  {
+    kind: 'skill',
+    name: 'lk-skill',
+    gated: false,
+    source: (dir) => {
+      write(path.join(dir, 'lk-skill', 'SKILL.md'), skillSource('lk-skill'));
+      return path.join(dir, 'lk-skill');
+    },
+  },
+  {
+    kind: 'rule',
+    name: 'lk-rule',
+    gated: false,
+    source: (dir) => write(path.join(dir, 'lk-rule.md'), 'live rule\n'),
+  },
+  {
+    kind: 'agent',
+    name: 'lk-agent',
+    gated: false,
+    source: (dir) =>
+      write(
+        path.join(dir, 'lk-agent.md'),
+        '---\nname: lk-agent\ndescription: live agent\n---\nbody\n',
+      ),
+  },
+  {
+    kind: 'mcp',
+    name: 'lk-mcp',
+    gated: false,
+    source: (dir) =>
+      write(
+        path.join(dir, 'lk-mcp.toml'),
+        'description = "live mcp"\n\n[server]\ntransport = "stdio"\ncommand = "echo"\nargs = ["x"]\n',
+      ),
+  },
+  {
+    kind: 'bundle',
+    name: 'lk-bundle',
+    gated: false,
+    // A bundle names registry members: the skill released first.
+    source: (dir, ref) =>
+      write(
+        path.join(dir, 'lk-bundle.toml'),
+        `description = "live bundle"\n\n[skills]\nlk-skill = ${JSON.stringify(`${ref('lk-skill')}:${VERSION}`)}\n`,
+      ),
+  },
+  {
+    kind: 'hook',
+    name: 'lk-hook',
+    gated: true,
+    source: (dir) => {
+      write(path.join(dir, 'lk-hook', 'guard.sh'), 'exit 0\n');
+      write(
+        path.join(dir, 'lk-hook', 'hook.toml'),
+        'schema = 1\nname = "lk-hook"\ndescription = "live hook"\n\n[[hooks]]\nid = "g"\nevent = "PreToolUse"\ntier = "observer"\nmatcher = "Bash"\ncommand = "sh guard.sh"\ntimeout = 5\n',
+      );
+      return path.join(dir, 'lk-hook');
+    },
+  },
+  {
+    kind: 'settings',
+    name: 'lk-settings',
+    gated: true,
+    source: (dir) =>
+      write(
+        path.join(dir, 'lk-settings.toml'),
+        'description = "live settings"\n\n[claude]\nmodel = "sonnet"\n',
+      ),
+  },
+  {
+    kind: 'mod',
+    name: 'lk-mod',
+    gated: true,
+    needsMod: true,
+    source: (dir) => {
+      write(path.join(dir, 'lk-mod', 'claude', 'm.tsx'), 'export default {}\n');
+      write(
+        path.join(dir, 'lk-mod', 'mod.toml'),
+        'schema = 1\nname = "lk-mod"\ndescription = "live mod"\n\n[claude]\nentry = "m.tsx"\n',
+      );
+      return path.join(dir, 'lk-mod');
+    },
+  },
+];
+
+function skillSource(name: string): string {
+  return `---\nname: ${name}\ndescription: live test skill\n---\n# ${name}\n`;
+}
+
+suite('grim live: every kind against a registry', function () {
+  this.timeout(60000);
+
+  let root = '';
+  let project = '';
+  let env: Record<string, string> = {};
+  /** `<registry>/live-<random>`: this run's namespace, which the search source points at. */
+  let namespace = '';
+  const refOf = (name: string): string => `${namespace}/${name}`;
+  const pinned = (name: string): string => `${refOf(name)}:${VERSION}`;
+
+  const run = <T>(args: string[]): ReturnType<typeof runJson<T>> =>
+    runJson<T>(GRIM, args, { cwd: project, env, timeoutMs: 45000 });
+
+  /** Skips a mod case on a grim without the mod kind. Never a failure under REQUIRED. */
+  function modGate(ctx: Mocha.Context, k: LiveKind): void {
+    if (k.needsMod && !MOD_SUPPORTED) {
+      console.log(`grim live: ${k.kind} case skipped: ${GRIM} has no mod kind (schema --kind mod)`);
+      ctx.skip();
+    }
+  }
+
+  suiteSetup(function () {
+    this.timeout(180000);
+    if (process.platform === 'win32') {
+      this.skip();
+    }
+    if (!HAVE_GRIM || GRIM_VERSION === null || grimTooOld(GRIM_VERSION)) {
+      skipOrFail(this, `${GRIM} is missing or below the floor (${GRIM_VERSION ?? 'no version'})`);
+    }
+    if (REGISTRY === null) {
+      console.log('grim live: registry suite skipped: GRIM_LIVE_REGISTRY is unset');
+      skipOrFail(this, 'GRIM_LIVE_REGISTRY is unset');
+    }
+    console.log(`grim live: mod kind ${MOD_SUPPORTED ? 'supported' : 'not supported'} by ${GRIM}`);
+
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'grim-live-kinds-'));
+    const home = path.join(root, 'home');
+    const claude = path.join(home, '.claude');
+    project = path.join(root, 'project');
+    for (const dir of [claude, project, path.join(root, 'grim-home')]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    // Every location grim could write is set, never inherited: one exported by
+    // the shell that runs the tests would send these installs into a real config.
+    env = {
+      HOME: home,
+      GRIM_HOME: path.join(root, 'grim-home'),
+      CLAUDE_CONFIG_DIR: claude,
+      XDG_CONFIG_HOME: path.join(root, 'xdg'),
+      OPENCODE_CONFIG_DIR: path.join(root, 'opencode'),
+      GRIM_INSECURE_REGISTRIES: REGISTRY ?? '',
+    };
+    namespace = `${REGISTRY}/live-${Math.random().toString(36).slice(2, 10)}`;
+    write(
+      path.join(project, 'grimoire.toml'),
+      [
+        '[[registries]]',
+        `oci = ${JSON.stringify(namespace)}`,
+        '',
+        '[options]',
+        'clients = ["claude"]',
+        '',
+        '[options.experimental]',
+        'hooks = true',
+        'settings = true',
+        ...(MOD_SUPPORTED ? ['mods = true'] : []),
+        '',
+      ].join('\n'),
+    );
+
+    const sources = path.join(root, 'src');
+    for (const k of KINDS) {
+      if (k.needsMod && !MOD_SUPPORTED) {
+        continue;
+      }
+      const file = k.source(sources, refOf);
+      const released = spawnSync(GRIM, ['release', '--kind', k.kind, file, pinned(k.name)], {
+        cwd: project,
+        env: { ...process.env, ...env },
+        encoding: 'utf8',
+        timeout: 60000,
+      });
+      assert.strictEqual(
+        released.status,
+        0,
+        `release ${k.kind} failed: ${released.stderr}${released.stdout}`,
+      );
+    }
+  });
+
+  suiteTeardown(() => {
+    if (root) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /** `serves`: an array for a mod, null or absent for every other kind. */
+  const assertServes = (item: object, k: LiveKind): void => {
+    const serves = (item as { serves?: unknown }).serves;
+    if (k.kind === 'mod') {
+      assert.ok(Array.isArray(serves), `mod serves is an array, got ${JSON.stringify(serves)}`);
+      assert.ok(serves.every((h) => typeof h === 'string'));
+    } else {
+      assert.ok(serves === null || serves === undefined, `${k.kind} serves: ${String(serves)}`);
+    }
+  };
+
+  for (const k of KINDS) {
+    test(`${k.kind}: search lists it with its kind and serves`, async function () {
+      modGate(this, k);
+      const result = await run<SearchEnvelope>(searchArgs(k.name));
+      assert.ok(result.ok, `search: ${JSON.stringify(result)}`);
+      const item = result.value.items.find((i) => i.repo === refOf(k.name));
+      assert.ok(item, `no item ${refOf(k.name)} in ${result.value.items.map((i) => i.repo)}`);
+      assert.strictEqual(item.kind, k.kind);
+      assertServes(item, k);
+    });
+
+    test(`${k.kind}: describe reports kind, name and serves`, async function () {
+      modGate(this, k);
+      const result = await run<DescribeResult>(describeArgs(pinned(k.name)));
+      assert.ok(result.ok, `describe: ${JSON.stringify(result)}`);
+      assert.strictEqual(result.value.kind, k.kind);
+      assert.strictEqual(result.value.name, k.name);
+      assertServes(result.value, k);
+    });
+
+    test(`${k.kind}: fetch returns content`, async function () {
+      modGate(this, k);
+      const result = await run<FetchResult>(fetchArgs(pinned(k.name)));
+      if (k.kind === 'mod') {
+        if (
+          !result.ok &&
+          result.kind === 'error' &&
+          /mods cannot be fetched yet/.test(result.message)
+        ) {
+          console.log(
+            'grim live: mod fetch skipped: contract C1 (fetch returns mod content) is not built in this grim',
+          );
+          this.skip();
+        }
+        assert.ok(result.ok, `mod fetch: ${JSON.stringify(result)}`);
+        assert.ok(result.value.content.includes('schema = 1'), 'content is mod.toml');
+        const files = (result.value.files ?? []).map((f) => f.path);
+        assert.ok(files.includes(`${k.name}/mod.toml`), `files lists mod.toml: ${files}`);
+        for (const f of result.value.files ?? []) {
+          assert.strictEqual(typeof f.size, 'number', `file ${f.path} has a size`);
+        }
+        // --path returns that one file.
+        const one = await run<FetchResult>(
+          fetchArgs(pinned(k.name), { path: `${k.name}/mod.toml` }),
+        );
+        assert.ok(one.ok, `mod fetch --path: ${JSON.stringify(one)}`);
+        assert.ok(one.value.content.includes('schema = 1'), '--path content is mod.toml');
+        return;
+      }
+      assert.ok(result.ok, `fetch: ${JSON.stringify(result)}`);
+      assert.strictEqual(typeof result.value.content, 'string');
+      assert.ok(result.value.content.length > 0, 'content is not empty');
+    });
+
+    test(`${k.kind}: status lists the added artifact`, async function () {
+      modGate(this, k);
+      const added = await run<unknown>(
+        withFlags(
+          addArgs(pinned(k.name), { kind: k.kind, name: k.name }),
+          k.gated ? ['--trust-workspace'] : [],
+        ),
+      );
+      assert.ok(added.ok, `add: ${JSON.stringify(added)}`);
+      const status = await run<ItemsEnvelope<StatusItem>>(statusArgs());
+      assert.ok(status.ok, `status: ${JSON.stringify(status)}`);
+      const row = status.value.items.find((r) => r.name === k.name);
+      assert.ok(row, `no status row for ${k.name}`);
+      assert.strictEqual(row.kind, k.kind);
+      assert.ok(KNOWN_STATES.includes(row.state), `unknown state ${row.state}`);
+      assertServes(row, k);
+    });
+  }
 });
