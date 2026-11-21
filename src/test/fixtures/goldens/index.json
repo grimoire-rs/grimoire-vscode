@@ -83,5 +83,21 @@
   "results-browse-tree-comfortable",
   "results-installed-grouped-by-scope",
   "row-compact-logo",
-  "row-compact-modified"
+  "row-compact-modified",
+  "card-kind-skill",
+  "details-kind-skill",
+  "card-kind-rule",
+  "details-kind-rule",
+  "card-kind-agent",
+  "details-kind-agent",
+  "card-kind-mcp",
+  "details-kind-mcp",
+  "card-kind-bundle",
+  "details-kind-bundle",
+  "card-kind-hook",
+  "details-kind-hook",
+  "card-kind-settings",
+  "details-kind-settings",
+  "card-kind-mod",
+  "details-kind-mod"
 ]
