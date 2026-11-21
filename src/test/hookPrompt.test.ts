@@ -223,7 +223,7 @@ suite('mod gates', () => {
     assert.deepStrictEqual(p, { gate: 'enable-mods', kinds: ['mod'], names: ['m'] });
     const text = gatePromptText(p as NonNullable<typeof p>);
     assert.ok(text.message.includes('(m)'));
-    assert.ok(text.message.includes('code your AI client (Claude Code, OpenCode) loads'));
+    assert.ok(text.message.includes('code your AI client loads'));
     assert.deepStrictEqual(text.steps, [
       configSetArgs('options.experimental.mods', 'true'),
       installArgs(),

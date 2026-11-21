@@ -155,7 +155,7 @@ const CONSENT_PARTS: Record<
     noun: 'mods',
     short: 'mods',
     says:
-      'A mod is code your AI client (Claude Code, OpenCode) loads into its own process; ' +
+      'A mod is code your AI client loads into its own process; ' +
       "Allow lets grim write the mod's files so the client loads them.",
     verb: 'to load',
   },
@@ -199,7 +199,7 @@ export function gatePromptText(prompt: GatePrompt): {
     return {
       message:
         `Grimoire: This project declares experimental mods (${names}). ` +
-        'A mod is code your AI client (Claude Code, OpenCode) loads into its own process. ' +
+        'A mod is code your AI client loads into its own process. ' +
         'Enable mods for this project? This sets options.experimental.mods in grimoire.toml.',
       yes: 'Enable',
       steps: [configSetArgs('options.experimental.mods', 'true'), installArgs()],
