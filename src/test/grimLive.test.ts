@@ -836,7 +836,13 @@ suite('grim live: every kind against a registry', function () {
       const row = status.value.items.find((r) => r.name === k.name);
       assert.ok(row, `no status row for ${k.name}`);
       assert.strictEqual(row.kind, k.kind);
-      assert.ok(KNOWN_STATES.includes(row.state), `unknown state ${row.state}`);
+      if (k.gated) {
+        // A hook reads `gated` when one detected client has no hook surface
+        // (grim's `client-has-no-hook-surface`), even after consent.
+        assert.ok(KNOWN_STATES.includes(row.state), `unknown state ${row.state}`);
+      } else {
+        assert.strictEqual(row.state, 'installed');
+      }
       assertServes(row, k);
     });
   }
