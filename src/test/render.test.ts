@@ -293,7 +293,7 @@ suite('card rendering', () => {
     assert.strictEqual(kindIcon('bundle'), 'package');
     assert.strictEqual(kindIcon('hook'), 'symbol-event');
     assert.strictEqual(kindIcon('settings'), 'settings');
-    assert.strictEqual(kindIcon('mod'), 'extensions');
+    assert.strictEqual(kindIcon('mod'), 'plug');
     assert.strictEqual(kindIcon(null), 'question');
   });
 

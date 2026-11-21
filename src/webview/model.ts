@@ -162,7 +162,7 @@ export const KIND_ICONS: Record<ArtifactKind, string> = {
   // No dedicated codicon yet; a hook is a lifecycle event handler.
   hook: 'symbol-event',
   settings: 'settings',
-  mod: 'extensions',
+  mod: 'plug',
 };
 
 export function normalizeKind(kind: string | null | undefined): ArtifactKind | null {
