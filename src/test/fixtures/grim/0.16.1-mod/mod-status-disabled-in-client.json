@@ -1,0 +1,61 @@
+{
+  "items": [
+    {
+      "kind": "mod",
+      "name": "status-band",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/status-band@sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/plugins/status-band/src/status-band.ts",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/plugins/status-band/index.ts",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/status-band/src/status-band.tsx",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/status-band/.claude-plugin/plugin.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/status-band/hooks/hooks.json",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "mod-disabled-in-client",
+          "message": "the client records this mod's plugin as disabled, and grim keeps that choice; enable it in the client, or run grim install --force to restore it",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null,
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    }
+  ],
+  "checked": false
+}

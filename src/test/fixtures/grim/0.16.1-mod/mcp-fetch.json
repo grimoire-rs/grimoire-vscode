@@ -1,0 +1,8 @@
+{
+  "ref": "ghcr.io/acme/docs-search:1.0.0",
+  "digest": "sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c",
+  "kind": "mcp",
+  "name": "docs-search",
+  "vendor": "canonical",
+  "content": "{\n  \"description\": \"Search the team documentation over MCP.\",\n  \"summary\": \"Team docs search\",\n  \"keywords\": \"docs,search,mcp\",\n  \"server\": {\n    \"transport\": \"stdio\",\n    \"command\": \"docs-search\",\n    \"args\": [\n      \"serve\"\n    ]\n  }\n}\n"
+}

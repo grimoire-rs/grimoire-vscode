@@ -1,0 +1,10 @@
+{
+  "kind": "mod",
+  "name": "status-band",
+  "pinned": "ghcr.io/acme/status-band@sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

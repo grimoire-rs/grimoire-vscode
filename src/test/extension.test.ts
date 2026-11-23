@@ -7886,6 +7886,16 @@ clients = "claude"
     });
   });
 
+  test('a [mods] table reads as the mod kind', () => {
+    assert.deepStrictEqual(
+      parseDeclaredRefs(`
+[mods]
+statusline = "ghcr.io/acme/mods/statusline:1"
+`),
+      { 'mod:statusline': 'ghcr.io/acme/mods/statusline:1' },
+    );
+  });
+
   test('a settings entry and a skill entry with one name stay two keys', () => {
     const declared = parseDeclaredRefs(`
 [settings]

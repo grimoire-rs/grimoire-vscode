@@ -1,0 +1,22 @@
+{
+  "ref": "ghcr.io/acme/status-band:1.0.0",
+  "digest": "sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3",
+  "kind": "mod",
+  "name": "status-band",
+  "vendor": "canonical",
+  "content": "schema = 1\nname = \"status-band\"\ndescription = \"Build status above the prompt\"\nsummary = \"Build status band\"\nkeywords = \"ci,status,band\"\n\n[claude]\nentry = \"status-band.tsx\"\n\n[opencode]\nentry = \"status-band.ts\"\n",
+  "files": [
+    {
+      "path": "status-band/claude/status-band.tsx",
+      "size": 18
+    },
+    {
+      "path": "status-band/mod.toml",
+      "size": 209
+    },
+    {
+      "path": "status-band/opencode/status-band.ts",
+      "size": 18
+    }
+  ]
+}

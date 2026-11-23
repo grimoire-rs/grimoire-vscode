@@ -1,0 +1,246 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "repo": "ghcr.io/acme/code-review",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Structured diff review",
+      "description": "Review a diff for correctness, security and style, and report findings by severity.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "mcp",
+      "repo": "ghcr.io/acme/docs-search",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Team docs search",
+      "description": "Search the team documentation over MCP.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "mod",
+      "repo": "ghcr.io/acme/extra-band",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Build status band",
+      "description": "Build status above the prompt",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:8273a69129c077b26619a48d0c4ef33572256c600ec169578a7665e1b10ec8fc"
+      },
+      "status": "not-installed",
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    },
+    {
+      "kind": "agent",
+      "repo": "ghcr.io/acme/reviewer",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Pull request reviewer",
+      "description": "Delegate a pull request review to this agent.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:57d6e049b4616f9c5f6236daeae42d40251fb5aeb72c35bc8fab752e938a97f5"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "rule",
+      "repo": "ghcr.io/acme/rust-style",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Idiomatic Rust style rules",
+      "description": "Rust style",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "bundle",
+      "repo": "ghcr.io/acme/starter",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Starter pack",
+      "description": "The code-review skill plus the Rust style rule",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:4f0465c762ccbd834a3904f1c50cde731f13885144656b0c0cd4a255051b2c93"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "mod",
+      "repo": "ghcr.io/acme/status-band",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Build status band",
+      "description": "Build status above the prompt",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3"
+      },
+      "status": "not-installed",
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    },
+    {
+      "kind": "settings",
+      "repo": "ghcr.io/acme/team-defaults",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Team defaults",
+      "description": "Team defaults for Claude Code: a model and permission rules.",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:21b846eb4f1817624b2f236187cfcef728bc6c2423d1d4fb1566570be16c749a"
+      },
+      "status": "installed",
+      "serves": null
+    },
+    {
+      "kind": "hook",
+      "repo": "ghcr.io/acme/tool-call-logger",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": null,
+      "description": "Observer example: appends one line per tool call and per session start to a log file outside the repository. Cannot block, alter, or delay anything — the observer tier's response is discarded by design. Writes only to $GRIM_EXAMPLE_LOG (default: a file under $TMPDIR).",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:be4235c202604aed6411f7684d0b2808d29b635c459d754fecadbd22edb57ad1"
+      },
+      "status": "installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "acme",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 9,
+  "truncated": false
+}

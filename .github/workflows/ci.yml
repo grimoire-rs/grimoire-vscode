@@ -82,10 +82,20 @@ jobs:
           path: ${{ runner.temp }}/grim-bin
           key: grim-${{ runner.os }}-${{ env.GRIM_COMMIT }}
 
+      # The live suite pushes throwaway artifacts here to test every kind. Bound
+      # to loopback, plain HTTP, no credentials, gone with the runner. Pinned by
+      # tag and digest (the multi-arch index of registry 2.8.3).
+      - name: Start a loopback registry (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          docker run -d --rm --name live-registry -p 127.0.0.1:5000:5000
+          registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+
       - name: Test (Linux, headless)
         if: runner.os == 'Linux'
         env:
           GRIM_LIVE_BIN: ${{ runner.temp }}/grim-bin/grim
+          GRIM_LIVE_REGISTRY: localhost:5000
           # A grim that cannot run fails the live suite instead of skipping it.
           GRIM_LIVE_REQUIRED: '1'
         run: xvfb-run -a npm test

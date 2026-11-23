@@ -1,0 +1,235 @@
+{
+  "items": [
+    {
+      "kind": "bundle",
+      "name": "starter",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": null,
+      "state": "installed",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "skill",
+      "name": "code-review",
+      "source": "direct",
+      "direct": true,
+      "required_by": [
+        {
+          "kind": "bundle",
+          "name": "starter"
+        }
+      ],
+      "pinned": "ghcr.io/acme/code-review@sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/code-review",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/skills/code-review",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "rule",
+      "name": "rust-style",
+      "source": "direct",
+      "direct": true,
+      "required_by": [
+        {
+          "kind": "bundle",
+          "name": "starter"
+        }
+      ],
+      "pinned": "ghcr.io/acme/rust-style@sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/rules/rust-style.md",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/rules/rust-style.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "agent",
+      "name": "reviewer",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/reviewer@sha256:57d6e049b4616f9c5f6236daeae42d40251fb5aeb72c35bc8fab752e938a97f5",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/agents/reviewer.md",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/agents/reviewer.md",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "mcp",
+      "name": "docs-search",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/docs-search@sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.mcp.json",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/opencode.json",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "hook",
+      "name": "tool-call-logger",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/tool-call-logger@sha256:be4235c202604aed6411f7684d0b2808d29b635c459d754fecadbd22edb57ad1",
+      "state": "gated",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/.grimoire/hooks/payload/775ce86baf0f0fd30fb46feb7dd09c06c3231876bb704930642daab20401012f/tool-call-logger",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "opencode",
+          "cause": "client-has-no-hook-surface",
+          "message": "this client has no hook surface at this scope, so there is nothing to arm; the payload is installed and every other client is unaffected",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null,
+      "serves": null
+    },
+    {
+      "kind": "settings",
+      "name": "team-defaults",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/team-defaults@sha256:21b846eb4f1817624b2f236187cfcef728bc6c2423d1d4fb1566570be16c749a",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(git status:*)"
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/settings.local.json",
+          "element": "Bash(rm:*)"
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "opencode",
+          "cause": "no-applicable-settings",
+          "message": "opencode applies at global scope only; declare the package at global scope with grim --global add, then run grim --global install",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null,
+      "serves": null
+    }
+  ],
+  "checked": false
+}

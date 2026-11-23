@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "code-review",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/code-review@sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/skills/code-review",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/skills/code-review",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": null
+    }
+  ],
+  "checked": false
+}

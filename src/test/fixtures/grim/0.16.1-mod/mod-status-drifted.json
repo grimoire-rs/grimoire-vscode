@@ -1,0 +1,90 @@
+{
+  "items": [
+    {
+      "kind": "mod",
+      "name": "extra-band",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/extra-band@sha256:8273a69129c077b26619a48d0c4ef33572256c600ec169578a7665e1b10ec8fc",
+      "state": "installed",
+      "outputs": [
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/plugins/extra-band/src/extra-band.ts",
+          "element": null
+        },
+        {
+          "client": "opencode",
+          "path": "/home/u/project/.opencode/plugins/extra-band/index.ts",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/extra-band/src/extra-band.tsx",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/extra-band/.claude-plugin/plugin.json",
+          "element": null
+        },
+        {
+          "client": "claude",
+          "path": "/home/u/project/.claude/mods/extra-band/hooks/hooks.json",
+          "element": null
+        }
+      ],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [],
+      "moved_nested_bundles": null,
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    },
+    {
+      "kind": "mod",
+      "name": "status-band",
+      "source": "direct",
+      "direct": true,
+      "required_by": [],
+      "pinned": "ghcr.io/acme/status-band@sha256:849e78bfe3fdd9df4abb31fe159b5036c8bf156c78604ac0faaaf25b3535ffc3",
+      "state": "gated",
+      "outputs": [],
+      "outputs_pending": [],
+      "clients_missing": [],
+      "clients_extra": [],
+      "clients_unresolved": [],
+      "deprecated": null,
+      "replaced_by": null,
+      "update_available": null,
+      "arming": [
+        {
+          "client": "claude",
+          "cause": "consent-drifted",
+          "message": "this workspace declares mods it was not consented for; re-run `grim consent allow` to review them",
+          "transient": false
+        },
+        {
+          "client": "opencode",
+          "cause": "consent-drifted",
+          "message": "this workspace declares mods it was not consented for; re-run `grim consent allow` to review them",
+          "transient": false
+        }
+      ],
+      "moved_nested_bundles": null,
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    }
+  ],
+  "checked": false
+}

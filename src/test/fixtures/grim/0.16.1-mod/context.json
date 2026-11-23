@@ -1,0 +1,32 @@
+{
+  "version": "0.16.1",
+  "scope": "project",
+  "workspace": "/home/u/project",
+  "config_path": "/home/u/project/grimoire.toml",
+  "config_exists": true,
+  "lock_path": "/home/u/project/grimoire.lock",
+  "lock_exists": true,
+  "lock_error": null,
+  "state_path": "/home/u/project/.grimoire/state.json",
+  "grim_home": "/home/u/.grimoire",
+  "offline": false,
+  "offline_source": null,
+  "clients": [
+    "claude",
+    "opencode"
+  ],
+  "registries": [
+    {
+      "alias": "acme",
+      "url": "ghcr.io/acme",
+      "kind": "registry",
+      "default": true,
+      "authenticated": false,
+      "include": [],
+      "exclude": [],
+      "insecure": true,
+      "catalog": null
+    }
+  ],
+  "default_registry": "ghcr.io/acme"
+}

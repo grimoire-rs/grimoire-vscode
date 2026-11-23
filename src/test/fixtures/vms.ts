@@ -4,7 +4,7 @@
 // today's string-based render.ts, and post-migration parity.test.ts runs the
 // SAME cases against the lit-html render.ts. Exported so both can import one
 // source of truth for "what to render" instead of drifting.
-import { recordedSettings } from './recorded';
+import { recordedMod, recordedModFetch, recordedSettings } from './recorded';
 import {
   buildCards,
   buildDetailsVM,
@@ -13,6 +13,7 @@ import {
   collectNodeIds,
   DEFAULT_FILTER,
   DEFAULT_VIEW,
+  KINDS,
   type DetailsSources,
   type ScopeStatus,
   type WireSearchItem,
@@ -91,7 +92,8 @@ export function detailsVM(overrides: Partial<DetailsVM> = {}): DetailsVM {
     scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
     contentMarkdown: '# Body',
     contentJson: null,
-  settingsHarnesses: [],
+    settingsHarnesses: [],
+    modHarnesses: [],
     readmeMarkdown: null,
     changelogMarkdown: null,
     members: [],
@@ -728,6 +730,43 @@ export function goldenCases(r: typeof import('../../webview/render')): GoldenCas
       }),
     ),
   );
+  add(
+    'details-mod-contents',
+    r.renderDetails(
+      buildDetailsVM({
+        repo: 'ghcr.io/acme/status-band',
+        searchItem: null,
+        describe: null,
+        fetch: recordedModFetch('mod-fetch'),
+        installs: [],
+        scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
+        logoUri: null,
+      }),
+    ),
+  );
+  // --- one card and one details page per kind, from grim's recorded output ---
+  for (const k of KINDS) {
+    const [row] = recordedMod<{ items: WireSearchItem[] }>(`${k}-search`).items;
+    const found = buildCards(row ? [row] : [], [])[0];
+    if (!found || !row) {
+      throw new Error(`no recorded ${k}-search row`);
+    }
+    add(`card-kind-${k}`, r.renderCard(found));
+    add(
+      `details-kind-${k}`,
+      r.renderDetails(
+        buildDetailsVM({
+          repo: row.repo,
+          searchItem: row,
+          describe: recordedMod<DetailsSources['describe']>(`${k}-describe`),
+          fetch: recordedModFetch(`${k}-fetch`),
+          installs: [],
+          scopes: { projectOpen: true, projectConfigured: true, projectName: 'my-app' },
+          logoUri: null,
+        }),
+      ),
+    );
+  }
   add(
     'details-bundle-members',
     r.renderDetails(

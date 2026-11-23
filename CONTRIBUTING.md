@@ -136,10 +136,42 @@ otherwise). Environment knobs for debugging sessions:
   sets it on Linux, where it builds grim at the commit `GRIM_COMMIT` names in
   `.github/workflows/ci.yml`.
 
+The live suite also runs `search`, `describe`, `fetch` and `status` against
+that grim for every artifact kind. Those cases push throwaway artifacts, so
+they need a loopback OCI registry and skip without one:
+
+```sh
+docker run -d --rm -p 127.0.0.1:5000:5000 registry:2
+GRIM_LIVE_BIN=/path/to/grim GRIM_LIVE_REGISTRY=localhost:5000 npm test
+```
+
+With `GRIM_LIVE_REQUIRED=1` (set in CI, which starts that registry) a missing
+`GRIM_LIVE_REGISTRY` fails the suite instead. The mod cases skip with a printed
+reason on a grim without the mod kind (`grim schema --kind mod` exits 64),
+even under `GRIM_LIVE_REQUIRED=1`, and the mod fetch case skips on a grim whose
+`fetch` still refuses a mod.
+
 The live suite also drives the per-artifact Update action against that grim
 (grimoire-rs/grimoire#269). It works in a private `HOME` and `GRIM_HOME`
 handed over through `grimoire.extraEnv`, offline, on local path sources, so it
 needs no registry and leaves your own configuration alone.
+
+Recorded grim output lives in `src/test/fixtures/grim/<version>/`, one
+directory per grim release (or pre-release build) it was recorded from, with
+paths sanitized to `/home/u` and the registry to `ghcr.io/acme`.
+`src/test/fixtures/grim/record-kinds.sh` records one artifact of every kind
+against a private zot registry (`recorded.json` names the grim version and
+commit). Re-record when grim changes a kind's JSON:
+
+```sh
+ZOT=/path/to/zot GRIMOIRE_SRC=../grimoire GRIM_COMMIT=<sha> \
+  src/test/fixtures/grim/record-kinds.sh /path/to/grim src/test/fixtures/grim/<version>
+```
+
+`src/test/kinds.test.ts` walks the extension's own kind list and fails when a
+kind lacks an icon, label, colour, filter chip, details body, declared table,
+golden or recording; `src/test/escaping.test.ts` feeds hostile text through
+every render path.
 
 Markup regression baselines live in `src/test/fixtures/goldens/` and are
 checked by `src/test/parity.test.ts` against `src/webview/render.ts`'s

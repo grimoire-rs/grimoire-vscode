@@ -1,0 +1,10 @@
+{
+  "kind": "mcp",
+  "name": "docs-search",
+  "pinned": "ghcr.io/acme/docs-search@sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

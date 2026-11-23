@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "bundle",
+      "repo": "ghcr.io/acme/starter",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Starter pack",
+      "description": "The code-review skill plus the Rust style rule",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:4f0465c762ccbd834a3904f1c50cde731f13885144656b0c0cd4a255051b2c93"
+      },
+      "status": "not-installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "acme",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

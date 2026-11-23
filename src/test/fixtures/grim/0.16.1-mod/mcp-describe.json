@@ -1,0 +1,52 @@
+{
+  "ref": "ghcr.io/acme/docs-search:1.0.0",
+  "digest": "sha256:05e92ea8321a6f0082c71318e63a55c90f6908c4dcc9778948aff4a280d2953c",
+  "kind": "mcp",
+  "name": "docs-search",
+  "title": "docs-search",
+  "description": "Search the team documentation over MCP.",
+  "has_description": false,
+  "summary": "Team docs search",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "docs",
+    "search",
+    "mcp"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "docs,search,mcp",
+    "com.grimoire.kind": "mcp",
+    "com.grimoire.summary": "Team docs search",
+    "org.opencontainers.image.description": "Search the team documentation over MCP.",
+    "org.opencontainers.image.source": "ghcr.io/acme/docs-search",
+    "org.opencontainers.image.title": "docs-search",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

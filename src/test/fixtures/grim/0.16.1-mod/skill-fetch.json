@@ -1,0 +1,14 @@
+{
+  "ref": "ghcr.io/acme/code-review:1.0.0",
+  "digest": "sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3",
+  "kind": "skill",
+  "name": "code-review",
+  "vendor": "canonical",
+  "content": "---\nname: code-review\ndescription: Review a diff for correctness, security and style, and report findings by severity.\nmetadata:\n  summary: Structured diff review\n  keywords: review,quality,diff\n---\n# Code review\n\nRead the diff, then report each finding with a file, a line and a fix.\n",
+  "files": [
+    {
+      "path": "code-review/SKILL.md",
+      "size": 285
+    }
+  ]
+}

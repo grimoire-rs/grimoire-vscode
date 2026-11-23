@@ -6,18 +6,19 @@
 
 A marketplace UI for [grim](https://github.com/grimoire-rs/grimoire) — the
 OCI-backed package manager for AI artifacts (skills, rules, agents, MCP servers,
-bundles, and experimental hooks and settings). Search the catalog, read the
+bundles, and experimental hooks, settings and mods). Search the catalog, read the
 docs, and install, update, and remove artifacts without leaving the editor —
 the familiar Extensions view, but for the AI artifacts your tools rely on.
 
-Hooks and settings are experimental, and grim applies them only after two
-gates: the project's `options.experimental.hooks` or
-`options.experimental.settings` flag, then consent for the workspace. When a
-project declares either in a trusted workspace, Grimoire asks about each gate
-once per session for each kind it holds back. **Enable** sets the flag in
-`grimoire.toml`; **Allow** records consent with `grim hook allow`, which covers
-every hook and settings package the lock pins, and both then run
-`grim install`. If the workspace declares a package the consent prompt did not
+Hooks, settings and mods are experimental, and grim applies them only after
+two gates: the project's `options.experimental.hooks`,
+`options.experimental.settings` or `options.experimental.mods` flag, then
+consent for the workspace. A mod is code your AI client loads into its own
+process. When a project declares any of them in a trusted workspace, Grimoire
+asks about each gate once per session for each kind it holds back. **Enable**
+sets the flag in `grimoire.toml`; **Allow** records consent with
+`grim hook allow`, which covers every hook, settings package and mod the lock
+pins, and both then run `grim install`. If the workspace declares a package the consent prompt did not
 name by the time you choose **Allow**, Grimoire asks again instead, as it does
 when a step of **Allow** fails. Answer **No** and Grimoire stops asking about
 that gate in that workspace for the kinds it held back; a kind it only named is
@@ -27,7 +28,8 @@ still asked once that gate holds it.
 
 - **Browse the catalog** — the **Browse** tab searches every configured
   registry at once. Filter by kind with the chip row (Skill / Rule / Agent /
-  MCP / Bundle / Hook / Settings).
+  MCP / Bundle / Hook / Settings / Mod). A mod's card shows the harnesses it
+  serves as badges, as grim reports them.
 - **Stay current** — once a day Grimoire asks your registries which installed
   artifacts have newer versions and carries the count on the activity-bar icon
   and on the **Updates** tab. The tab lists them; an **Update All** icon appears
@@ -43,11 +45,16 @@ still asked once that gate holds it.
 - **See what you have** — the **Installed** tab lists your installed artifacts,
   with a **Project / Global** toggle to switch which scope's list you're looking
   at. A status line pinned below the list shows when the catalog was last
-  synced. A hook or settings package that grim holds back shows a warning whose
-  tooltip says why, in grim's own words.
+  synced. A hook, settings package or mod that grim holds back shows a warning
+  whose tooltip says why, in grim's own words. A mod grim wrote but flags reads
+  **needs attention** (its files are tracked by git, files it did not write sit
+  where it would write, or the client has the mod switched off); a mod grim
+  did not write reads **not written**.
 - **Read before you install** — open any artifact in an editor tab with
   **README**, **CONTENTS**, and **CHANGELOG** tabs and a metadata rail
-  (installation status, package info, source and license, keywords). Single-click
+  (installation status, package info, source and license, keywords). A mod's
+  **CONTENTS** tab has a chip per harness directory, showing that harness's
+  entry and files, plus a **Raw** chip for its `mod.toml`. Single-click
   opens a reusable preview tab; double-click pins it, and links between artifacts
   navigate in place.
 - **Instant details** — reopening an artifact paints immediately from an on-disk
@@ -192,6 +199,12 @@ every install and update affordance is suppressed rather than claiming "Install"
 on an artifact that may already be installed. Point `grimoire.path.executable`
 at a current build, or run **Grimoire: Show Info** to see which binary is
 actually being spawned.
+
+The **Mod** kind needs a `grim` newer than 0.16.0 that ships the experimental
+mod kind, and is absent on an older one, which lists no mods. Its harness
+badges and the per-harness **CONTENTS** view need that grim's `serves` field
+and mod fetch; without them the card has no badges and **CONTENTS** shows no
+harness chips.
 
 Three features need `grim` 0.16.0 or newer and are absent rather than reduced
 on an older one: the **Settings** kind (an older grim has no such packages to

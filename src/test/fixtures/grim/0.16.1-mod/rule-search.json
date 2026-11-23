@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "rule",
+      "repo": "ghcr.io/acme/rust-style",
+      "source": {
+        "alias": "acme",
+        "locator": "ghcr.io/acme"
+      },
+      "summary": "Idiomatic Rust style rules",
+      "description": "Rust style",
+      "version": "1.0.0",
+      "latest_tag": "latest",
+      "repository": null,
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {
+        "vendor": "acme",
+        "digest": "sha256:cfbea5b1d0e386ef6f443c1420bbf0648cda6e8c6fb1014131a398dbd65f373c"
+      },
+      "status": "not-installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "acme",
+      "locator": "ghcr.io/acme",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}

@@ -1,0 +1,10 @@
+{
+  "kind": "skill",
+  "name": "code-review",
+  "pinned": "ghcr.io/acme/code-review@sha256:e5da4849f789f04c114e04e6e15da17bb598ba0b784e15aabdfd4310110b90f3",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

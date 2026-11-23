@@ -1,0 +1,194 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "repo": "ghcr.io/acme/code-review",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Structured diff review",
+      "description": "Review a diff for correctness, security and style, and report findings by severity.",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "mcp",
+      "repo": "ghcr.io/acme/docs-search",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Team docs search",
+      "description": "Search the team documentation over MCP.",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "agent",
+      "repo": "ghcr.io/acme/reviewer",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Pull request reviewer",
+      "description": "Delegate a pull request review to this agent.",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "rule",
+      "repo": "ghcr.io/acme/rust-style",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Idiomatic Rust style rules",
+      "description": "Rust style",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "bundle",
+      "repo": "ghcr.io/acme/starter",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Starter pack",
+      "description": "The code-review skill plus the Rust style rule",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "mod",
+      "repo": "ghcr.io/acme/status-band",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Build status band",
+      "description": "Build status above the prompt",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": [
+        "claude",
+        "opencode"
+      ]
+    },
+    {
+      "kind": "settings",
+      "repo": "ghcr.io/acme/team-defaults",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": "Team defaults",
+      "description": "Team defaults for Claude Code: a model and permission rules.",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    },
+    {
+      "kind": "hook",
+      "repo": "ghcr.io/acme/tool-call-logger",
+      "source": {
+        "alias": "hub",
+        "locator": "https://index.acme.dev"
+      },
+      "summary": null,
+      "description": "Observer example: appends one line per tool call and per session start to a log file outside the repository. Cannot block, alter, or delay anything — the observer tier's response is discarded by design. Writes only to $GRIM_EXAMPLE_LOG (default: a file under $TMPDIR).",
+      "version": null,
+      "latest_tag": null,
+      "repository": "https://github.com/acme/skills",
+      "revision": null,
+      "created": null,
+      "deprecated": null,
+      "replaced_by": null,
+      "rating": null,
+      "downloads": null,
+      "oci": {},
+      "status": "not-installed",
+      "serves": null
+    }
+  ],
+  "sources": [
+    {
+      "alias": "hub",
+      "locator": "https://index.acme.dev",
+      "ok": true,
+      "error": null,
+      "capped": false
+    }
+  ],
+  "total": 8,
+  "truncated": false
+}

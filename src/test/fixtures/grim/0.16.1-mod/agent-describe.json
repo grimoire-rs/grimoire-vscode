@@ -1,0 +1,52 @@
+{
+  "ref": "ghcr.io/acme/reviewer:1.0.0",
+  "digest": "sha256:57d6e049b4616f9c5f6236daeae42d40251fb5aeb72c35bc8fab752e938a97f5",
+  "kind": "agent",
+  "name": "reviewer",
+  "title": "reviewer",
+  "description": "Delegate a pull request review to this agent.",
+  "has_description": false,
+  "summary": "Pull request reviewer",
+  "version": "1.0.0",
+  "license": null,
+  "repository": null,
+  "revision": null,
+  "created": null,
+  "authors": null,
+  "vendor": "acme",
+  "url": null,
+  "documentation": null,
+  "compatibility": null,
+  "keywords": [
+    "review",
+    "agent",
+    "pr"
+  ],
+  "deprecated": null,
+  "replaced_by": null,
+  "tags": [
+    "1",
+    "1.0",
+    "1.0.0",
+    "latest"
+  ],
+  "annotations": {
+    "com.grimoire.keywords": "review,agent,pr",
+    "com.grimoire.kind": "agent",
+    "com.grimoire.summary": "Pull request reviewer",
+    "org.opencontainers.image.description": "Delegate a pull request review to this agent.",
+    "org.opencontainers.image.source": "ghcr.io/acme/reviewer",
+    "org.opencontainers.image.title": "reviewer",
+    "org.opencontainers.image.vendor": "acme",
+    "org.opencontainers.image.version": "1.0.0"
+  },
+  "support": {
+    "issues": null,
+    "chat": null,
+    "contact": null,
+    "security": null
+  },
+  "compression": "none",
+  "requires": [],
+  "serves": null
+}

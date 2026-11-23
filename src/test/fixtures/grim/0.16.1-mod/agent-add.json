@@ -1,0 +1,10 @@
+{
+  "kind": "agent",
+  "name": "reviewer",
+  "pinned": "ghcr.io/acme/reviewer@sha256:57d6e049b4616f9c5f6236daeae42d40251fb5aeb72c35bc8fab752e938a97f5",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

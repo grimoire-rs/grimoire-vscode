@@ -9,6 +9,7 @@ import {
   armingLabel,
   driftTitle,
   isUnarmed,
+  readServes,
   unarmedTooltip,
   formatCount,
   outputClients,
@@ -572,6 +573,81 @@ suite('outputClients', () => {
       [scope],
     );
     assert.deepStrictEqual(cards[0]?.installs[0]?.clients, ['claude']);
+  });
+});
+
+suite('mod arming wording', () => {
+  // Hand-built rows in the shape grim emits (grimoire src/command/status.rs):
+  // `mod_arming` 3234-3330 puts the gate or fence verdicts first and the three
+  // advisory causes after, and the row `state` is read from the gate and fence
+  // verdicts alone (`hook_row_state` before the advisories are appended), so an
+  // advisory never moves it; `mod_row_state` 3334 lets `stale` win over a gate.
+  const row = (state: string, causes: string[], clients: string[] = ['claude']) =>
+    ({
+      kind: 'mod',
+      state,
+      clients,
+      arming: causes.map((cause) => ({ client: 'claude', cause, message: `msg ${cause}` })),
+    }) as Pick<InstallVM, 'arming' | 'state' | 'kind' | 'clients'>;
+
+  test('a gated row is "not written", never "armed"', () => {
+    for (const cause of ['feature-flag-off', 'workspace-not-consented', 'consent-drifted']) {
+      const vm = row('gated', [cause]);
+      assert.strictEqual(isUnarmed(vm), true, cause);
+      assert.strictEqual(unarmedTooltip(vm), `Mod not written:\nclaude: msg ${cause}`, cause);
+      assert.strictEqual(armingLabel(vm), 'not written', cause);
+    }
+  });
+
+  test('a fenced row (not-armed) is "not written"', () => {
+    for (const cause of ['grim-home-relative', 'grim-home-in-workspace']) {
+      const vm = row('not-armed', [cause]);
+      assert.ok(unarmedTooltip(vm).startsWith('Mod not written:\n'), cause);
+      assert.strictEqual(armingLabel(vm), 'not written', cause);
+    }
+  });
+
+  test('each advisory cause on an installed row "needs attention"', () => {
+    for (const cause of ['mod-files-tracked', 'mod-files-present', 'mod-disabled-in-client']) {
+      const vm = row('installed', [cause]);
+      assert.strictEqual(isUnarmed(vm), true, cause);
+      assert.strictEqual(unarmedTooltip(vm), `Mod needs attention:\nclaude: msg ${cause}`, cause);
+      assert.strictEqual(armingLabel(vm), 'needs attention', cause);
+    }
+  });
+
+  test('an advisory beside a gate keeps the row not written and lists both', () => {
+    const vm = row('gated', ['feature-flag-off', 'mod-files-present']);
+    assert.strictEqual(armingLabel(vm), 'not written');
+    assert.strictEqual(
+      unarmedTooltip(vm),
+      'Mod not written:\nclaude: msg feature-flag-off\nclaude: msg mod-files-present',
+    );
+  });
+
+  test('a stale row reads its gate from arming, an advisory alone stays a note', () => {
+    assert.strictEqual(armingLabel(row('stale', ['feature-flag-off'])), 'not written');
+    assert.strictEqual(armingLabel(row('stale', ['mod-files-tracked'])), 'needs attention');
+  });
+
+  test('a missing row with files not owned by grim reads "not written"', () => {
+    // Recorded by grim 0.16.1: state missing, outputs [], cause mod-files-present.
+    const vm = row('missing', ['mod-files-present']);
+    assert.strictEqual(armingLabel(vm), 'not written');
+    assert.strictEqual(unarmedTooltip(vm), 'Mod not written:\nclaude: msg mod-files-present');
+  });
+
+  test('a modified or outdated row with an advisory still needs attention only', () => {
+    assert.strictEqual(armingLabel(row('modified', ['mod-disabled-in-client'])), 'needs attention');
+    assert.strictEqual(armingLabel(row('outdated', ['mod-files-present'])), 'needs attention');
+  });
+
+  test('a clean mod row is not flagged, and no mod wording says armed', () => {
+    assert.strictEqual(isUnarmed(row('installed', [])), false);
+    const all = ['feature-flag-off', 'mod-files-tracked'].map((c) =>
+      unarmedTooltip(row(c === 'feature-flag-off' ? 'gated' : 'installed', [c])),
+    );
+    assert.ok(all.every((t) => !/armed/i.test(t.split('\n')[0] ?? '')));
   });
 });
 
@@ -2345,20 +2421,16 @@ suite('toggleKinds', () => {
 
   test('selecting every kind collapses to [] (All)', () => {
     assert.deepStrictEqual(
-      toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'], 'settings'),
+      toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook', 'settings'], 'mod'),
       [],
     );
   });
 
-  test('six of seven kinds selected keeps the selection', () => {
-    assert.deepStrictEqual(toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle'], 'hook'), [
-      'skill',
-      'rule',
-      'agent',
-      'mcp',
-      'bundle',
-      'hook',
-    ]);
+  test('seven of eight kinds selected keeps the selection', () => {
+    assert.deepStrictEqual(
+      toggleKinds(['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook'], 'settings'),
+      ['skill', 'rule', 'agent', 'mcp', 'bundle', 'hook', 'settings'],
+    );
   });
 
   test('unknown kinds toggle like any other (inert in filtering)', () => {
@@ -4415,5 +4487,55 @@ suite('installHolders', () => {
         requiredBy: [],
       });
     }
+  });
+});
+
+suite('serves (mod harness names)', () => {
+  test('readServes keeps only [a-z0-9]+ strings', () => {
+    assert.deepStrictEqual(readServes(['claude', 'opencode']), ['claude', 'opencode']);
+    assert.deepStrictEqual(readServes(null), []);
+    assert.deepStrictEqual(readServes(undefined), []);
+    assert.deepStrictEqual(readServes('claude'), []);
+    assert.deepStrictEqual(readServes({ 0: 'claude' }), []);
+    assert.deepStrictEqual(
+      readServes(['<script>', 'Claude', '', 'a b', 'ok1', 7, null, {}, 'x-y', 'zed']),
+      ['ok1', 'zed'],
+    );
+  });
+
+  test('a card carries serves from the search row, and omits the key when empty', () => {
+    const scope: ScopeStatus = { scope: 'project', status: [], declared: {} };
+    const [withServes] = buildCards(
+      [searchItem({ kind: 'mod', serves: ['claude', '<b>'] })],
+      [scope],
+    );
+    assert.deepStrictEqual(withServes?.serves, ['claude']);
+    for (const serves of [null, [], ['BAD']]) {
+      const [plain] = buildCards([searchItem({ serves })], [scope]);
+      assert.ok(plain && !('serves' in plain), JSON.stringify(serves));
+    }
+    {
+      const [plain] = buildCards([searchItem()], [scope]);
+      assert.ok(plain && !('serves' in plain), 'absent');
+    }
+  });
+
+  test('an installed-only card reads serves from the status row', () => {
+    const status: WireStatusItem = {
+      kind: 'mod',
+      name: 'band',
+      pinned: 'ghcr.io/acme/mods/band@sha256:abc',
+      state: 'installed',
+      outputs: [{ client: 'claude', path: 'x' }],
+      serves: ['claude', 'opencode'],
+    };
+    const scope: ScopeStatus = {
+      scope: 'project',
+      status: [status],
+      declared: { 'mod:band': 'ghcr.io/acme/mods/band:1' },
+    };
+    const [installed] = buildInstalledCards([], [scope]);
+    assert.deepStrictEqual(installed?.serves, ['claude', 'opencode']);
+    assert.deepStrictEqual(installed?.installs[0]?.serves, ['claude', 'opencode']);
   });
 });

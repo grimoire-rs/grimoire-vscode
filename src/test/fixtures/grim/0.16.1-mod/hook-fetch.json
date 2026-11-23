@@ -1,0 +1,18 @@
+{
+  "ref": "ghcr.io/acme/tool-call-logger:1.0.0",
+  "digest": "sha256:be4235c202604aed6411f7684d0b2808d29b635c459d754fecadbd22edb57ad1",
+  "kind": "hook",
+  "name": "tool-call-logger",
+  "vendor": "canonical",
+  "content": "# The reference `observer` example. Read `catalog/hooks/README.md` first —\n# it carries the end-to-end walkthrough, including how to disarm again.\n#\n# Two entries, one payload tree: a pre/post-style pair sharing one script is\n# the common case the `[[hooks]]` array-of-tables exists for. Both are\n# `observer`, the tier whose response cannot change what happens.\n\nschema = 1\nname = \"tool-call-logger\"\ndescription = \"Observer example: appends one line per tool call and per session start to a log file outside the repository. Cannot block, alter, or delay anything — the observer tier's response is discarded by design. Writes only to $GRIM_EXAMPLE_LOG (default: a file under $TMPDIR).\"\n\n[[hooks]]\nid = \"log-tool-call\"\nevent = \"PreToolUse\"\ntier = \"observer\"\n# `*` is one of the three matcher forms that translate losslessly to every\n# v1 client. An exact tool name (`Bash`) and an alternation (`Bash|Write`)\n# are the other two.\nmatcher = \"*\"\n# The interpreter form, not `./log.sh`: a payload delivered through an OCI\n# registry arrives without an exec bit, so a handler whose first token is a\n# payload-relative file is refused at `grim build`.\nargv = [\"sh\", \"log.sh\"]\ntimeout = 5\npayload = \"stdin\"\n\n[[hooks]]\nid = \"log-session-start\"\nevent = \"SessionStart\"\ntier = \"observer\"\n# No `matcher`: SessionStart carries no tool to match on.\nargv = [\"sh\", \"log.sh\"]\ntimeout = 5\npayload = \"stdin\"\n",
+  "files": [
+    {
+      "path": "tool-call-logger/hook.toml",
+      "size": 1392
+    },
+    {
+      "path": "tool-call-logger/log.sh",
+      "size": 1635
+    }
+  ]
+}

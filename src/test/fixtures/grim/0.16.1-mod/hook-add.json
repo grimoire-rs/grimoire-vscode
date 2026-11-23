@@ -1,0 +1,10 @@
+{
+  "kind": "hook",
+  "name": "tool-call-logger",
+  "pinned": "ghcr.io/acme/tool-call-logger@sha256:be4235c202604aed6411f7684d0b2808d29b635c459d754fecadbd22edb57ad1",
+  "status": "added",
+  "pulled_in": [],
+  "moved": [],
+  "dropped": [],
+  "settings_changes": []
+}

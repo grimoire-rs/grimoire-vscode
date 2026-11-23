@@ -84,6 +84,9 @@ export interface SearchItem {
    *  predates the field omits the key, a present-but-null value is grim's
    *  "unknown". Both read as uncounted. */
   downloads?: SearchDownloads | null;
+  /** Mod rows: the harnesses the mod serves. Absent on a grim predating mods,
+   *  null on every other kind; validated at the read site (`readServes`). */
+  serves?: string[] | null;
   status: string;
 }
 
@@ -174,11 +177,15 @@ export interface StatusItem {
   // present-but-drifted output, which IS `state: "modified"` — different problem,
   // different remedy. Additive, so absent on a grim predating it; read as [].
   outputs_pending?: StatusOutput[];
-  // Hook rows only (experimental): one verdict per client the hook is NOT armed
-  // on, `[]` for every other kind and for a hook armed everywhere. Branch on
+  // Hook, settings and mod rows (experimental): one verdict per client the artifact is NOT armed
+  // on (a mod is never "armed": see its written/not-written reading), `[]` for every other kind
+  // and for a row with nothing to report. Branch on
   // `cause` (closed kebab enum, new values additive), show `message`. Additive,
   // so absent on a grim predating hooks; read as [].
   arming?: HookArming[];
+  /** Mod rows: the harnesses the mod serves. Absent on a grim predating mods,
+   *  null on every other kind; validated at the read site (`readServes`). */
+  serves?: string[] | null;
   // The `--check` surface: grim's live catalog lookup. `deprecated`/`replaced_by`
   // mirror `grim search`'s fields; `update_available` re-resolves the DECLARED
   // reference, tag and all — it answers "would `grim update` move this pin?",
@@ -235,6 +242,9 @@ export interface DescribeResult {
   replaced_by: string | null;
   tags: string[];
   annotations: Record<string, string>;
+  /** Mod rows: the harnesses the mod serves. Absent on a grim predating mods,
+   *  null on every other kind; validated at the read site (`readServes`). */
+  serves?: string[] | null;
   // Additive (frozen-additive, same tolerance pattern as `registries[].authenticated`
   // in ContextInfo): true when the artifact publishes a description companion.
   // Absent (a grim predating the v2 surface) or false → no companion; the details

@@ -1,0 +1,84 @@
+{
+  "items": [
+    {
+      "kind": "skill",
+      "name": "code-review",
+      "target": "/home/u/project/.claude/skills/code-review",
+      "status": "installed",
+      "armed": null
+    },
+    {
+      "kind": "rule",
+      "name": "rust-style",
+      "target": "/home/u/project/.claude/rules/rust-style.md",
+      "status": "installed",
+      "armed": null
+    },
+    {
+      "kind": "agent",
+      "name": "reviewer",
+      "target": "/home/u/project/.claude/agents/reviewer.md",
+      "status": "installed",
+      "armed": null
+    },
+    {
+      "kind": "mcp",
+      "name": "docs-search",
+      "target": "/home/u/project/.mcp.json",
+      "status": "installed",
+      "armed": null
+    },
+    {
+      "kind": "hook",
+      "name": "tool-call-logger",
+      "target": "/home/u/.grimoire/hooks/payload/775ce86baf0f0fd30fb46feb7dd09c06c3231876bb704930642daab20401012f/tool-call-logger",
+      "status": "installed",
+      "armed": [
+        {
+          "client": "claude",
+          "tier": "observer"
+        }
+      ]
+    },
+    {
+      "kind": "mod",
+      "name": "status-band",
+      "target": "/home/u/project/.opencode/plugins/status-band/src/status-band.ts",
+      "status": "installed",
+      "armed": null
+    },
+    {
+      "kind": "settings",
+      "name": "team-defaults",
+      "target": "/home/u/project/.claude/settings.local.json",
+      "status": "installed",
+      "armed": null
+    }
+  ],
+  "settings_changes": [
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/model",
+      "element": null,
+      "action": "added"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/allow",
+      "element": "Bash(git status:*)",
+      "action": "added"
+    },
+    {
+      "package": "team-defaults",
+      "client": "claude",
+      "file": ".claude/settings.local.json",
+      "key": "/permissions/deny",
+      "element": "Bash(rm:*)",
+      "action": "added"
+    }
+  ]
+}

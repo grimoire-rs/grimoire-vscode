@@ -291,7 +291,9 @@ suite('card rendering', () => {
     assert.strictEqual(kindIcon('agent'), 'agent');
     assert.strictEqual(kindIcon('mcp'), 'mcp');
     assert.strictEqual(kindIcon('bundle'), 'package');
+    assert.strictEqual(kindIcon('hook'), 'symbol-event');
     assert.strictEqual(kindIcon('settings'), 'settings');
+    assert.strictEqual(kindIcon('mod'), 'plug');
     assert.strictEqual(kindIcon(null), 'question');
   });
 
@@ -4086,5 +4088,34 @@ suite('windowed results (VX-R03)', () => {
     const denseTree: ViewOptions = { ...compact, mode: 'tree' };
     assert.strictEqual(height(denseTree, 0), headerPx, '.tree-node');
     assert.strictEqual(height(denseTree, 1), px(/^\.compact-row \{[^}]*\n {2}height: (\d+)px;/m));
+  });
+});
+
+suite('serves badges', () => {
+  test('one badge per harness, name as text, on a browse card and the details header', async () => {
+    const cardHtml = await litHtml(renderCard(card({ kind: 'mod', serves: ['claude', 'zed'] })));
+    assert.strictEqual((cardHtml.match(/class="harness-badge"/g) ?? []).length, 2);
+    assert.ok(cardHtml.includes('codicon-claude'));
+    assert.ok(cardHtml.includes('codicon-settings-gear'), 'unknown harness gets the generic icon');
+    const details = await litHtml(
+      renderDetails(detailsVM({ kind: 'mod', serves: ['opencode'], loading: false })),
+    );
+    assert.ok(details.includes('harness-badge'));
+    assert.ok(details.includes('opencode'));
+  });
+
+  test('no serves renders no badge row', async () => {
+    assert.ok(!(await litHtml(renderCard(card()))).includes('harness-badge'));
+    assert.ok(!(await litHtml(renderDetails(detailsVM()))).includes('harness-badge'));
+  });
+
+  test('a hostile harness name never reaches the DOM unescaped', async () => {
+    // The read site drops it; render is still escaped if one slips past.
+    const html = await litHtml(
+      renderCard(card({ kind: 'mod', serves: ['<script>alert(1)</script>', '"><img src=x>'] })),
+    );
+    assert.ok(!html.includes('<script>'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(html.includes('&lt;script&gt;'));
   });
 });

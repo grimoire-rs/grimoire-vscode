@@ -1,12 +1,14 @@
 // Pure view-model builders and reducers. No vscode, no DOM — fully
 // unit-testable. The extension host builds view models here and posts them
 // to the webviews; the webviews filter/render them.
+import { parse as parseToml } from 'smol-toml';
 import type {
   ArtifactKind,
   BundleMemberVM,
   CardSource,
   CardVM,
   DetailsVM,
+  ModHarnessVM,
   SettingsHarnessVM,
   DownloadsVM,
   DownloadVersionVM,
@@ -53,6 +55,9 @@ export interface WireSearchItem {
     as_of?: string | null;
     versions?: Array<{ version: string; total: number }> | null;
   } | null;
+  /** Mod rows only: harness names (additive; absent on an older grim, null on
+   *  other kinds). Read through {@link readServes}. */
+  serves?: string[] | null;
   status: string;
 }
 
@@ -81,8 +86,33 @@ export interface WireStatusItem {
   deprecated?: string | null;
   replaced_by?: string | null;
   update_available?: boolean | null;
-  /** Hook and settings rows: per-client reasons the row is not armed. */
+  /** Hook, settings and mod rows: per-client reasons the row is held back or needs a note. */
   arming?: { client: string; cause: string; message: string }[];
+  /** Mod rows only; see WireSearchItem.serves. */
+  serves?: string[] | null;
+}
+
+/** Harness names a mod serves, validated at the read site: only `[a-z0-9]+`
+ *  strings survive (a name reaches class-free text and an icon lookup, never a
+ *  selector or markup), anything else reads as no harnesses. Never key
+ *  behaviour on a name. */
+export function readServes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((h): h is string => typeof h === 'string' && /^[a-z0-9]+$/.test(h));
+}
+
+/** An optional `serves` field for a view model: omitted when empty, so a card
+ *  with no harnesses stays shaped exactly as before. */
+function servesField(...sources: unknown[]): { serves?: string[] } {
+  for (const raw of sources) {
+    const serves = readServes(raw);
+    if (serves.length > 0) {
+      return { serves };
+    }
+  }
+  return {};
 }
 
 /** Whether a card/install should surface an update. grim's authoritative
@@ -117,6 +147,7 @@ export const KINDS: ArtifactKind[] = [
   'bundle',
   'hook',
   'settings',
+  'mod',
 ];
 
 /** Codicon per artifact kind. `agent` and `mcp` use the icons the codicon set
@@ -131,6 +162,19 @@ export const KIND_ICONS: Record<ArtifactKind, string> = {
   // No dedicated codicon yet; a hook is a lifecycle event handler.
   hook: 'symbol-event',
   settings: 'settings',
+  mod: 'plug',
+};
+
+/** Display label per artifact kind: the details title prefix and the filter chip. */
+export const KIND_LABELS: Record<ArtifactKind, string> = {
+  skill: 'Skill',
+  rule: 'Rule',
+  agent: 'Agent',
+  mcp: 'MCP',
+  bundle: 'Bundle',
+  hook: 'Hook',
+  settings: 'Settings',
+  mod: 'Mod',
 };
 
 export function normalizeKind(kind: string | null | undefined): ArtifactKind | null {
@@ -349,6 +393,7 @@ function installIndex(scope: ScopeStatus): Map<string, InstallVM[]> {
       clientsExtra: item.clients_extra ?? [],
       outputsPending: item.outputs_pending ?? [],
       arming: item.arming ?? [],
+      ...servesField(item.serves),
       deprecated: item.deprecated ?? null,
       replacedBy: item.replaced_by ?? null,
     });
@@ -402,8 +447,9 @@ function unarmedVerdicts(install: ArmingInstall): NonNullable<InstallVM['arming'
   );
 }
 
-/** True when an installed hook or settings row is held back on some client — it
- *  is on disk but does not take effect there until the named gate clears. */
+/** True when an installed hook, settings or mod row is held back on some client
+ *  (or, for a mod, carries a note): it is on disk but does not take effect there
+ *  until the named gate clears. */
 export function isUnarmed(install: ArmingInstall): boolean {
   return unarmedVerdicts(install).length > 0;
 }
@@ -439,6 +485,29 @@ function settingsHold(
   return gate && install.clients.length > 0 ? 'kept' : 'held';
 }
 
+/** The three causes grim adds to a mod row without moving its state (status.rs
+ *  `mod_arming`: the row state is read from the gate and fence verdicts before
+ *  these are appended). */
+const MOD_NOTES = new Set(['mod-files-tracked', 'mod-files-present', 'mod-disabled-in-client']);
+
+/** A mod is never "armed": `held` means nothing was written for it (a gate or a
+ *  fence), `noted` means it is written and one client needs a look. A `stale`
+ *  row shows a gate through `arming` only (status.rs `mod_row_state`). */
+function modHold(install: Pick<InstallVM, 'state' | 'arming'>): 'held' | 'noted' {
+  const gate = (install.arming ?? []).some((a) => !MOD_NOTES.has(a.cause));
+  // `missing` + mod-files-present is grim's recorded shape for files it does not
+  // own at the mod's paths: nothing of grim's is on disk, so nothing was written.
+  return install.state === 'gated' ||
+    install.state === 'not-armed' ||
+    install.state === 'missing' ||
+    (install.state === 'stale' && gate)
+    ? 'held'
+    : 'noted';
+}
+
+const MOD_HEADERS = { held: 'Mod not written:', noted: 'Mod needs attention:' } as const;
+const MOD_LABELS = { held: 'not written', noted: 'needs attention' } as const;
+
 const SETTINGS_HEADERS = {
   applied: 'Settings need attention:',
   held: 'Settings not applied:',
@@ -459,6 +528,8 @@ export function unarmedTooltip(install: ArmingInstall): string {
     header = 'Hook not armed:';
   } else if (install.kind === 'settings') {
     header = SETTINGS_HEADERS[settingsHold(install)];
+  } else if (install.kind === 'mod') {
+    header = MOD_HEADERS[modHold(install)];
   } else {
     header = 'Not armed:';
   }
@@ -467,6 +538,9 @@ export function unarmedTooltip(install: ArmingInstall): string {
 
 /** Short badge label for the unarmed scope row. */
 export function armingLabel(install: ArmingInstall): string {
+  if (install.kind === 'mod') {
+    return MOD_LABELS[modHold(install)];
+  }
   if (install.kind !== 'settings') {
     return 'not armed';
   }
@@ -663,6 +737,7 @@ export function buildCards(
       privateRegistry: isPrivateRegistry(registryHost(item.repo), authed, defaultRegistryHost),
       rating: readRating(item.rating),
       downloads: readDownloads(item.downloads),
+      ...servesField(item.serves, ...installs.map((i) => i.serves)),
       updated: item.created,
     });
   }
@@ -788,6 +863,7 @@ export function catalogRowFor(repo: string, items: WireSearchItem[]): WireSearch
     ...base,
     rating: rows.find((i) => i.rating)?.rating ?? null,
     downloads: rows.find((i) => i.downloads)?.downloads ?? null,
+    ...(rows.some((i) => i.serves) ? { serves: rows.find((i) => i.serves)?.serves ?? null } : {}),
   };
 }
 
@@ -928,6 +1004,7 @@ export function buildInstalledCards(
         // Same borrow again — status carries no publish date either, and an
         // artifact the catalog does not know sorts into the undated bucket.
         updated: item?.created ?? null,
+        ...servesField(item?.serves, ...installs.map((i) => i.serves)),
       });
     }
   }
@@ -2585,6 +2662,50 @@ export function prettyJson(text: string): string {
  *  value is a plain object (not array/null). Other top-level keys are metadata.
  *  Unparseable text or a non-object document yields []. Order is preserved and
  *  nothing is whitelisted — newer grim releases bring new names and options. */
+/** A mod package's files grouped by harness directory. A mod layer is
+ *  `<name>/mod.toml` plus `<name>/<harness>/...`, so the harness is the second
+ *  path segment; a path with fewer than three segments (`<name>/mod.toml`)
+ *  belongs to no harness. Harnesses keep first-appearance order, files keep
+ *  grim's order. `entry` comes from the harness's table in `mod.toml`; a parse
+ *  error, a missing table or a non-string `entry` reads as null. Nothing here
+ *  knows a harness name. */
+export function groupModHarnesses(
+  files: { path: string; size: number }[] | null | undefined,
+  modToml: string | null,
+): ModHarnessVM[] {
+  if (!Array.isArray(files)) {
+    return [];
+  }
+  const groups = new Map<string, { path: string; size: number }[]>();
+  for (const file of files) {
+    if (typeof file?.path !== 'string') {
+      continue;
+    }
+    const segments = file.path.split('/');
+    const harness = segments[1];
+    if (segments.length < 3 || !harness || segments.slice(2).some((s) => s === '')) {
+      continue;
+    }
+    const group = groups.get(harness) ?? [];
+    group.push({ path: segments.slice(2).join('/'), size: file.size });
+    groups.set(harness, group);
+  }
+  let toml: Record<string, unknown> = {};
+  try {
+    toml = modToml === null ? {} : parseToml(modToml);
+  } catch {
+    // A mod.toml that does not parse still lists its files; entries read null.
+  }
+  return [...groups].map(([name, harnessFiles]) => {
+    const table = Object.hasOwn(toml, name) ? toml[name] : undefined;
+    const entry =
+      typeof table === 'object' && table !== null && Object.hasOwn(table, 'entry')
+        ? (table as Record<string, unknown>)['entry']
+        : undefined;
+    return { name, entry: typeof entry === 'string' ? entry : null, files: harnessFiles };
+  });
+}
+
 export function parseSettingsHarnesses(json: string): SettingsHarnessVM[] {
   let doc: unknown;
   try {
@@ -2758,6 +2879,7 @@ export interface DetailsSources {
     compatibility?: string | null;
     support?: WireSupport;
     requires?: { kind: string; name: string; id: string }[] | null;
+    serves?: string[] | null;
   } | null;
   fetch: {
     ref: string;
@@ -2809,6 +2931,7 @@ export function buildSkeletonVM(
     contentMarkdown: null,
     contentJson: null,
     settingsHarnesses: [],
+    modHarnesses: [],
     readmeMarkdown: null,
     changelogMarkdown: null,
     members: [],
@@ -2828,6 +2951,7 @@ export function buildSkeletonVM(
     logoUri: null,
     rating: readRating(searchItem?.rating),
     downloads: readDownloads(searchItem?.downloads),
+    ...servesField(searchItem?.serves, ...(installs ?? []).map((i) => i.serves)),
     busy: null,
     error: null,
     loading: true,
@@ -2919,8 +3043,8 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
       if ((kind === 'mcp' || kind === 'settings') && parsed.body.trimStart().startsWith('{')) {
         // MCP and settings descriptors are JSON — highlighted directly in CONTENTS, not fenced.
         contentJson = prettyJson(parsed.body);
-      } else if (kind === 'hook') {
-        // hook.toml is TOML: as Markdown its `# comment` lines become headings.
+      } else if (kind === 'hook' || kind === 'mod') {
+        // hook.toml and mod.toml are TOML: as Markdown its `# comment` lines become headings.
         contentJson = parsed.body;
       } else {
         contentMarkdown = parsed.body;
@@ -2948,7 +3072,9 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     scopes,
     contentMarkdown,
     contentJson,
-    settingsHarnesses: kind === 'settings' && contentJson !== null ? parseSettingsHarnesses(contentJson) : [],
+    settingsHarnesses:
+      kind === 'settings' && contentJson !== null ? parseSettingsHarnesses(contentJson) : [],
+    modHarnesses: kind === 'mod' ? groupModHarnesses(fetch?.files, fetch?.content ?? null) : [],
     readmeMarkdown: sources.readme ?? null,
     changelogMarkdown: sources.changelog ?? null,
     members,
@@ -2986,6 +3112,7 @@ export function buildDetailsVM(sources: DetailsSources): DetailsVM {
     // means unrated and uncounted.
     rating: readRating(searchItem?.rating),
     downloads: readDownloads(searchItem?.downloads),
+    ...servesField(describe?.serves, searchItem?.serves, ...installs.map((i) => i.serves)),
     busy: null,
     error: null,
   };
