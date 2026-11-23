@@ -8587,7 +8587,13 @@ suite('update badge', () => {
         return statusRun('outdated')(args, 'global') as Promise<GrimResult<T>>;
       }) as typeof api.scopes.run;
       await api.providers.sidebar.refresh();
-      await waitFor(() => states.at(-1)?.installStateUnknown !== undefined);
+      // Every post carries the trust verdict, the 'loading' one included, so
+      // wait for the settled 'ready' post: a watcher round superseding the
+      // awaited refresh can leave a 'loading' post last for a while.
+      await waitFor(() => {
+        const s = states.at(-1);
+        return s?.phase === 'ready' && s.installStateUnknown !== undefined;
+      });
       const last = states.at(-1);
       assert.ok(last);
       assert.strictEqual(last.phase, 'ready', 'the catalog is fine — browsing stays available');
